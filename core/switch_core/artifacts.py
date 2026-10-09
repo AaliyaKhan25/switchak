@@ -28,6 +28,8 @@ ARTIFACT_VERSIONS: Final[dict[str, str]] = {
     "setup": "0.29.0",
     "hosted-controller": "0.29.0",
     "helm-chart": "0.29.0",
+    "hosted-controller": "0.29.0",
+    "hosted-controller-chart": "0.29.0",
     "compose": "0.29.0",
 }
 
