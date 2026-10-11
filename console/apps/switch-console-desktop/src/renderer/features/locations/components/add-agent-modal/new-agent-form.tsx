@@ -964,6 +964,7 @@ export const NewAgentForm = observer(function NewAgentForm({
         {canConfigureAgent && !!pickState.providerId && !managedRun && !isCloudRun && (
           <>
             <AgentAdvancedConfig
+              serverId={pickState.serverId}
               providerId={pickState.providerId}
               sshHost={isRemoteRun ? runHost : null}
               dir={dir}
@@ -971,6 +972,7 @@ export const NewAgentForm = observer(function NewAgentForm({
               onChange={onAdvancedChange}
             />
             <LaunchProfileConfig
+              serverId={pickState.serverId}
               providerId={pickState.providerId}
               sshHost={isRemoteRun ? runHost : null}
               dir={dir}

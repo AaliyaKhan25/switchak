@@ -53,6 +53,7 @@ from switch_core.gateway.messaging_installs import (
 from switch_core.gateway.oidc_routes import register_oidc_client
 from switch_core.gateway.oidc_routes import router as oidc_router
 from switch_core.gateway.packages import router as packages_router
+from switch_core.gateway.providers import router as providers_router
 from switch_core.gateway.references import router as references_router
 from switch_core.gateway.room_groups import router as room_groups_router
 from switch_core.gateway.room_links import router as room_links_router
@@ -147,6 +148,7 @@ def create_gateway_app(
         tags=["provider-connections"],
     )
     app.include_router(connection_catalog_router, tags=["provider-connections"])
+    app.include_router(providers_router, tags=["agent providers"])
 
     # authlib's OIDC client stores transient state/nonce/PKCE in the request
     # session across the IdP redirect round-trip; SameSite=Lax lets the cookie

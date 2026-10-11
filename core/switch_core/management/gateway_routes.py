@@ -19,7 +19,6 @@ from switch_core.bridges.agent.protocol.agent_core import AgentCore
 from switch_core.db.models import User, require_tenant_id
 from switch_core.gateway.auth import get_current_user
 from switch_core.gateway.dependencies import get_protocol, get_session
-from switch_core.management.advanced_config import advanced_config_schema
 from switch_core.management.dependencies import get_management
 from switch_core.management.errors import ManagementRoute
 from switch_core.management.schemas import (
@@ -156,13 +155,6 @@ async def withdraw_sealed_login(
         session, require_tenant_id(), user.id, controller_id, provider
     )
     return {"ok": True}
-
-
-@router.get("/advanced-config")
-async def get_advanced_config(user: CurrentUser) -> dict[str, Any]:
-    """Each provider's advanced-configuration fields, which a definition's
-    `advanced_config` is checked against."""
-    return advanced_config_schema()
 
 
 @router.get("/agents")

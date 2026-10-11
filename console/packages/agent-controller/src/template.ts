@@ -2,12 +2,8 @@ import { randomUUID } from 'node:crypto';
 import {
   agentLaunchDefinitionSchema,
   controllerConnectionId,
-  createAntigravityAdapter,
-  createClaudeAdapter,
-  createCodexAdapter,
-  createCursorAdapter,
-  createOpencodeAdapter,
   EXECUTION_INHERIT_ENV,
+  providerRuntime,
   type ProviderCapabilities,
   type SharedHostConfig,
   sharedConfigSchema,
@@ -22,16 +18,11 @@ const capabilityCache = new Map<Provider, ProviderCapabilities>();
 function adapterCapabilities(provider: Provider): ProviderCapabilities {
   const cached = capabilityCache.get(provider);
   if (cached) return cached;
-  const adapter =
-    provider === 'claude'
-      ? createClaudeAdapter()
-      : provider === 'codex'
-        ? createCodexAdapter()
-        : provider === 'opencode'
-          ? createOpencodeAdapter()
-          : provider === 'antigravity'
-            ? createAntigravityAdapter()
-            : createCursorAdapter();
+  const adapter = providerRuntime(provider).createAdapter({
+    binaryPath: undefined,
+    logger: undefined,
+    skill: '',
+  });
   capabilityCache.set(provider, adapter.capabilities);
   return adapter.capabilities;
 }
@@ -43,8 +34,10 @@ export function watcherSessionId(agentId: string): string {
 
 /**
  * What keeps an agent's advanced configuration from being applied as defined,
- * naming the field, or null when nothing does. A field this build does not
- * know is refused rather than ignored: a newer server may send one an older
+ * naming the field, or null when nothing does. The server checked the values
+ * against its fields when the definition was written; what is left to refuse
+ * here is a field this build's plugin does not apply, or a value of a shape it
+ * cannot apply, rather than ignore it: a newer server may send one an older
  * controller cannot apply.
  */
 export function advancedConfigDefinitionProblem(

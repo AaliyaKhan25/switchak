@@ -121,7 +121,7 @@ from switch_core.budgets import BudgetExceeded
 from switch_core.config import SwitchConfig
 from switch_core.db.models import Agent, Task
 from switch_core.db.stores.api_key_store import ApiKeyStore
-from switch_core.gateway.known_agents import KNOWN_AGENTS
+from switch_core.gateway.known_agents import known_agent
 from switch_core.observability.catalogue import AGENT_CONNECTIONS_REFUSED
 from switch_core.observability.metrics import metrics
 from switch_core.trust.client import GuardrailBlockedError
@@ -262,7 +262,7 @@ async def _register_known(
     Returns ``(agent_id, api_key)``. Shared by the single and bulk
     register-known endpoints.
     """
-    spec = KNOWN_AGENTS.get(agent_type)
+    spec = known_agent(agent_type)
     if spec is None:
         raise HTTPException(
             status_code=400,
