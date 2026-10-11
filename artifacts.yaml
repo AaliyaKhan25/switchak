@@ -79,6 +79,13 @@ artifacts:
     # in lockstep with the bundled compose.
     pins:
       switch-core: 0.29.0
+    # What the canary build bundles instead, so a switch-core pre-release can be
+    # tried on canary without moving stable. Never older than the stable pin
+    # (`just artifacts` refuses it). When a stable switch-core release ships,
+    # move `pins` to it; drop the canary pin back to it too unless a newer
+    # pre-release is being tried.
+    canary_pins:
+      switch-core: 0.30.0-rc.11
 
   agent-runtime:
     description: >-

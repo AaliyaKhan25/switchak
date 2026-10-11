@@ -1428,6 +1428,17 @@ version of their own to them without also giving them a release of their own.
 ### [Unreleased]
 
 #### Added
+- **Managed servers turn agent management on.** A server Console runs, on
+  this computer or on an SSH host, now starts with agent management enabled
+  and the controller token secret it needs, generated once and shared by every
+  Console using that server. On a switch-core release that offers agent
+  management, Console then moves your agents onto managed machines by itself.
+  Releases from before agent management ignore both settings.
+- **Canary has its own switch-core pin.** The canary build bundles and runs
+  switch-core 0.30.0-rc.11 for the servers it manages, while stable stays on
+  0.29.0. A canary pin can never be older than the stable one. Canary and
+  stable share their managed servers on one computer, so once canary has
+  updated one, stable will not start it again until stable's pin catches up.
 - **Switch cloud on the agents controller.** On a server whose cloud machines
   run the agents controller, choosing Switch cloud in the New agent form starts
   your cloud machine and waits for it to come online (its first start takes a

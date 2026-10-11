@@ -155,6 +155,7 @@ const secrets = {
   agentRegistrationToken: 'agent-token',
   jwtSecretKey: 'jwt',
   secretKeys: 'console:secret-keys',
+  controllerTokenSecret: 'controller-token-secret-value',
   gatewayAdminPassword: 'admin-pw',
   mattermostAdminPassword: 'mm-admin',
   mattermostUserPassword: 'mm-user',
