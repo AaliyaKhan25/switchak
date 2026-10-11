@@ -117,7 +117,6 @@ vi.mock('@renderer/features/switch-servers/server-presentation', () => ({
   serverState: (server: SwitchServer) =>
     state.unavailable.has(server.id) ? 'signed-out' : 'connected',
   serverStatusLabel: (server: SwitchServer) => `${server.name} status`,
-  serverSubtitleLabel: (server: SwitchServer) => `${server.name} status`,
 }));
 
 vi.mock('@renderer/features/switch-servers/server-icon', () => ({

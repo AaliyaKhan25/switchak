@@ -1,5 +1,6 @@
 import { Cloud, CloudOff, Server, ServerOff } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
+import { isFrozenServer } from '@renderer/features/switch-servers/managed-server-state';
 import { switchServersStore } from '@renderer/features/switch-servers/switch-servers-store';
 import { failureText } from '@renderer/lib/errors/describe-failure';
 import { useNavigate, useParams } from '@renderer/lib/layout/navigation-provider';
@@ -24,7 +25,9 @@ export const ManagedAgentList = observer(function ManagedAgentList() {
   const serverId = switchServersStore.activeServerId;
   const agents = useManagedAgents(serverId);
   if (serverId === null) return null;
-  if (agents.error)
+  // A frozen workspace's banner already says why nothing can be listed.
+  const server = switchServersStore.serverById(serverId);
+  if (agents.error && !(server && isFrozenServer(server)))
     return (
       <div role="alert" className="px-3 py-2 text-xs text-foreground-destructive">
         {failureText(agents.error, 'Managed agents could not be listed.')}

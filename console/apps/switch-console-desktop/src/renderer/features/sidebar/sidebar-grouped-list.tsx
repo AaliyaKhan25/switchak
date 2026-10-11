@@ -6,8 +6,10 @@ import { ManagedAgentList } from '@renderer/features/managed-agents/managed-agen
 import { useManagedAgents } from '@renderer/features/managed-agents/use-managed-agents';
 import { hostReachabilityStore } from '@renderer/features/remote-hosts/host-reachability-store';
 import { switchRoomsStore as roomConnectionsStore } from '@renderer/features/switch-rooms/switch-rooms-store';
+import { isFrozenServer } from '@renderer/features/switch-servers/managed-server-state';
 import { switchRoomsStore } from '@renderer/features/switch-servers/switch-rooms-store';
 import { switchServersStore } from '@renderer/features/switch-servers/switch-servers-store';
+import { workspacesStore } from '@renderer/features/workspaces/workspaces-store';
 import { useFeatureFlags } from '@renderer/lib/hooks/useFeatureFlags';
 import { useNavigate } from '@renderer/lib/layout/navigation-provider';
 import { sidebarStore } from '@renderer/lib/stores/app-state';
@@ -60,11 +62,12 @@ export const SidebarGroupedList = observer(function SidebarGroupedList() {
 
     // Two things make the loaded state wrong without any mutation here:
     // signing in to a server (its rooms were skipped while disconnected, and
-    // nothing re-ran the load), and switching which server is active — only the
-    // server on screen is loaded, so the one you switch to may never have been.
+    // nothing re-ran the load), and switching which workspace is active — only
+    // the workspace on screen is loaded, so the one you switch to may never have
+    // been, even on the same server.
     const stopWatchingServers = reaction(
       () => ({
-        active: switchServersStore.activeServerId,
+        active: workspacesStore.activeId,
         connected: switchServersStore.servers
           .filter((s) => switchServersStore.isConnected(s.id))
           .map((s) => s.id)
@@ -172,6 +175,9 @@ export function useAgentManagementMode(): boolean {
  */
 const RoomStateDisclosure = observer(function RoomStateDisclosure() {
   const { navigate } = useNavigate();
+  // The banner over a frozen workspace is the whole explanation.
+  const active = switchServersStore.activeServer;
+  if (active && isFrozenServer(active)) return null;
   const signedOut = switchRoomsStore.workspacesNotSignedIn;
   const failed = switchRoomsStore.workspacesThatFailedToLoad;
 

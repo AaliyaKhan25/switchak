@@ -36,6 +36,7 @@ import {
 import type { Agent } from '@shared/core/agents/agents';
 import type { ManagedAgentView } from '@shared/core/managed-agents/managed-agents';
 import { providerDisplayName } from '@shared/core/providers/agent-provider-registry';
+import { isFrozenServer } from './managed-server-state';
 import { ServerPage } from './server-page';
 import { ServerSectionTitlebar } from './server-section-titlebar';
 import { switchRoomsStore } from './switch-rooms-store';
@@ -113,7 +114,7 @@ const ServerAgentsPanel = observer(function ServerAgentsPanel() {
           <ManagedAgentCard key={agent.agentId} agent={agent} />
         ))}
       </div>
-      {managed.error && (
+      {managed.error && !(server && isFrozenServer(server)) && (
         <p role="alert" className="mt-3 text-sm text-destructive">
           {failureText(managed.error, 'Could not load managed agents.')}
         </p>

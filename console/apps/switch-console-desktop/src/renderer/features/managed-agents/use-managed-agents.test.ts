@@ -2,6 +2,9 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ManagedAgentView } from '@shared/core/managed-agents/managed-agents';
 
 vi.mock('@renderer/lib/ipc', () => ({ rpc: {} }));
+vi.mock('@renderer/features/switch-servers/server-availability', () => ({
+  serverAvailability: () => 'available',
+}));
 vi.mock('@renderer/features/switch-servers/switch-servers-store', () => ({
   switchServersStore: {},
 }));

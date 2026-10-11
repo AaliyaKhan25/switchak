@@ -1,5 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
+import { serverAvailability } from '@renderer/features/switch-servers/server-availability';
 import { switchServersStore } from '@renderer/features/switch-servers/switch-servers-store';
 import { workspacesStore } from '@renderer/features/workspaces/workspaces-store';
 import { events, rpc } from '@renderer/lib/ipc';
@@ -23,7 +24,12 @@ const MANAGED_AGENTS_REFRESH_MS = 30_000;
  */
 export function useManagedAgents(serverId: string | null) {
   const queryClient = useQueryClient();
-  const signedIn = serverId !== null && switchServersStore.isConnected(serverId);
+  // Not asked while a server this Console runs is down: the call can only
+  // fail, and the list it last gave is the one worth showing meanwhile.
+  const signedIn =
+    serverId !== null &&
+    switchServersStore.isConnected(serverId) &&
+    serverAvailability(serverId) !== 'dormant';
   const user = serverId === null ? null : (switchServersStore.statusFor(serverId)?.user ?? null);
   // The list is the workspace's, not the server's: switching workspace on the
   // same server has to read it again rather than show the last one.
