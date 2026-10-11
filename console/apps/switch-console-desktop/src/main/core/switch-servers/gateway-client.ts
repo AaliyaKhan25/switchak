@@ -7,6 +7,7 @@ import {
   managedServerStoppedPhase,
   noteManagedServerUnanswered,
 } from '@main/core/managed-switch-server/managed-server-status';
+import { rememberBridgePlatforms } from '@main/core/telemetry/bridge-platform';
 import { assertedTenant } from '@main/core/workspaces/asserted-tenant';
 import { type CloudMachine, cloudMachineSchema } from '@shared/core/cloud-agents/cloud-agents';
 import type { RemoteFeatureFlag } from '@shared/core/feature-flags/feature-flags';
@@ -1196,6 +1197,9 @@ type BridgeJson = {
   attention?: string | null;
   team_placement_supported?: boolean;
   channel_ids_refused?: string | null;
+  // Absent on a server predating per-connection webhooks, where none had one.
+  receives_webhooks?: boolean;
+  webhook_url?: string | null;
 };
 
 function mapBridge(b: BridgeJson): RemoteBridge {
@@ -1214,6 +1218,8 @@ function mapBridge(b: BridgeJson): RemoteBridge {
     attention: b.attention ?? null,
     teamPlacementSupported: b.team_placement_supported ?? false,
     channelIdsRefused: b.channel_ids_refused ?? null,
+    receivesWebhooks: b.receives_webhooks ?? false,
+    webhookUrl: b.webhook_url ?? null,
   };
 }
 
@@ -1412,12 +1418,23 @@ export async function fetchBridgeTypes(server: SwitchServer): Promise<RemoteBrid
   const res = await gatewayFetch(server, '/collaborations/types', { authenticated: true });
   const json = (await res.json()) as Array<{
     key: string;
+    display_name?: string;
+    docs_slug?: string | null;
+    icon_svg?: string | null;
+    receives_webhooks?: boolean;
     config_schema: BridgeConfigSchema;
     channel_creation_supported?: boolean;
     directory_search_supported?: boolean;
   }>;
+  rememberBridgePlatforms(json.map((t) => t.key));
   return json.map((t) => ({
     key: t.key,
+    // The four below are absent on a server predating platform metadata; the
+    // renderer falls back to the names and icons it bundles for that case.
+    displayName: t.display_name ?? null,
+    docsSlug: t.docs_slug ?? null,
+    iconSvg: t.icon_svg ?? null,
+    receivesWebhooks: t.receives_webhooks ?? false,
     fields: toConfigFields(t.config_schema ?? {}),
     // Absent on a server predating the capability — every platform could be
     // registered to create channels before it existed, so default true.

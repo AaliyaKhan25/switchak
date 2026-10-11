@@ -52,7 +52,6 @@ from switch_core.bridges.agent.server_connectors.opencode.connector import (
 from switch_core.bridges.collaboration.adapter import PlatformAdapter
 from switch_core.bridges.collaboration.discord.adapter import (
     DiscordAdapter,
-    DiscordConnectionConfig,
 )
 from switch_core.bridges.collaboration.discord.connection import DiscordConnection
 from switch_core.bridges.collaboration.discord.gateway import DiscordGatewayClient
@@ -69,19 +68,8 @@ from switch_core.bridges.collaboration.install_service import MessagingInstallSe
 from switch_core.bridges.collaboration.lifecycle_service import (
     CollaborationBridgeLifecycleService,
 )
-from switch_core.bridges.collaboration.mattermost.adapter import (
-    MattermostAdapter,
-    MattermostConnectionConfig,
-)
-from switch_core.bridges.collaboration.slack.adapter import (
-    SlackAdapter,
-    SlackConnectionConfig,
-)
+from switch_core.bridges.collaboration.platforms import register_platforms
 from switch_core.bridges.collaboration.slack.install import SlackAppInstaller
-from switch_core.bridges.collaboration.teams.adapter import (
-    TeamsAdapter,
-    TeamsConnectionConfig,
-)
 from switch_core.bridges.collaboration.teams.app_package import (
     build_distributed_app_package,
 )
@@ -89,13 +77,16 @@ from switch_core.bridges.collaboration.teams.install import TeamsAppInstaller
 from switch_core.bridges.collaboration.teams.shared_app import TeamsSharedApp
 from switch_core.bridges.collaboration.telegram.adapter import (
     TelegramAdapter,
-    TelegramConnectionConfig,
 )
 from switch_core.bridges.collaboration.telegram.app_client import (
     TelegramAppClient,
     bot_resource,
 )
 from switch_core.bridges.collaboration.telegram.install import TelegramAppInstaller
+from switch_core.bridges.collaboration.webhooks import (
+    BridgeWebhookService,
+    create_bridge_webhook_router,
+)
 from switch_core.bridges.resource.service import ResourceService
 from switch_core.clients.actor import Actor, AgentActor, HumanActor, SystemActor
 from switch_core.clients.agent_consumer import AgentConsumer
@@ -884,18 +875,7 @@ async def run(config: SwitchConfig) -> None:
         config=config,
     )
 
-    # Register collaboration bridge adapter types
-    collab_lifecycle.register_adapter(
-        "mattermost", MattermostAdapter, MattermostConnectionConfig
-    )
-    collab_lifecycle.register_adapter("slack", SlackAdapter, SlackConnectionConfig)
-    collab_lifecycle.register_adapter("teams", TeamsAdapter, TeamsConnectionConfig)
-    collab_lifecycle.register_adapter(
-        "discord", DiscordAdapter, DiscordConnectionConfig
-    )
-    collab_lifecycle.register_adapter(
-        "telegram", TelegramAdapter, TelegramConnectionConfig
-    )
+    register_platforms(collab_lifecycle)
 
     # Liveness, and cheap on purpose: the gateway Deployment and the setup Job
     # wait on it at boot, so anything it checked would become a boot-ordering
@@ -927,6 +907,16 @@ async def run(config: SwitchConfig) -> None:
             create_messaging_install_router(install_service),
             tags=["messaging-installs"],
         )
+    agent_bridge_app.include_router(
+        create_bridge_webhook_router(
+            BridgeWebhookService(
+                lifecycle=collab_lifecycle,
+                session_factory=session_factory,
+                receipts=MessagingEventReceiptStore(),
+            )
+        ),
+        tags=["bridge-webhooks"],
+    )
 
     if management is not None:
         management.install(

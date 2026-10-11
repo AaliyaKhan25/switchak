@@ -473,6 +473,8 @@ describe('room creation', () => {
         attention: null,
         teamPlacementSupported: false,
         channelIdsRefused: null,
+        receivesWebhooks: false,
+        webhookUrl: null,
       },
       {
         id: 'b2',
@@ -490,6 +492,8 @@ describe('room creation', () => {
         attention: null,
         teamPlacementSupported: false,
         channelIdsRefused: null,
+        receivesWebhooks: false,
+        webhookUrl: null,
       },
     ]);
   });
