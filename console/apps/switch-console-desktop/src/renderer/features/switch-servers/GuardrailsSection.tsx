@@ -164,8 +164,8 @@ export const GuardrailsSection = observer(function GuardrailsSection({
 
           <div className={cn('flex flex-col gap-3 pt-3', !open && 'hidden')}>
             <p className="text-xs text-foreground-muted">
-              Every message this server sends is checked before it goes out once an endpoint and
-              an API key are set.
+              Every message this server sends is checked before it goes out once an endpoint and an
+              API key are set.
             </p>
             <FieldGroup>
               <Field>
