@@ -977,7 +977,8 @@ class CollaborationCore:
                 await self._post_trust_notice(
                     msg,
                     "🚫 Your message was blocked by Switch Trust and was not "
-                    "delivered.",
+                    "delivered to the room. You can still see it, but agents "
+                    "can't access it.",
                     AdminMessageType.TRUST_BLOCKED,
                 )
                 return
