@@ -16,6 +16,7 @@ import { adapterFor } from './server';
 import { HOST_EXIT_GRACE_MS, SessionLinks } from './session-channel';
 import { readProviderLogin, readSharedCredentials, sharedConfigSchema } from './shared-config';
 import { hostSessionProcess } from './shared-host';
+import { onStopRequest } from './stop-request';
 import { superviseSharedHost } from './supervisor';
 import { recordWatcherHealth } from './watcher-health-file';
 import { WatcherControl } from './watcher-tools';
@@ -98,8 +99,7 @@ async function main(): Promise<void> {
     );
   } else if (mode === '--supervise' || mode === '--watch-supervise') {
     const stop = new AbortController();
-    process.on('SIGTERM', () => stop.abort());
-    process.on('SIGINT', () => stop.abort());
+    onStopRequest(() => stop.abort(), resolve(root));
     await superviseSharedHost({
       root: resolve(root),
       executable: process.execPath,
@@ -116,8 +116,7 @@ async function main(): Promise<void> {
     });
   } else if (mode === '--watch-worker') {
     const stop = new AbortController();
-    process.on('SIGTERM', () => stop.abort());
-    process.on('SIGINT', () => stop.abort());
+    onStopRequest(() => stop.abort(), resolve(root));
     // The sidecar is the parent of the sessions it runs: it talks to each over
     // IPC, and Console reaches them through its control port.
     const links = new SessionLinks();
@@ -176,6 +175,7 @@ async function main(): Promise<void> {
   } else if (process.platform !== 'win32' && (await ownProcessGroup()) === null) {
     const child = spawn(process.execPath, process.argv.slice(1), {
       detached: true,
+      windowsHide: true,
       stdio: 'inherit',
       env: process.env,
     });
@@ -193,8 +193,7 @@ async function main(): Promise<void> {
         'A session host is started by Console or the agent sidecar, which answer its Switch tools; run on its own it has nothing to answer them.'
       );
     const stop = new AbortController();
-    process.on('SIGTERM', () => stop.abort());
-    process.on('SIGINT', () => stop.abort());
+    onStopRequest(() => stop.abort(), resolve(root));
     // Started by a parent that talks to it: it goes when the parent goes.
     process.on('disconnect', () => stop.abort());
     try {

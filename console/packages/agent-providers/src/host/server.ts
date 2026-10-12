@@ -1,5 +1,5 @@
 import { randomUUID, timingSafeEqual, createHash } from 'node:crypto';
-import { mkdir, readFile, readdir, writeFile, rename, unlink } from 'node:fs/promises';
+import { mkdir, readFile, readdir, writeFile, unlink } from 'node:fs/promises';
 import { createServer, type IncomingMessage } from 'node:http';
 import { join } from 'node:path';
 import { commandSchema } from '@switch-console/shared/session-v1';
@@ -7,6 +7,7 @@ import type { Command, Session } from '@switch-console/shared/session-v1';
 import { z } from 'zod';
 import type { AgentLaunchDefinition, ProviderAdapter, ProviderSessionStartInput } from '../adapter';
 import { isProviderRuntime, providerRuntime, providerRuntimeIds } from '../providers/registry';
+import { replaceFile } from './replace-file';
 import { HostedSession } from './session-host';
 
 const id = z.string().min(1).max(200);
@@ -232,7 +233,7 @@ export async function startHostServer(
   };
   const temp = join(root, 'endpoint.tmp');
   await writeFile(temp, JSON.stringify(endpoint), { mode: 0o600 });
-  await rename(temp, join(root, 'endpoint.json'));
+  await replaceFile(temp, join(root, 'endpoint.json'));
   const directories = await readdir(join(root, 'sessions'), { withFileTypes: true }).catch(
     (error: NodeJS.ErrnoException) => {
       if (error.code === 'ENOENT') return [];

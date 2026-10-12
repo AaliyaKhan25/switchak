@@ -66,6 +66,16 @@ export {
   sharedSessionRoot,
 } from './host/launch';
 export type { Supervision } from './host/launch';
+export { commandLineNames, killProcessTree, processCommandLine } from './host/process-fence';
+export { execProvider, findOnPath, spawnProvider, stopProvider } from './provider-process';
+export { replaceFile } from './host/replace-file';
+export {
+  isStopMessage,
+  onStopRequest,
+  requestChildStop,
+  requestStop,
+  STOP_MESSAGE,
+} from './host/stop-request';
 export { hostStartSources, type HostStartSource } from './host/session-start';
 export {
   type AgentEventStream,
@@ -153,6 +163,7 @@ export {
   PROVIDER_RUNTIMES,
   providerRuntime,
   providerRuntimeIds,
+  providerUnsupportedReason,
 } from './providers/registry';
 export type { ProviderRuntime, ProviderRuntimeOptions } from './providers/registry';
 export { CONTROL_FILE, ControlClient, SidecarConnectionClosedError } from './host/control';

@@ -49,6 +49,7 @@ import type { AgentProviderConfig } from '@shared/core/agents/agent-provider-con
 import type { CloudMachine } from '@shared/core/cloud-agents/cloud-agents';
 import {
   describeRemoteDirRefusal,
+  isAbsoluteMachineDir,
   isAbsoluteRemoteDir,
 } from '@shared/core/remote-hosts/remote-dir';
 import type { UiEntryPoint } from '@shared/core/telemetry/reporting';
@@ -94,7 +95,9 @@ const NO_ATTRIBUTES: RepoAgentAttributes = {};
  * detection, discovery, and location keying — the flow must not care (CHOO-1440). */
 function canonicalDir(dir: string): string {
   const trimmed = dir.trim();
-  const stripped = trimmed.replace(/\/+$/, '');
+  // A Windows drive root keeps its separator: `C:` alone is a relative path.
+  if (/^[A-Za-z]:[\\/]+$/.test(trimmed)) return `${trimmed.slice(0, 2)}\\`;
+  const stripped = trimmed.replace(/[\\/]+$/, '');
   return stripped || (trimmed.startsWith('/') ? '/' : '');
 }
 
@@ -425,7 +428,7 @@ export const NewAgentForm = observer(function NewAgentForm({
   // session starts in. Caught here so it greys the button out with a reason.
   // On a server machine the directory may be unknown: the machine makes a fresh workspace.
   const remoteDirIsAbsolute = isMachineRun
-    ? trimmedRemoteDir === '' || isAbsoluteRemoteDir(trimmedRemoteDir)
+    ? trimmedRemoteDir === '' || isAbsoluteMachineDir(trimmedRemoteDir, serverMachine?.os ?? null)
     : !isRemoteRun || isAbsoluteRemoteDir(trimmedRemoteDir);
 
   const canSubmit =
@@ -476,7 +479,9 @@ export const NewAgentForm = observer(function NewAgentForm({
                                   ? 'Enter the agent’s working directory on the host.'
                                   : 'Choose the agent’s working directory.'
                                 : !remoteDirIsAbsolute
-                                  ? `Give the full path on ${runLocationLabel}, starting with “/”.`
+                                  ? serverMachine?.os === 'windows'
+                                    ? `Give the full path on ${runLocationLabel}, starting with a drive, like C:\\.`
+                                    : `Give the full path on ${runLocationLabel}, starting with “/”.`
                                   : policyHasDeadRule(form.addressingPolicy)
                                     ? 'One addressing rule can never match — fix it under Settings.'
                                     : null;

@@ -1341,11 +1341,20 @@ export async function runAgentHost(
         }
       }
     };
+    // A turn ending while the definition is being applied is not lost: the
+    // pass is run again once the one under way is done.
+    let again = false;
     const redefine = () => {
-      if (redefining) return;
+      if (redefining) {
+        again = true;
+        return;
+      }
       redefining = true;
       pending = pending.then(applyDefinition).finally(() => {
         redefining = false;
+        if (!again) return;
+        again = false;
+        redefine();
       });
       void pending.catch((error: Error) => fail(error));
     };

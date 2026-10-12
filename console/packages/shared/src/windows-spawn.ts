@@ -58,24 +58,24 @@ export function getWindowsPathExts(
   });
 }
 
-export function quoteForCmdExe(input: string): string {
-  if (input.length === 0) return '""';
-  if (!/[\s"^&|<>()%!]/.test(input)) return input;
-  return `"${input
-    .replace(/%/g, '%%')
-    .replace(/!/g, '^!')
-    .replace(/(["^&|<>()])/g, '^$1')}"`;
+/** What cmd.exe treats specially on a command line. */
+const CMD_EXE_META = /([()\][%!^"`<>&|;, *?])/g;
+
+/** A program path for a cmd.exe command line: each metacharacter caret-escaped. */
+export function escapeCmdExeCommand(command: string): string {
+  return command.replace(CMD_EXE_META, '^$1');
 }
 
 /**
- * cmd.exe + /S /C has a quirk: if the command string starts with a quote, the
- * outer quotes are taken as part of the executable name (printed back as
- * `'"C:\Program Files\..."' is not recognized`). The documented workaround is
- * to wrap the entire command line in an extra pair of outer quotes so cmd.exe
- * strips one layer and runs the still-quoted path.
+ * One argument for a cmd.exe command line that runs a batch file: quoted for
+ * the C runtime parser of the program the batch file starts (backslashes
+ * before a quote doubled, the quote escaped), then caret-escaped for cmd.exe —
+ * twice, since the batch file's `%*` is parsed by cmd.exe a second time. This
+ * is cross-spawn's algorithm, after https://qntm.org/cmd.
  */
-export function wrapCmdExeCommandLine(commandLine: string): string {
-  return commandLine.startsWith('"') ? `"${commandLine}"` : commandLine;
+export function escapeCmdExeArgument(argument: string): string {
+  const quoted = `"${argument.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\*)$/, '$1$1')}"`;
+  return quoted.replace(CMD_EXE_META, '^$1').replace(CMD_EXE_META, '^$1');
 }
 
 function hasWindowsPathSeparator(command: string): boolean {
@@ -180,10 +180,10 @@ export function resolveExecFileSpawn({
     return { command: resolved, args, windowsVerbatimArguments: false };
   }
 
-  const commandLine = [resolved, ...args].map(quoteForCmdExe).join(' ');
+  const commandLine = [escapeCmdExeCommand(resolved), ...args.map(escapeCmdExeArgument)].join(' ');
   return {
     command: getWindowsShellExecutable(env),
-    args: ['/d', '/s', '/c', wrapCmdExeCommandLine(commandLine)],
+    args: ['/d', '/s', '/c', `"${commandLine}"`],
     windowsVerbatimArguments: true,
   };
 }

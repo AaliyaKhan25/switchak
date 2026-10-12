@@ -1,4 +1,5 @@
 import type * as fs from 'node:fs/promises';
+import { pathToFileURL } from 'node:url';
 import { beforeEach, expect, it, vi } from 'vitest';
 import { ProviderConversationUnavailableError } from '../adapter';
 import { FakeAppServer } from '../codex/fake-app-server';
@@ -154,7 +155,7 @@ it('sends attachments as the agent advertises it can take them, else as resource
   ]);
   expect(prompt[2]).toEqual({
     type: 'resource_link',
-    uri: 'file:///work/notes.txt',
+    uri: pathToFileURL('/work/notes.txt').href,
     name: 'notes.txt',
     mimeType: 'text/plain',
   });
@@ -174,7 +175,11 @@ it('embeds file contents when the agent takes embedded context', async () => {
   >;
   expect(prompt[1]).toEqual({
     type: 'resource',
-    resource: { uri: 'file:///work/notes.txt', mimeType: 'text/plain', text: 'file text' },
+    resource: {
+      uri: pathToFileURL('/work/notes.txt').href,
+      mimeType: 'text/plain',
+      text: 'file text',
+    },
   });
 });
 

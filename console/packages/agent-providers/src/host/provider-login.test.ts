@@ -55,10 +55,10 @@ describe('provider logins handed to an agent host', () => {
     });
     expect(
       providerLoginEnvironment('/root', { ...login, provider: 'codex', kind: 'auth-json' })
-    ).toEqual({ CODEX_HOME: '/root/provider-home' });
+    ).toEqual({ CODEX_HOME: join('/root', 'provider-home') });
     expect(
       providerLoginEnvironment('/root', { ...login, provider: 'opencode', kind: 'auth-json' })
-    ).toEqual({ XDG_DATA_HOME: '/root/provider-data' });
+    ).toEqual({ XDG_DATA_HOME: join('/root', 'provider-data') });
   });
 
   it('signs Claude in through Vertex AI with the credential file under the root', () => {
@@ -67,7 +67,7 @@ describe('provider logins handed to an agent host', () => {
       CLAUDE_CODE_USE_VERTEX: '1',
       ANTHROPIC_VERTEX_PROJECT_ID: 'cg-vertexai',
       CLOUD_ML_REGION: 'global',
-      GOOGLE_APPLICATION_CREDENTIALS: '/root/provider-home/google-credentials.json',
+      GOOGLE_APPLICATION_CREDENTIALS: join('/root', 'provider-home', 'google-credentials.json'),
       ANTHROPIC_API_KEY: '',
       CLAUDE_CODE_OAUTH_TOKEN: '',
     });

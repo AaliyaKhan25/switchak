@@ -34,6 +34,8 @@ export interface ProviderRuntime {
    * session host passes through from the machine's environment.
    */
   inheritEnv: readonly string[];
+  /** The platforms the CLI cannot run on, each with the reason a person is told. */
+  unsupportedPlatforms: Partial<Record<NodeJS.Platform, string>>;
   createAdapter(options: ProviderRuntimeOptions): ProviderAdapter;
   /** Whether the CLI is signed in, answered without signing it in. */
   checkSignIn(input: SignInCheckInput): Promise<ProviderReadiness>;
@@ -45,6 +47,7 @@ export function acpProviderRuntime(hooks: AcpProviderHooks): ProviderRuntime {
     id: hooks.provider,
     loginCommand: hooks.loginCommand,
     inheritEnv: hooks.inheritEnv ?? [],
+    unsupportedPlatforms: hooks.unsupportedPlatforms ?? {},
     createAdapter: ({ binaryPath, logger }) => createAcpAdapter(hooks, { binaryPath, logger }),
     checkSignIn: (input) => checkAcpSignIn(hooks, input),
   };
@@ -61,6 +64,7 @@ export const PROVIDER_RUNTIMES: readonly ProviderRuntime[] = [
     id: 'claude',
     loginCommand: CLAUDE_LOGIN,
     inheritEnv: [],
+    unsupportedPlatforms: {},
     createAdapter: ({ binaryPath, logger }) =>
       createClaudeAdapter({ claudeExecutablePath: binaryPath, ...(logger ? { logger } : {}) }),
     checkSignIn: checkClaudeSignIn,
@@ -69,6 +73,7 @@ export const PROVIDER_RUNTIMES: readonly ProviderRuntime[] = [
     id: 'codex',
     loginCommand: CODEX_LOGIN,
     inheritEnv: [],
+    unsupportedPlatforms: {},
     createAdapter: ({ binaryPath, logger }) =>
       createCodexAdapter({ binaryPath, ...(logger ? { logger } : {}) }),
     checkSignIn: checkCodexSignIn,
@@ -77,6 +82,7 @@ export const PROVIDER_RUNTIMES: readonly ProviderRuntime[] = [
     id: 'opencode',
     loginCommand: OPENCODE_LOGIN,
     inheritEnv: [],
+    unsupportedPlatforms: {},
     createAdapter: ({ binaryPath, logger, skill }) =>
       createOpencodeAdapter({
         binaryPath,
@@ -97,6 +103,11 @@ export function providerRuntimeIds(): string[] {
 
 export function isProviderRuntime(id: string): boolean {
   return RUNTIMES.has(id);
+}
+
+/** Why the provider cannot run on `platform`, or null when it can. */
+export function providerUnsupportedReason(id: string, platform: NodeJS.Platform): string | null {
+  return RUNTIMES.get(id)?.unsupportedPlatforms[platform] ?? null;
 }
 
 export function providerRuntime(id: string): ProviderRuntime {

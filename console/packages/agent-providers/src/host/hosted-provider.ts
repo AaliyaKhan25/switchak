@@ -1,11 +1,12 @@
 import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
-import { lstat, mkdir, open, readFile, rename } from 'node:fs/promises';
+import { lstat, mkdir, open, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { refreshCodexAuthentication } from '../codex/home';
 import { parseVertexLogin, VERTEX_CREDENTIALS_FILE } from '../vertex-login';
 import { importOpenCodeConsole } from './opencode-console';
 import type { HostedCredential } from './provider-login';
+import { replaceFile } from './replace-file';
 
 export type { HostedCredential } from './provider-login';
 
@@ -93,7 +94,7 @@ async function writeAuthentication(root: string, relative: string, content: stri
   } finally {
     await file.close();
   }
-  await rename(temporary, path);
+  await replaceFile(temporary, path);
   const record = await open(
     marker,
     constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW,

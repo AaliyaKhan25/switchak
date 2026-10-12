@@ -22,6 +22,9 @@ export const antigravityAcp: AcpProviderHooks = {
   },
   launch: antigravityLaunch,
   loginCommand: 'antigravity-acp --login',
+  unsupportedPlatforms: {
+    win32: 'Antigravity ACP has no Windows build, so it cannot run on Windows.',
+  },
   // `authMethods` is the agent's own answer: the sign-ins it still wants.
   // Calling `authenticate` here would not test the sign-in but perform it,
   // opening a browser.

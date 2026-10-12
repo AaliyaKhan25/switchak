@@ -2905,6 +2905,8 @@ export type ManagementController = {
    * last reported; null before it has, or when it or the server predates it.
    */
   workspacesDir: string | null;
+  /** Its operating system as it enrolled (`macos`, `linux`, `windows`); null when not known. */
+  os: string | null;
   /**
    * The key provider logins given to this machine are sealed to; null when
    * its controller has none (it keeps no key, or predates sealed logins).
@@ -2968,6 +2970,7 @@ type ManagementControllerJson = {
   revoked_at: string | null;
   status?: unknown;
   workspaces_dir?: string | null;
+  platform?: { os: string } | null;
   public_key?: { alg: string; key: string; key_id: string } | null;
 };
 
@@ -3048,6 +3051,7 @@ export async function fetchManagementControllers(
     revokedAt: json.revoked_at,
     providers: providerReports(json.status),
     workspacesDir: json.workspaces_dir ?? null,
+    os: json.platform?.os ?? null,
     sealingKey:
       json.public_key?.alg === 'X25519'
         ? { key: json.public_key.key, keyId: json.public_key.key_id }

@@ -1,6 +1,5 @@
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
 import { z } from 'zod';
+import { execProvider } from '../provider-process';
 import {
   commandOutput,
   readiness,
@@ -27,7 +26,7 @@ export async function checkClaudeSignIn(input: SignInCheckInput): Promise<Provid
   let output: string;
   try {
     output = (
-      await promisify(execFile)(input.binaryPath, ['auth', 'status'], {
+      await execProvider(input.binaryPath, ['auth', 'status'], {
         cwd: input.cwd,
         env: input.env,
         timeout: 15000,

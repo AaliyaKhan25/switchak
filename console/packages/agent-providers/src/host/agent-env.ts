@@ -65,9 +65,39 @@ export const AGENT_ENV_VARS = [
 ] as const;
 
 /**
+ * What Windows itself, Node and the provider CLIs need there to find the
+ * user's profile, the system and a temporary directory. None is set on macOS
+ * or Linux.
+ */
+const WINDOWS_ENV = [
+  'APPDATA',
+  'COMSPEC',
+  'COMMONPROGRAMFILES',
+  'HOMEDRIVE',
+  'HOMEPATH',
+  'LOCALAPPDATA',
+  'NUMBER_OF_PROCESSORS',
+  'OS',
+  'PATHEXT',
+  'PROCESSOR_ARCHITECTURE',
+  'PROGRAMDATA',
+  'PROGRAMFILES',
+  'PROGRAMFILES(X86)',
+  'SYSTEMDRIVE',
+  'SYSTEMROOT',
+  'TEMP',
+  'TMP',
+  'USERDOMAIN',
+  'USERNAME',
+  'USERPROFILE',
+  'WINDIR',
+];
+
+/**
  * What a session host's `execution.inheritEnv` names: the provider variables
  * above, those each registered provider's runtime asks for, and the basics a
- * CLI needs to find itself, its home and its terminal.
+ * CLI needs to find itself, its home and its terminal. Matched without regard
+ * to case on Windows, where `Path` and `PATH` are one variable.
  * Console and the headless agents controller both launch hosts with it.
  */
 export const EXECUTION_INHERIT_ENV: readonly string[] = [
@@ -80,4 +110,5 @@ export const EXECUTION_INHERIT_ENV: readonly string[] = [
   'LANG',
   'TERM',
   'SSH_AUTH_SOCK',
+  ...WINDOWS_ENV,
 ];

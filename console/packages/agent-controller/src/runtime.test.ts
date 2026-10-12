@@ -126,9 +126,11 @@ function template(cwd = '/work/scout', provider: 'claude' | 'codex' = 'claude') 
 
 /** A process whose command line names the watcher root, as a detached watcher's does. */
 async function fakeWatcher(root: string): Promise<ChildProcess> {
-  const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)', root], {
-    stdio: 'ignore',
-  });
+  // Stops as an agent host does: on SIGTERM, or on Windows when its stop file appears.
+  const script = `const { existsSync } = require('node:fs');
+    const stop = require('node:path').join(process.argv[1], '.stop-' + process.pid);
+    setInterval(() => { if (existsSync(stop)) process.exit(0); }, 100);`;
+  const child = spawn(process.execPath, ['-e', script, root], { stdio: 'ignore' });
   children.push(child);
   await once(child, 'spawn');
   return child;
@@ -139,8 +141,9 @@ describe('InProcessRuntime', () => {
     await runtime.writeCredentials('agent-1', RELAY);
     const path = runtime.credentialsPath('agent-1');
     expect(path).toBe(join(dir, 'data', 'agents', 'agent-1', 'credentials.json'));
-    expect(statSync(path).mode & 0o777).toBe(0o600);
-    expect(statSync(join(dir, 'data', 'agents', 'agent-1')).mode & 0o777).toBe(0o700);
+    if (process.platform !== 'win32') expect(statSync(path).mode & 0o777).toBe(0o600);
+    if (process.platform !== 'win32')
+      expect(statSync(join(dir, 'data', 'agents', 'agent-1')).mode & 0o777).toBe(0o700);
     expect(await readSharedCredentials(template())).toEqual({
       SWITCH_API_ENDPOINT: 'http://127.0.0.1:43210',
       SWITCH_API_TOKEN: 'swlr_relay-token-placeholder',
@@ -288,7 +291,7 @@ describe('InProcessRuntime', () => {
       CLOUD_ML_REGION: 'global',
       GOOGLE_APPLICATION_CREDENTIALS: path,
     });
-    expect(statSync(path).mode & 0o777).toBe(0o600);
+    if (process.platform !== 'win32') expect(statSync(path).mode & 0o777).toBe(0o600);
     expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual(SERVICE_ACCOUNT_KEY_FIXTURE);
   });
 

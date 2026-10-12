@@ -6,24 +6,49 @@ import { executionEnvironment, prepareSharedConfig, sharedConfigSchema } from '.
 
 afterEach(() => vi.unstubAllEnvs());
 
-it('preserves host and configured environment, including shell setup output', async () => {
-  vi.stubEnv('SDK_CUSTOM_HOST_VALUE', 'from-host');
-  vi.stubEnv('SDK_UNLISTED_VALUE', 'must-not-inherit');
-  vi.stubEnv('SWITCH_API_TOKEN', 'discard-inherited-identity');
-  const env = await executionEnvironment(
-    process.cwd(),
-    { SDK_CONFIGURED: 'configured' },
-    'echo setup-output; export SDK_CUSTOM_SETUP="$SDK_CONFIGURED-from-setup"',
-    ['SDK_CUSTOM_HOST_VALUE', 'PATH', 'HOME', 'SHELL']
-  );
-  expect(env.SDK_UNLISTED_VALUE).toBeUndefined();
-  expect(env.SDK_CUSTOM_HOST_VALUE).toBe('from-host');
-  expect(env.SDK_CUSTOM_SETUP).toBe('configured-from-setup');
-  expect(env.SWITCH_API_TOKEN).toBeUndefined();
-});
+it.skipIf(process.platform === 'win32')(
+  'preserves host and configured environment, including shell setup output',
+  async () => {
+    vi.stubEnv('SDK_CUSTOM_HOST_VALUE', 'from-host');
+    vi.stubEnv('SDK_UNLISTED_VALUE', 'must-not-inherit');
+    vi.stubEnv('SWITCH_API_TOKEN', 'discard-inherited-identity');
+    const env = await executionEnvironment(
+      process.cwd(),
+      { SDK_CONFIGURED: 'configured' },
+      'echo setup-output; export SDK_CUSTOM_SETUP="$SDK_CONFIGURED-from-setup"',
+      ['SDK_CUSTOM_HOST_VALUE', 'PATH', 'HOME', 'SHELL']
+    );
+    expect(env.SDK_UNLISTED_VALUE).toBeUndefined();
+    expect(env.SDK_CUSTOM_HOST_VALUE).toBe('from-host');
+    expect(env.SDK_CUSTOM_SETUP).toBe('configured-from-setup');
+    expect(env.SWITCH_API_TOKEN).toBeUndefined();
+  }
+);
 
 it('fails before provider startup if shell setup fails', async () => {
   await expect(executionEnvironment(process.cwd(), {}, 'false', [])).rejects.toThrow();
+});
+
+it.runIf(process.platform === 'win32')('refuses shell setup on Windows, saying why', async () => {
+  await expect(executionEnvironment(process.cwd(), {}, 'echo hi', [])).rejects.toThrow(
+    /POSIX shell snippet/
+  );
+});
+
+it('inherits Path whatever its case on Windows', async () => {
+  const platform = process.platform;
+  Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+  vi.stubEnv('Path', 'C:\\Windows\\System32');
+  try {
+    const env = await executionEnvironment(process.cwd(), {}, undefined, ['PATH']);
+    // Windows has one variable whatever its case; the key is the case it was first set in.
+    const key = Object.keys(env).find(
+      (name) => name.toUpperCase() === 'PATH' && env[name] === 'C:\\Windows\\System32'
+    );
+    expect(key).toBeDefined();
+  } finally {
+    Object.defineProperty(process, 'platform', { value: platform, configurable: true });
+  }
 });
 
 it('gives the provider the host’s own MCP server and no Switch identity', async () => {

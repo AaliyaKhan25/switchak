@@ -195,9 +195,13 @@ are the only session runtime. Lifecycle scripts use noninteractive commands.
 
 Recovery requires the saved provider conversation and host state on the same
 execution host. Moving that state between machines is not an automatic recovery
-operation. Process-group fencing and automatic host replacement require POSIX;
-unsupported Windows recovery fails explicitly. The supervisor survives Console
-closure and worker crashes, but it is not an operating-system boot service.
+operation. Fencing after a crash and automatic host replacement use process
+groups on macOS and Linux. Windows has none, so there a crashed owner's
+leftovers are found by parent process and creation time (PowerShell's CIM
+cmdlets), and a host is asked to stop over its IPC channel or a stop file in
+its state root rather than by SIGTERM, which Windows cannot deliver to be
+caught. The supervisor survives Console closure and worker crashes, but it is
+not an operating-system boot service.
 
 A remote host needs Node 20.3 or newer, the selected provider, its own provider authentication,
 and network access to Switch and the provider. Local SSH fixture coverage does

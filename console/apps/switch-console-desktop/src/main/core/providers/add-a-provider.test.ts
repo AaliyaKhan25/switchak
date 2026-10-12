@@ -105,6 +105,7 @@ describe('a provider added as a plugin and a runtime', () => {
       acceptsLogins: false,
       cloud: false,
       workspacesDir: null,
+      os: null,
       local: null,
     });
 

@@ -1,9 +1,8 @@
-import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { promisify } from 'node:util';
 import { createAcpAdapter, type AcpAdapter } from '../acp/acp-adapter';
 import type { AcpAdapterOptions, AcpProviderHooks, AcpSessionContext } from '../acp/hooks';
 import type { ItemType } from '../events';
+import { execProvider } from '../provider-process';
 import { commandOutput, readiness, signInWith, type ProviderReadiness } from '../readiness';
 
 const CURSOR_LOGIN = 'agent login';
@@ -117,7 +116,7 @@ export const cursorAcp: AcpProviderHooks = {
     let output: string;
     try {
       output = (
-        await promisify(execFile)(binaryPath, ['about'], {
+        await execProvider(binaryPath, ['about'], {
           cwd,
           env,
           timeout: 15000,

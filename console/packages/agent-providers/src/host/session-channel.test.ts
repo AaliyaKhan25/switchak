@@ -318,24 +318,28 @@ it('stops sending to a host that hung up, and waits for the next one', async () 
   expect(await next).toBe('fresh');
 });
 
-it('kills a host that hung up and stays alive, with what it started', async () => {
-  vi.useFakeTimers();
-  try {
-    const kill = vi.spyOn(process, 'kill').mockImplementation(() => true);
-    const links = new SessionLinks();
-    const hung = fakeChild();
-    links.attach('root', hung as unknown as ChildProcess);
-    hung.emit('disconnect');
+// Windows has no process groups; the tree kill it does instead is tested in windows-processes.
+it.skipIf(process.platform === 'win32')(
+  'kills a host that hung up and stays alive, with what it started',
+  async () => {
+    vi.useFakeTimers();
+    try {
+      const kill = vi.spyOn(process, 'kill').mockImplementation(() => true);
+      const links = new SessionLinks();
+      const hung = fakeChild();
+      links.attach('root', hung as unknown as ChildProcess);
+      hung.emit('disconnect');
 
-    await vi.advanceTimersByTimeAsync(HOST_HUNG_UP_MS - 1);
-    expect(kill).not.toHaveBeenCalled();
-    await vi.advanceTimersByTimeAsync(1);
-    // Its group: the provider it started is in it.
-    expect(kill).toHaveBeenCalledWith(-4242, 'SIGKILL');
-  } finally {
-    vi.useRealTimers();
+      await vi.advanceTimersByTimeAsync(HOST_HUNG_UP_MS - 1);
+      expect(kill).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      // Its group: the provider it started is in it.
+      expect(kill).toHaveBeenCalledWith(-4242, 'SIGKILL');
+    } finally {
+      vi.useRealTimers();
+    }
   }
-});
+);
 
 it('leaves a host that hung up and then exited on its own', async () => {
   vi.useFakeTimers();

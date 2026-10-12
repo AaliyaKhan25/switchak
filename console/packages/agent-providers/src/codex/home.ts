@@ -1,8 +1,9 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { chmod, copyFile, lstat, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { chmod, copyFile, lstat, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { parse, stringify } from 'smol-toml';
 import { linkHomeAsset, linkSkills, optionalText } from '../host/provider-home';
+import { replaceFile } from '../host/replace-file';
 
 /**
  * A managed agent's Codex configuration with the sandbox its sessions run
@@ -71,7 +72,7 @@ async function replacePrivateFile(path: string, value: string): Promise<void> {
   const temporary = `${path}.${randomUUID()}.tmp`;
   try {
     await writeFile(temporary, value, { mode: 0o600, flag: 'wx' });
-    await rename(temporary, path);
+    await replaceFile(temporary, path);
   } finally {
     await rm(temporary, { force: true });
   }

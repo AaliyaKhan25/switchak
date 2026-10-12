@@ -106,6 +106,8 @@ export type OwnedMachine = ManagedMachine & {
    * null before it has said.
    */
   workspacesDir: string | null;
+  /** Its operating system as it enrolled (`macos`, `linux`, `windows`); null when not known. */
+  os: string | null;
   local: MachineLocal;
 };
 

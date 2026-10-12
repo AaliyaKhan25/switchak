@@ -3,7 +3,7 @@ import { realpathSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
-import { generateSealingKeyPair } from '@switch-console/agent-providers';
+import { generateSealingKeyPair, isStopMessage } from '@switch-console/agent-providers';
 import packageJson from '../package.json' with { type: 'json' };
 import {
   AccessTokens,
@@ -39,13 +39,7 @@ import {
 import { createLogger, errorMessage } from './log';
 import { dataLayout, ensureDataDir, resolveDataDir, serverWorkspacesDir } from './paths';
 import { definitionProblem } from './reconcile';
-import {
-  assertSupportedPlatform,
-  emptyObservation,
-  InProcessRuntime,
-  observeOnDisk,
-  probeProvider,
-} from './runtime';
+import { emptyObservation, InProcessRuntime, observeOnDisk, probeProvider } from './runtime';
 import { AgentRuntimes } from './runtimes';
 import { type ControllerInfoChange, PROTOCOL_VERSION } from './schemas';
 import {
@@ -133,14 +127,14 @@ Commands:
   uninstall-service --separate-users [--user <name>]
       As root: stop the controller and its agents, and remove what the setup
       made. The agents' directories are kept.
-  doctor [--data-dir <dir>] [--shared-host-bundle <path>]
+  doctor [--data-dir <dir>] [--shared-host-bundle <path>] [--env-file <path>]
       Check this machine can run agents: Node, enrollment, the credential, the
       server, the provider CLIs and their sign-in, the service, and updates.
   update [--check] [--data-dir <dir>]
       Install the newest release with npm, and restart the service if it runs.
       --check only says whether there is one.
 
-run --env-file and install-service --env-file read NAME=value lines (as for
+run, install-service and doctor --env-file read NAME=value lines (as for
 systemd's EnvironmentFile) into the agents' environment: provider API keys, or
 Vertex AI and Bedrock settings such as CLAUDE_CODE_USE_VERTEX,
 ANTHROPIC_VERTEX_PROJECT_ID and CLOUD_ML_REGION.
@@ -347,7 +341,6 @@ async function runCommand(args: string[]): Promise<number> {
     },
     strict: true,
   });
-  assertSupportedPlatform(process.platform);
   const agentRuntime = values['agent-runtime'] ?? 'default';
   if (agentRuntime !== 'default' && agentRuntime !== 'separate-user')
     throw new UsageError('--agent-runtime must be default or separate-user.');
@@ -383,11 +376,18 @@ async function runCommand(args: string[]): Promise<number> {
       ? fileSecrets
       : new MemorySecretStore({ [CONTROLLER_CREDENTIAL]: credential }, 'handed over on stdin');
   const stop = new AbortController();
-  const onSignal = (signal: NodeJS.Signals) => {
+  const onSignal = (signal: NodeJS.Signals | 'a stop request') => {
     log.info(`Received ${signal}; stopping this controller's agents and exiting.`);
     stop.abort();
   };
   for (const signal of SIGNALS) process.once(signal, onSignal);
+  // Windows has no signal a parent can send that is caught here, so Console
+  // asks over the IPC channel it starts this controller with.
+  const onMessage = (message: unknown) => {
+    if (isStopMessage(message)) onSignal('a stop request');
+  };
+  process.on('message', onMessage);
+  process.channel?.unref();
   if (Object.keys(fromFile).length)
     log.info("Read the agents' environment from a file", {
       file: values['env-file'],
@@ -460,6 +460,7 @@ async function runCommand(args: string[]): Promise<number> {
     return EXIT_CODE_FOR[exit];
   } finally {
     for (const signal of SIGNALS) process.off(signal, onSignal);
+    process.off('message', onMessage);
     store.close();
   }
 }
@@ -472,7 +473,7 @@ async function statusCommand(args: string[]): Promise<number> {
   });
   const { dataDir, layout, store, secrets } = await openState(values['data-dir']);
   try {
-    const separateUsers = await findSeparateUsersConfig(currentUid(), dataDir);
+    const separateUsers = await separateUsersConfigHere(dataDir);
     const separateRuntime = separateUsers
       ? new SystemdRuntime({
           config: separateUsers,
@@ -595,7 +596,6 @@ async function installServiceCommand(args: string[]): Promise<number> {
     },
     strict: true,
   });
-  assertSupportedPlatform(process.platform);
   if (values['separate-users']) return installSeparateUsersCommand(values);
   for (const flag of ['user', 'agents-dir', 'agent-users', 'no-block'] as const)
     if (values[flag] !== undefined)
@@ -703,13 +703,21 @@ async function uninstallServiceCommand(args: string[]): Promise<number> {
 async function doctorCommand(args: string[]): Promise<number> {
   const { values } = parseArgs({
     args,
-    options: { 'data-dir': { type: 'string' }, 'shared-host-bundle': { type: 'string' } },
+    options: {
+      'data-dir': { type: 'string' },
+      'shared-host-bundle': { type: 'string' },
+      'env-file': { type: 'string' },
+    },
     strict: true,
   });
+  // The agents' environment, as `run` would have it: a provider signed in by a
+  // key or token there reads as signed in here too.
+  if (values['env-file'])
+    Object.assign(process.env, await readEnvFile(resolve(values['env-file'])));
   const { dataDir, store, secrets } = await openState(values['data-dir']);
   const locator = new PathProviderLocator(process.env.PATH, join(dataDir, 'version-probe'));
   try {
-    const separateUsers = await findSeparateUsersConfig(currentUid(), dataDir);
+    const separateUsers = await separateUsersConfigHere(dataDir);
     const separateRuntime = separateUsers
       ? new SystemdRuntime({
           config: separateUsers,
@@ -857,6 +865,12 @@ async function unitSummary(config: SeparateUsersConfig, slot: number | null): Pr
     (error: { stdout?: string }) => error.stdout ?? 'unknown'
   );
   return `${unit} is ${state.trim()}`;
+}
+
+/** The separate-users setup this data directory has, or none: Windows has no Linux users. */
+async function separateUsersConfigHere(dataDir: string): Promise<SeparateUsersConfig | null> {
+  if (process.platform === 'win32') return null;
+  return findSeparateUsersConfig(currentUid(), dataDir);
 }
 
 function currentUid(): number {

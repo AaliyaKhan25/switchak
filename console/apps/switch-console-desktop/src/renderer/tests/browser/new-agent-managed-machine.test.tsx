@@ -316,6 +316,7 @@ const BOX: OwnedMachine = {
   state: 'online',
   local: null,
   workspacesDir: null,
+  os: null,
   providers: [
     { provider: 'claude', ready: true, problem: null },
     { provider: 'codex', ready: false, problem: 'not logged in' },

@@ -78,6 +78,7 @@ const LAPTOP: OwnedMachine = {
   acceptsLogins: false,
   cloud: false,
   workspacesDir: '/home/me/workspaces',
+  os: null,
 };
 
 let container: HTMLDivElement;

@@ -1,10 +1,12 @@
-import { execFile } from 'node:child_process';
-import { constants } from 'node:fs';
-import { access, mkdir, statfs } from 'node:fs/promises';
+import { mkdir, statfs } from 'node:fs/promises';
 import { arch, freemem, platform, release, totalmem } from 'node:os';
-import { delimiter, join } from 'node:path';
-import { promisify } from 'node:util';
-import type { ProviderReadiness } from '@switch-console/agent-providers';
+import { join } from 'node:path';
+import {
+  execProvider,
+  findOnPath,
+  type ProviderReadiness,
+  providerUnsupportedReason,
+} from '@switch-console/agent-providers';
 import { pluginRegistry } from '@switch-console/plugins/agents';
 import { errorMessage, type Logger } from './log';
 import type { AgentObservation, AgentRuntime } from './runtime';
@@ -72,26 +74,17 @@ export class PathProviderLocator implements ProviderLocator {
     const plugin = pluginRegistry.get(provider);
     if (!plugin) throw new Error(`No provider plugin is registered for '${provider}'.`);
     const dependency = plugin.capabilities.hostDependency;
-    const directories = (this.path ?? '').split(delimiter).filter(Boolean);
-    for (const name of dependency.binaryNames)
-      for (const directory of directories) {
-        const candidate = join(directory, name);
-        try {
-          await access(candidate, constants.X_OK);
-        } catch {
-          continue;
-        }
-        if (dependency.skipVersionProbe)
-          return { path: candidate, version: null, versionProblem: null };
-        return {
-          path: candidate,
-          ...(await readVersion(
-            candidate,
-            dependency.versionArgs ?? ['--version'],
-            this.probeHome
-          )),
-        };
-      }
+    if (providerUnsupportedReason(provider, process.platform) !== null) return null;
+    for (const name of dependency.binaryNames) {
+      const candidate = await findOnPath(name, this.path);
+      if (candidate === null) continue;
+      if (dependency.skipVersionProbe)
+        return { path: candidate, version: null, versionProblem: null };
+      return {
+        path: candidate,
+        ...(await readVersion(candidate, dependency.versionArgs ?? ['--version'], this.probeHome)),
+      };
+    }
     return null;
   }
 }
@@ -104,7 +97,7 @@ async function readVersion(
 ): Promise<{ version: string | null; versionProblem: string | null }> {
   try {
     await mkdir(home, { recursive: true, mode: 0o700 });
-    const { stdout, stderr } = await promisify(execFile)(binary, args, {
+    const { stdout, stderr } = await execProvider(binary, args, {
       timeout: VERSION_TIMEOUT_MS,
       env: {
         ...process.env,

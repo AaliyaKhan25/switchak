@@ -8,6 +8,7 @@ import { z } from 'zod';
 import { releaseOwner, replaceOwner, withOwnershipLock } from './ownership-lock';
 import { fenceDeadOwner, killProcessTree } from './process-fence';
 import type { SessionLinks } from './session-channel';
+import { requestChildStop } from './stop-request';
 
 function alive(pid: number): boolean {
   try {
@@ -29,6 +30,16 @@ async function ownerPid(path: string): Promise<number | null> {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
     throw error;
   }
+}
+
+/**
+ * A Windows process that died of an exception — an access violation, a stack
+ * overflow, a fatal error — exits with its NTSTATUS code, 0xC0000000 and up:
+ * what a signal is elsewhere, so it is recovered rather than taken as the
+ * host refusing to run.
+ */
+function crashedOnWindows(code: number): boolean {
+  return process.platform === 'win32' && code >>> 0 >= 0xc0000000;
 }
 
 /**
@@ -73,8 +84,10 @@ export async function superviseSharedHost(input: {
         continue;
       }
       const log = await open(join(directory, 'worker.log'), 'a', 0o600);
+      const spawnedAt = Date.now();
       const child = spawn(input.executable, input.args, {
         detached: true,
+        windowsHide: true,
         env: input.env,
         stdio: input.links ? ['ignore', log.fd, log.fd, 'ipc'] : ['ignore', log.fd, log.fd],
       });
@@ -87,7 +100,9 @@ export async function superviseSharedHost(input: {
       // so that stopping this supervisor cannot hang on it.
       let escalation: ReturnType<typeof setTimeout> | null = null;
       const stop = () => {
-        child.kill('SIGTERM');
+        requestChildStop(child, input.root).catch((error: unknown) =>
+          console.error(`Could not ask the shared host at ${input.root} to stop: ${String(error)}`)
+        );
         escalation ??= setTimeout(() => {
           if (child.exitCode !== null || child.signalCode !== null || !child.pid) return;
           console.warn(
@@ -110,7 +125,7 @@ export async function superviseSharedHost(input: {
         if (escalation) clearTimeout(escalation);
       }
       if (child.pid) {
-        await fenceDeadOwner(child.pid, child.pid);
+        await fenceDeadOwner(child.pid, child.pid, spawnedAt);
         const workerPath = join(input.root, 'shared-owner.lock');
         try {
           const owner = JSON.parse(await readFile(workerPath, 'utf8'));
@@ -121,7 +136,7 @@ export async function superviseSharedHost(input: {
       }
       if (input.signal.aborted) return;
       if (code === 0) return;
-      if (code !== null) {
+      if (code !== null && !crashedOnWindows(code)) {
         try {
           await readFile(join(directory, 'failure.json'));
         } catch (error) {
@@ -132,7 +147,9 @@ export async function superviseSharedHost(input: {
         }
         throw new Error(`Shared SDK host failed with exit code ${code}.`);
       }
-      console.warn(`Shared SDK host exited on ${signal}; recovering its saved state.`);
+      console.warn(
+        `Shared SDK host exited on ${signal ?? `exception 0x${((code ?? 0) >>> 0).toString(16)}`}; recovering its saved state.`
+      );
       await delay(1000, undefined, { signal: input.signal });
     }
   } catch (error) {

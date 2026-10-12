@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   getWindowsEnvValue,
-  quoteForCmdExe,
+  escapeCmdExeArgument,
+  escapeCmdExeCommand,
   resolveExecFileSpawn,
   resolveWindowsCommandPath,
 } from './windows-spawn';
@@ -27,15 +28,23 @@ describe('getWindowsEnvValue', () => {
   });
 });
 
-describe('quoteForCmdExe', () => {
-  it('quotes a path containing a space', () => {
-    expect(quoteForCmdExe('C:\\Program Files\\nodejs\\npm.cmd')).toBe(
-      '"C:\\Program Files\\nodejs\\npm.cmd"'
+describe('escapeCmdExeCommand', () => {
+  it('caret-escapes a space and other metacharacters in a program path', () => {
+    expect(escapeCmdExeCommand('C:\\Program Files (x86)\\npm.cmd')).toBe(
+      'C:\\Program^ Files^ ^(x86^)\\npm.cmd'
     );
   });
+});
 
-  it('escapes cmd.exe metacharacters', () => {
-    expect(quoteForCmdExe('a&b')).toBe('"a^&b"');
+describe('escapeCmdExeArgument', () => {
+  it('quotes, then caret-escapes twice for the batch file’s own pass', () => {
+    expect(escapeCmdExeArgument('a&b')).toBe('^^^"a^^^&b^^^"');
+    expect(escapeCmdExeArgument('100%')).toBe('^^^"100^^^%^^^"');
+  });
+
+  it('escapes an embedded quote and the backslashes before it for the C runtime', () => {
+    expect(escapeCmdExeArgument('say "hi"')).toBe('^^^"say^^^ \\^^^"hi\\^^^"^^^"');
+    expect(escapeCmdExeArgument('C:\\dir\\')).toBe('^^^"C:\\dir\\\\^^^"');
   });
 });
 
@@ -95,12 +104,11 @@ describe('resolveExecFileSpawn', () => {
     });
 
     expect(spawn.command).toBe('C:\\Windows\\System32\\cmd.exe');
-    // The whole line is wrapped once more because it starts with a quote.
     expect(spawn.args).toEqual([
       '/d',
       '/s',
       '/c',
-      '""C:\\Program Files\\nodejs\\npm.CMD" root -g"',
+      '"C:\\Program^ Files\\nodejs\\npm.CMD ^^^"root^^^" ^^^"-g^^^""',
     ]);
     expect(spawn.windowsVerbatimArguments).toBe(true);
   });
@@ -131,6 +139,6 @@ describe('resolveExecFileSpawn', () => {
     });
 
     expect(spawn.command).toBe('C:\\Windows\\System32\\cmd.exe');
-    expect(spawn.args[3]).toBe('D:\\tools\\claude.cmd --version');
+    expect(spawn.args[3]).toBe('"D:\\tools\\claude.cmd ^^^"--version^^^""');
   });
 });

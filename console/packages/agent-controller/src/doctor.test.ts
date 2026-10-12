@@ -41,6 +41,23 @@ describe('doctor', () => {
     expect(formatChecks(checks)).toContain('ok    claude');
   });
 
+  it('passes a ready Windows machine, which Console runs rather than a service', async () => {
+    const checks = await runDoctor(
+      inputs({
+        platform: 'win32',
+        service: async () => {
+          throw new Error('not asked on Windows');
+        },
+      })
+    );
+    expect(checks.filter((check) => check.status !== 'ok')).toEqual([]);
+    expect(checks.find((check) => check.name === 'Service')?.detail).toMatch(/Switch Console/);
+  });
+
+  it('fails a platform the controller does not run on', async () => {
+    expect(status(await runDoctor(inputs({ platform: 'freebsd' })), 'Platform')).toBe('fail');
+  });
+
   it('fails an old Node, and a machine with no signed-in provider', async () => {
     const checks = await runDoctor(
       inputs({

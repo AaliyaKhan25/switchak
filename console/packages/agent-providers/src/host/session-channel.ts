@@ -3,6 +3,8 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { serverEventSchema, type ServerEvent } from '@switch-console/shared/session-v1';
 import { z } from 'zod';
+import { killProcessTree } from './process-fence';
+import { isStopMessage } from './stop-request';
 
 /**
  * How long a session host that has finished may take to exit once it has
@@ -552,13 +554,19 @@ export class SessionLinks {
 /**
  * Kill a session host and every process in its group. A host is started
  * detached, so it leads its own group, and the provider processes it starts
- * are in it too.
+ * are in it too. Windows has no groups: the host's process tree goes instead.
  */
 function killHostGroup(child: ChildProcess): void {
   if (!child.pid) return;
+  if (process.platform === 'win32') {
+    const root = child.pid;
+    killProcessTree(root).catch((error: unknown) =>
+      console.error(`Could not stop the session host (pid ${root}): ${String(error)}`)
+    );
+    return;
+  }
   try {
-    if (process.platform === 'win32') child.kill('SIGKILL');
-    else process.kill(-child.pid, 'SIGKILL');
+    process.kill(-child.pid, 'SIGKILL');
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
   }
@@ -631,6 +639,8 @@ export function connectParent(port: ParentPort): ParentChannel {
     }
   >();
   const onMessage = (raw: unknown) => {
+    // Heard by the process's stop listener, not by the session channel.
+    if (isStopMessage(raw)) return;
     const parsed = toChildSchema.safeParse(raw);
     if (!parsed.success) {
       console.warn('Ignoring an unreadable message from the parent process.');

@@ -102,6 +102,8 @@ export interface AcpProviderHooks {
    * common vendor keys are already passed through for every provider.
    */
   inheritEnv?: readonly string[];
+  /** The platforms the agent cannot run on, each with the reason a person is told. */
+  unsupportedPlatforms?: Partial<Record<NodeJS.Platform, string>>;
   /**
    * Whether the CLI is signed in, answered without signing it in: a check
    * must never be what changes its answer. `handshake` runs the agent and

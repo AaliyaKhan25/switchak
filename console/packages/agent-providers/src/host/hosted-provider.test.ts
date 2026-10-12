@@ -36,7 +36,7 @@ it('preserves a native token refresh until the owner replaces the source credent
     'fixture-cli'
   );
   const path = join(env.CODEX_HOME!, 'auth.json');
-  expect((await stat(path)).mode & 0o777).toBe(0o600);
+  if (process.platform !== 'win32') expect((await stat(path)).mode & 0o777).toBe(0o600);
   await writeFile(path, '{"tokens":{"access_token":"fixture-refreshed"}}');
   await materializeHostedProvider(
     root,
@@ -132,8 +132,9 @@ it('writes a Vertex AI login’s Google credential under the root, and signs Cla
     CLOUD_ML_REGION: 'global',
     GOOGLE_APPLICATION_CREDENTIALS: path,
   });
-  expect((await stat(path)).mode & 0o777).toBe(0o600);
-  expect((await stat(join(root, 'provider-home'))).mode & 0o777).toBe(0o700);
+  if (process.platform !== 'win32') expect((await stat(path)).mode & 0o777).toBe(0o600);
+  if (process.platform !== 'win32')
+    expect((await stat(join(root, 'provider-home'))).mode & 0o777).toBe(0o700);
   expect(JSON.parse(await readFile(path, 'utf8'))).toEqual(SERVICE_ACCOUNT_KEY_FIXTURE);
 
   await materializeHostedProvider(root, env, vertex(AUTHORIZED_USER_FIXTURE), 'fixture-cli');
