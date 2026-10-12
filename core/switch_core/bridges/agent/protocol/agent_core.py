@@ -1294,6 +1294,12 @@ class AgentCore:
             None,
         )
         if admin is None:
+            logger.warning(
+                "No admin client running for %s; dropping a Switch Trust %s "
+                "notice that would have been posted there",
+                room.id,
+                outcome,
+            )
             return
         message_type = (
             AdminMessageType.TRUST_ALERTED
@@ -1853,9 +1859,17 @@ class AgentCore:
         event_id = await client.send_message(
             room.transport_room_id, f"*{detail}*", format="markdown", metered=True
         )
-        if pending_alert is not None and event_id is not None:
-            annotation, outcome = pending_alert
-            await self._post_trust_alert_notice(room, event_id, annotation, outcome)
+        if pending_alert is not None:
+            if event_id is None:
+                logger.warning(
+                    "Status update to %s failed to send; dropping its pending "
+                    "Switch Trust %s notice along with it",
+                    room.id,
+                    pending_alert[1],
+                )
+            else:
+                annotation, outcome = pending_alert
+                await self._post_trust_alert_notice(room, event_id, annotation, outcome)
 
     async def set_runtime_state(
         self,
@@ -2597,11 +2611,19 @@ class AgentCore:
             event_id = await client.send_message(
                 room.transport_room_id, outcome, format="markdown", metered=True
             )
-            if pending_alert is not None and event_id is not None:
-                annotation, trust_outcome = pending_alert
-                await self._post_trust_alert_notice(
-                    room, event_id, annotation, trust_outcome
-                )
+            if pending_alert is not None:
+                if event_id is None:
+                    logger.warning(
+                        "Finalise message for task %s failed to send; dropping "
+                        "its pending Switch Trust %s notice along with it",
+                        task_id,
+                        pending_alert[1],
+                    )
+                else:
+                    annotation, trust_outcome = pending_alert
+                    await self._post_trust_alert_notice(
+                        room, event_id, annotation, trust_outcome
+                    )
 
     async def cancel_task(self, agent_id: str, task_id: str, reason: str) -> None:
         """Cancel a task (requester only)."""

@@ -33,11 +33,16 @@ class _FakeHumanActor:
     """Already-joined human actor — these tests exercise the trust gate, not
     the join race `test_bridge_unknown_member_first_message.py` covers."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, fail_send: bool = False) -> None:
         self.transport_user_id = "@ext_alice:switch.local"
         self.sent: list[tuple[str, str]] = []
+        self._fail_send = fail_send
 
-    async def send_message(self, room_id: str, content: str, **_kw: object) -> str:
+    async def send_message(
+        self, room_id: str, content: str, **_kw: object
+    ) -> str | None:
+        if self._fail_send:
+            return None
         self.sent.append((room_id, content))
         return "$event-1"
 
@@ -273,6 +278,32 @@ async def test_alerted_message_reaches_the_room_and_sender_is_notified() -> None
     assert "Switch Trust flagged this message" in body
     assert root_or_ref == "mm-post-1"
     assert message_type == AdminMessageType.TRUST_ALERTED.value
+
+
+async def test_a_failed_relay_does_not_notify_the_sender_of_an_alert_never_sent() -> (
+    None
+):
+    """If the message never actually reached the room, telling the sender it
+    was flagged/redacted would be misleading — the notice must wait until the
+    send is confirmed."""
+    human_actor = _FakeHumanActor(fail_send=True)
+    adapter = _FakeAdapter()
+    result = TrustCheckResult(
+        outcome="alerted",
+        policy_id="policy-1",
+        policy_name="default",
+        findings=(
+            TrustFinding(category="pii/email", detector_name="email", severity="low"),
+        ),
+    )
+    bridge = _bridge(human_actor, adapter, _FixedTrustClient(result))
+
+    await CollaborationCore._handle_inbound_message(
+        bridge, _message("my email is alice@example.com")
+    )
+
+    assert human_actor.sent == []
+    assert adapter.admin_messages == []
 
 
 async def test_trust_check_failure_fails_open_and_annotates_instead_of_blocking() -> (
