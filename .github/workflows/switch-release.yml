@@ -219,20 +219,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - image: switch-core
-            context: .
-            dockerfile: deploy/shared_resources/images/Dockerfile.switch
-          - image: gateway
-            context: .
-            dockerfile: deploy/shared_resources/images/Dockerfile.gateway
-          - image: setup
-            context: .
-            dockerfile: deploy/shared_resources/images/Dockerfile.setup
-          # The service that launches Switch cloud machines (deploy/hosted).
-          - image: hosted-controller
-            context: deploy/hosted/controller
-            dockerfile: deploy/hosted/controller/Dockerfile
+        include: ${{ fromJSON(needs.prep.outputs.images) }}
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0

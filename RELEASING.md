@@ -1,8 +1,8 @@
 # Releasing Switch
 
 This describes how to cut a release of the **Switch core stack** — the
-`switch-core`, `gateway`, `setup` and `hosted-controller` container images, the
-Helm chart, and the standalone Docker Compose file. The Switch Console desktop app releases separately
+`switch-core`, `gateway`, `setup` and `switch-hosted-controller` container
+images, the Helm charts, and the standalone Docker Compose file. The Switch Console desktop app releases separately
 (see `.github/workflows/switch-console-release.yml` and `console/docs/INSTALL.md`).
 
 ## Versioning
@@ -23,8 +23,8 @@ Never derive one from the other.
 ### What is, and is not, separately versioned
 
 The **operator dashboard** (`gateway/`), the **setup image**, the
-**hosted-controller image**, the **Helm chart**, and the **standalone compose
-artifact** have no version of their own. They ship
+**switch-hosted-controller image**, the **Helm charts**, and the **standalone
+compose artifact** have no version of their own. They ship
 inside the switch-core release and are stamped with its version at package time,
 which is what lets a single tag pin the whole stack. They appear in
 `artifacts.yaml` with `version_from: switch-core` — listed, because a registry
