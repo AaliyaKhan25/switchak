@@ -74,8 +74,8 @@ export const RELEASE_REPO_NAME = 'switch';
 // Two pins: a canary build can run a switch-core pre-release while stable
 // stays on the last release. `switch-console.pins.switch-core` and
 // `switch-console.canary_pins.switch-core` respectively, each checked.
-export const STABLE_SWITCH_VERSION = '0.29.0';
-export const CANARY_SWITCH_VERSION = '0.30.0-rc.11';
+export const STABLE_SWITCH_VERSION = '0.30.0';
+export const CANARY_SWITCH_VERSION = '0.30.0';
 export const COMPATIBLE_SWITCH_VERSION = isCanary ? CANARY_SWITCH_VERSION : STABLE_SWITCH_VERSION;
 
 // The last switch-core release that can still read a Matrix homeserver.

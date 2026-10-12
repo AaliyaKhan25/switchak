@@ -1614,6 +1614,8 @@ version of their own to them without also giving them a release of their own.
 
 ### [Unreleased]
 
+### [0.39.0] - 2026-10-12
+
 #### Added
 - **Service connections follow the server's `service_connections` flag,**
   apart from cloud machines. With it off, Your Agents offers no Connections,
@@ -1626,11 +1628,21 @@ version of their own to them without also giving them a release of their own.
   Console using that server. On a switch-core release that offers agent
   management, Console then moves your agents onto managed machines by itself.
   Releases from before agent management ignore both settings.
-- **Canary has its own switch-core pin.** The canary build bundles and runs
-  switch-core 0.30.0-rc.11 for the servers it manages, while stable stays on
-  0.29.0. A canary pin can never be older than the stable one. Canary and
-  stable share their managed servers on one computer, so once canary has
-  updated one, stable will not start it again until stable's pin catches up.
+- **Agents / Rooms sidebar and a reworked workspace menu.** On a server with
+  agent management, Console leads with Agents and Rooms above the legacy
+  Sessions, behind the server's feature flags, and the workspace menu is
+  restyled (#751).
+- **Managed server status and a Server page.** A managed server shows status
+  dots, has its own Server page, and surfaces a frozen-workspace state (#762).
+- **Switch Trust settings.** Guardrails are configured from a settings panel in
+  Console, backed by the gateway's Switch Trust API (#747).
+- **Windows support for managed agents and the controller** (#765).
+- **Canary has its own switch-core pin.** The canary build can bundle and run a
+  different switch-core release for the servers it manages than stable does — a
+  pre-release can be tried on canary without moving stable. The canary pin can
+  never be older than the stable one. Canary and stable share their managed
+  servers on one computer, so once canary has updated one, stable will not start
+  it again until stable's pin catches up (#764).
 - **Switch cloud on the agents controller.** On a server whose cloud machines
   run the agents controller, choosing Switch cloud in the New agent form starts
   your cloud machine and waits for it to come online (its first start takes a
