@@ -10,6 +10,7 @@ from dataclasses import dataclass
 import httpx
 import pytest
 
+from switch_core.keys import UndecryptableError
 from switch_core.trust.client import (
     DynamicTrustClient,
     GuardrailBlockedError,
@@ -56,11 +57,16 @@ class _FakeKeyring:
         return value.removeprefix("enc:")
 
 
-def _dynamic_client(row: _FakeRow | None, handler) -> DynamicTrustClient:
+class _UndecryptableKeyring:
+    def decrypt(self, value: str) -> str:
+        raise UndecryptableError("no key in the keyring opens this value")
+
+
+def _dynamic_client(row: _FakeRow | None, handler, keyring=None) -> DynamicTrustClient:
     return DynamicTrustClient(
         session_factory=_FakeSessionFactory(),  # type: ignore[arg-type]
         store=_FakeStore(row),  # type: ignore[arg-type]
-        keyring=_FakeKeyring(),  # type: ignore[arg-type]
+        keyring=keyring or _FakeKeyring(),  # type: ignore[arg-type]
         client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
         timeout_seconds=1.0,
     )
@@ -111,6 +117,25 @@ async def test_dynamic_client_checks_against_the_current_row() -> None:
     assert seen["policy"] == "pol_123"
     assert seen["url"] == "https://trust.example/guardrails/check"
     assert result.outcome == "ok"
+
+
+@pytest.mark.asyncio
+async def test_dynamic_client_turns_an_undecryptable_key_into_a_check_error() -> None:
+    """A key encrypted under a key since dropped from SECRET_KEYS must not
+    crash message sending — `check_message` only fails open on
+    `GuardrailsCheckError`, so the decrypt failure has to become one."""
+    row = _FakeRow(
+        endpoint="https://trust.example",
+        policy_id="pol_123",
+        api_key_encrypted="enc:k",
+    )
+    client = _dynamic_client(row, _unreachable, keyring=_UndecryptableKeyring())
+
+    with pytest.raises(GuardrailsCheckError):
+        await client.check(role="user", content="hi", room_id="room-1")
+
+    result = await check_message(client, role="user", content="hi", room_id="room-1")
+    assert result.outcome == "errored"
 
 
 def _client(handler) -> HttpTrustClient:

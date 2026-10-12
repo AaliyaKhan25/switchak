@@ -14,9 +14,13 @@ class TrustSettingsStore:
 
     No row, or one missing ``policy_id``/``api_key_encrypted``, means the
     check is off — see ``switch_core.trust.client.DynamicTrustClient``.
-    Merge semantics (e.g. keeping the existing API key when a caller doesn't
-    supply a new one) are the caller's job; this store only ever writes the
-    exact values it's given.
+    ``endpoint``/``policy_id`` are written exactly as given; ``upsert``'s
+    ``api_key_encrypted=None`` means "leave whatever is already stored
+    untouched" (there is no request shape that means "clear the key but keep
+    the row" — ``clear()`` drops the whole row). That merge happens in the
+    ``ON CONFLICT`` clause itself via ``COALESCE``, not in a caller that reads
+    the row first: two saves racing each other can't have one silently
+    overwrite the other's key with a value it read before the write.
     """
 
     async def get(self, session: AsyncSession) -> TrustSettings | None:
@@ -33,23 +37,23 @@ class TrustSettingsStore:
         policy_id: str | None,
         api_key_encrypted: str | None,
     ) -> TrustSettings:
-        stmt = (
-            insert(TrustSettings)
-            .values(
-                id=_ROW_ID,
-                endpoint=endpoint,
-                policy_id=policy_id,
-                api_key_encrypted=api_key_encrypted,
-            )
-            .on_conflict_do_update(
-                index_elements=[TrustSettings.id],
-                set_={
-                    "endpoint": endpoint,
-                    "policy_id": policy_id,
-                    "api_key_encrypted": api_key_encrypted,
-                    "updated_at": func.now(),
-                },
-            )
+        insert_stmt = insert(TrustSettings).values(
+            id=_ROW_ID,
+            endpoint=endpoint,
+            policy_id=policy_id,
+            api_key_encrypted=api_key_encrypted,
+        )
+        stmt = insert_stmt.on_conflict_do_update(
+            index_elements=[TrustSettings.id],
+            set_={
+                "endpoint": endpoint,
+                "policy_id": policy_id,
+                "api_key_encrypted": func.coalesce(
+                    insert_stmt.excluded.api_key_encrypted,
+                    TrustSettings.api_key_encrypted,
+                ),
+                "updated_at": func.now(),
+            },
         )
         await session.execute(stmt)
         await session.flush()

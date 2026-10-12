@@ -81,6 +81,34 @@ class TestTrustSettingsStore:
             assert settings.api_key_encrypted == "enc:k"
             assert settings.endpoint == "https://trust2.example"
 
+    async def test_upsert_with_no_key_given_preserves_the_stored_one(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """`api_key_encrypted=None` means "leave it alone", not "clear it" —
+        the merge a caller resolves by passing `None` rather than reading the
+        row first, so a concurrent save of just the endpoint can't race one
+        that just changed the key."""
+        store = TrustSettingsStore()
+        async with session_factory() as session:
+            await store.upsert(
+                session,
+                endpoint="https://trust.example",
+                policy_id="pol_123",
+                api_key_encrypted="enc:k",
+            )
+            await store.upsert(
+                session,
+                endpoint="https://trust2.example",
+                policy_id="pol_123",
+                api_key_encrypted=None,
+            )
+            await session.commit()
+
+            settings = await store.get(session)
+            assert settings is not None
+            assert settings.api_key_encrypted == "enc:k"
+            assert settings.endpoint == "https://trust2.example"
+
     async def test_clear_removes_the_row(
         self, session_factory: async_sessionmaker[AsyncSession]
     ) -> None:

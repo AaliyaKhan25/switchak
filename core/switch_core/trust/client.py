@@ -59,7 +59,8 @@ _REDACTION_PLACEHOLDER = "[redacted]"
 
 
 class GuardrailsCheckError(RuntimeError):
-    """A check did not complete: network error, timeout, or a non-2xx answer."""
+    """A check did not complete: network error, timeout, non-2xx answer, or a
+    settings read/decrypt failure before the request was even made."""
 
 
 class GuardrailBlockedError(Exception):
@@ -152,13 +153,28 @@ class DynamicTrustClient:
     async def check(
         self, *, role: Role, content: str, room_id: str
     ) -> TrustCheckResult:
-        async with self._session_factory() as session:
-            settings = await self._store.get(session)
-        if settings is None or not settings.policy_id or not settings.api_key_encrypted:
-            return TrustCheckResult(outcome="ok", policy_id=None, policy_name=None)
+        # The DB read and the decrypt below are not network calls to Switch
+        # Trust, so neither raises `GuardrailsCheckError` on its own — but a
+        # stuck pool or an `UndecryptableError` from a key rotated out too
+        # soon is exactly the kind of failure `check_message` exists to fail
+        # open on, so anything either raises is folded into the same error.
+        try:
+            async with self._session_factory() as session:
+                settings = await self._store.get(session)
+            if (
+                settings is None
+                or not settings.policy_id
+                or not settings.api_key_encrypted
+            ):
+                return TrustCheckResult(outcome="ok", policy_id=None, policy_name=None)
+            api_key = self._keyring.decrypt(settings.api_key_encrypted)
+        except Exception as error:
+            raise GuardrailsCheckError(
+                f"Could not read Switch Trust settings: {error}"
+            ) from error
         http_client = HttpTrustClient(
             base_url=settings.endpoint,
-            api_key=self._keyring.decrypt(settings.api_key_encrypted),
+            api_key=api_key,
             policy_id=settings.policy_id,
             timeout_seconds=self._timeout_seconds,
             client=self._client,

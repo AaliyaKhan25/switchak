@@ -171,9 +171,14 @@ export const GuardrailsSection = observer(function GuardrailsSection({
               <Field>
                 <FieldLabel>
                   Switch Trust API key
-                  {settings.hasApiKey && (
+                  {settings.hasApiKey && settings.apiKeyLast4 && (
                     <span className="ml-1 font-normal text-foreground-muted">
                       (configured, ending •••{settings.apiKeyLast4})
+                    </span>
+                  )}
+                  {settings.hasApiKey && !settings.apiKeyLast4 && (
+                    <span className="ml-1 font-normal text-destructive">
+                      (configured, but unreadable — save a new key to replace it)
                     </span>
                   )}
                 </FieldLabel>

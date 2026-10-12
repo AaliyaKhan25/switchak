@@ -7,6 +7,7 @@ covers the whole deployment rather than one tenant's traffic.
 
 from __future__ import annotations
 
+import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
@@ -21,8 +22,11 @@ from switch_core.gateway.schemas import (
     TrustSettingsResponse,
     TrustSettingsUpdateRequest,
 )
+from switch_core.keys import UndecryptableError
 
 router = APIRouter()
+
+logger = logging.getLogger(__name__)
 
 # Matches the previous env-var default (`SwitchConfig.switch_trust_endpoint`,
 # since removed) — shown until an operator saves their own.
@@ -40,11 +44,19 @@ def _to_response(
             api_key_last4=None,
             enabled=False,
         )
-    api_key_last4 = (
-        config.keyring.decrypt(settings.api_key_encrypted)[-4:]
-        if settings.api_key_encrypted
-        else None
-    )
+    api_key_last4 = None
+    if settings.api_key_encrypted:
+        try:
+            api_key_last4 = config.keyring.decrypt(settings.api_key_encrypted)[-4:]
+        except UndecryptableError:
+            # A key encrypted under one since dropped from SECRET_KEYS. Report
+            # it as configured but unreadable rather than 500ing — an operator
+            # has to be able to load this page to save a replacement key, the
+            # only way out of this state.
+            logger.warning(
+                "Stored Switch Trust API key is not decryptable under any "
+                "current key; reporting it as configured but unreadable."
+            )
     return TrustSettingsResponse(
         endpoint=settings.endpoint,
         policy_id=settings.policy_id,
@@ -72,13 +84,13 @@ async def update_trust_settings(
     _admin: Annotated[User, Depends(require_admin)],
 ) -> TrustSettingsResponse:
     """`req.api_key` omitted leaves whatever key is already stored untouched,
-    so changing the endpoint or policy id doesn't force re-entering it."""
-    store = TrustSettingsStore()
-    existing = await store.get(session)
-    api_key_encrypted = existing.api_key_encrypted if existing else None
-    if req.api_key is not None:
-        api_key_encrypted = config.keyring.encrypt(req.api_key)
-    settings = await store.upsert(
+    so changing the endpoint or policy id doesn't force re-entering it — enforced
+    by `TrustSettingsStore.upsert` itself, not a read here, so two admins saving
+    at once can't have one drop the other's key."""
+    api_key_encrypted = (
+        config.keyring.encrypt(req.api_key) if req.api_key is not None else None
+    )
+    settings = await TrustSettingsStore().upsert(
         session,
         endpoint=req.endpoint,
         policy_id=req.policy_id,
