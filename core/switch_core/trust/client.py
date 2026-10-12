@@ -1,12 +1,11 @@
 """Switch Trust: a guardrails service checked before a message is sent.
 
-Calls the check-only endpoint added in
-https://github.com/sandbox-quantum/hoot/pull/2397 — a provider-agnostic
-`messages` array in, a block/allow verdict out, no LLM provider in the loop.
-`NullTrustClient` is what runs when the feature is off (`SwitchConfig.
-trust_enabled` is False): a client that always allows, so no call site has to
-ask whether the feature is on — the same shape as `telemetry/sink.py`'s
-`NullSink`.
+Calls the guardrails external processor's check-only endpoint — a
+provider-agnostic `messages` array in, a block/allow verdict out, no LLM
+provider in the loop. `NullTrustClient` is what runs when the feature is off
+(`SwitchConfig.trust_enabled` is False): a client that always allows, so no
+call site has to ask whether the feature is on — the same shape as
+`telemetry/sink.py`'s `NullSink`.
 """
 
 from __future__ import annotations
@@ -44,7 +43,7 @@ _AGENT_NAME = "Switch Rooms Agents"
 # confirmed for OK and BLOCKED in the endpoint's README; REDACTED/ALERTED/
 # ERRORED are inferred from the same naming and the documented severity order
 # (Blocked > Redacted > Alerted > Errored > OK) — worth confirming once
-# sandbox-quantum/hoot#2397 lands.
+# the external processor's REDACTED/ALERTED/ERRORED outcomes ship.
 TrustOutcome = Literal["ok", "blocked", "redacted", "alerted", "errored"]
 
 _OUTCOME_BY_WIRE_VALUE: dict[str, TrustOutcome] = {
@@ -296,9 +295,9 @@ def trust_annotation(result: TrustCheckResult) -> str | None:
     if result.outcome == "alerted":
         categories = ", ".join(sorted({f.category for f in result.findings}))
         detail = categories or "policy alert"
-        return f"⚠️ _Switch Trust: {detail} (not blocked)_"
+        return f"⚠️  _Switch Trust flagged this message (not blocked - {detail})._"
     if result.outcome == "errored":
-        return "⚠️ _Switch Trust could not fully check this message_"
+        return "⚠️ _Switch Trust could not check this message_"
     return None
 
 

@@ -2,12 +2,10 @@
 
 Integrates Switch with **Switch Trust**, a guardrails service that evaluates a
 message against a policy and returns a block/allow verdict. The service
-exposes a `/guardrails/check` endpoint (see
-[hoot#2397](https://github.com/sandbox-quantum/hoot/pull/2397) and its
-[README](https://github.com/sandbox-quantum/hoot/blob/300cece9ec3625a5327a06aea66681c444c53139/services/aispm/guardrails/common/externalprocessor/README.md))
-that takes a provider-agnostic `messages` array and returns an `outcome` plus
-findings. This doc covers v1: a global, env-configured gate in front of every
-message Switch sends, blocking on a `BLOCKED` outcome.
+exposes a `/guardrails/check` endpoint on its external processor (server
+side) that takes a provider-agnostic `messages` array and returns an
+`outcome` plus findings. This doc covers v1: a global, env-configured gate in
+front of every message Switch sends, blocking on a `BLOCKED` outcome.
 
 ## Scope
 
@@ -51,14 +49,14 @@ interception point further down the stack.
 
 ## Enforcement flow
 
-1. Map the outgoing message to the hoot request shape:
+1. Map the outgoing message to the external processor's request shape:
    ```json
    {"messages": [{"role": "<mapped>", "content": "<body>"}]}
    ```
    Role mapping: `agent` → `assistant`, `human`/`bridge` → `user`.
 2. `POST {switch_trust_endpoint}/guardrails/check` — the check-only endpoint
-   added in [hoot#2397](https://github.com/sandbox-quantum/hoot/pull/2397) —
-   with headers `x-guardrails-policy-id`, `x-flintai-api-key`, and three
+   on the guardrails external processor (server side) — with headers
+   `x-guardrails-policy-id`, `x-flintai-api-key`, and three
    always-set identity headers Switch Trust uses to group checks:
    - `x-agent-name`: a constant, `Switch Rooms Agents` — Switch has no single agent
      to attribute a check to (a room can hold several, and a human-authored
@@ -117,9 +115,9 @@ on `TrustCheckResult.outcome`:
   accidentally end up in a log line or a notice the way it could if findings
   carried it around. The caller swaps in `redacted_content` before sending if
   it's set. (The endpoint's own response doesn't carry a pre-sanitized
-  message — hoot's "SanitizedMessages" is dashboard-ingestion-only state, not
-  part of the `/guardrails/check` JSON body — so this redaction is Switch's
-  own, built from the findings' detected text.) **Human-authored**: the
+  message — the processor's "SanitizedMessages" is dashboard-ingestion-only
+  state, not part of the `/guardrails/check` JSON body — so this redaction is
+  Switch's own, built from the findings' detected text.) **Human-authored**: the
   redacted content is what reaches the room, but the sender would otherwise
   never know their own words were altered — `CollaborationCore` also calls
   the adapter's `admin_message(...)` back to the originating channel (a new
@@ -221,9 +219,9 @@ bootstrap stopgap, never a real deployment's config, and are gone: see
   split across messages). Needs a role-mapping strategy for Switch's
   multi-party rooms (which don't have a strict two-party turn structure) and a
   decision on including/excluding system/admin notices.
-- **Tool calls / tool results**: the hoot endpoint supports `tool_calls` and
-  `tool_result` message fields; Switch doesn't yet have an obvious mapping
-  from its agent-protocol tool use onto that shape.
+- **Tool calls / tool results**: the external processor's endpoint supports
+  `tool_calls` and `tool_result` message fields; Switch doesn't yet have an
+  obvious mapping from its agent-protocol tool use onto that shape.
 - **Per-tenant / per-workspace policy**: today it's one global policy for the
   whole deployment. Multiple tenants wanting different policies needs a DB
   table, migration, and an admin API — a materially bigger lift than the env
