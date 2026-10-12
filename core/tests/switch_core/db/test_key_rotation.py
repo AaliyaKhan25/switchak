@@ -26,6 +26,7 @@ from switch_core.db.models import (
     CollaborationBridge,
     MessagingInstall,
     Tenant,
+    TrustSettings,
     User,
 )
 from switch_core.db.session_scope import tenant_session
@@ -161,6 +162,35 @@ async def test_a_value_no_key_opens_stops_the_boot(
     monkeypatch.setattr(encrypted_json, "_keyring", too_early)
     with pytest.raises(UndecryptableError):
         await reencrypt_stored_secrets(rls_harness.restricted, too_early, [tenant_id])
+
+
+async def test_the_global_trust_settings_key_is_reencrypted_with_no_tenants(
+    rls_harness: RLSHarness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`trust_settings` is a global table (`rls_ddl.GLOBAL_TABLES`), swept
+    once outside the per-tenant loop — it must be reached even when there are
+    no tenants to iterate over at all."""
+    monkeypatch.setattr(encrypted_json, "_keyring", _OLD)
+    async with rls_harness.owner() as session:
+        session.add(
+            TrustSettings(
+                id="global",
+                endpoint="https://trust.example",
+                policy_id="pol_123",
+                api_key_encrypted=_legacy_encrypt("trust-key"),
+            )
+        )
+        await session.commit()
+
+    monkeypatch.setattr(encrypted_json, "_keyring", _NEW)
+    await reencrypt_stored_secrets(rls_harness.restricted, _NEW, [])
+
+    current = _NEW.current_prefix()
+    stored = await _raw(
+        rls_harness.owner, "trust_settings", "api_key_encrypted", "global"
+    )
+    assert isinstance(stored, str) and stored.startswith(current)
+    assert _NEW.decrypt(stored) == "trust-key"
 
 
 async def test_a_hash_only_key_is_left_alone(

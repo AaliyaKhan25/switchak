@@ -137,6 +137,11 @@ POLICY_NAME = "tenant_isolation"
 # workspace is that workspace's `machine_workspaces` row, which is scoped, and
 # `tenants_of_cloud_machine` (`db/tenant_lookup.py`) is how the cloud
 # controller, which acts for no tenant, finds which workspaces those are.
+#
+# `trust_settings` is Switch Trust's one guardrails policy for the whole
+# deployment (`docs/design/switch-trust-guardrails-v1.md`'s Settings UI
+# section) — a policy that varied per tenant would be a new scoped table, not
+# a row here.
 GLOBAL_TABLES = frozenset(
     {
         "cloud_machines",
@@ -146,6 +151,7 @@ GLOBAL_TABLES = frozenset(
         "telemetry_milestones",
         "telemetry_snapshot_watermark",
         "switch_core_processes",
+        "trust_settings",
     }
 )
 
