@@ -32,7 +32,7 @@ Role = Literal["user", "assistant"]
 # traffic onto one Switch Trust agent rather than inventing a per-sender
 # identity Switch Trust has no use for. `x-agent-session-id` (the room) and
 # `x-agent-turn-id` (one per check) carry the per-call distinction instead.
-_AGENT_NAME = "Switch Rooms"
+_AGENT_NAME = "Switch Rooms Agents"
 
 # The outcome a check settles on. "errored" covers both what the wire protocol
 # calls GUARDRAIL_RESULT_OUTCOME_ERRORED (a detector itself failed, but the

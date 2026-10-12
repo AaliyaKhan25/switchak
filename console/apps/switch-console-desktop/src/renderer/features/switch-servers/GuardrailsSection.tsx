@@ -4,6 +4,7 @@ import { failureText } from '@renderer/lib/errors/describe-failure';
 import { rpc } from '@renderer/lib/ipc';
 import { Button } from '@renderer/lib/ui/button';
 import { Checkbox } from '@renderer/lib/ui/checkbox';
+import { DisclosureRow } from '@renderer/lib/ui/disclosure-row';
 import { Field, FieldGroup, FieldLabel } from '@renderer/lib/ui/field';
 import { Input } from '@renderer/lib/ui/input';
 import { cn } from '@renderer/utils/utils';
@@ -83,7 +84,6 @@ export const GuardrailsSection = observer(function GuardrailsSection({
         if (result.kind === 'loaded') {
           setSettings(result.settings);
           setForm(formFor(result.settings));
-          setOpen(result.settings.enabled);
         } else {
           setLoadError(recoverableResultText(result));
         }
@@ -135,7 +135,6 @@ export const GuardrailsSection = observer(function GuardrailsSection({
     try {
       applyResult(await rpc.switchServers.clearTrustSettings(serverId));
       setConfirmingOff(false);
-      setOpen(false);
     } catch (cause) {
       setActionError(failureText(cause, 'Could not turn off Switch Trust.'));
     } finally {
@@ -151,53 +150,24 @@ export const GuardrailsSection = observer(function GuardrailsSection({
 
       {form && settings && (
         <>
-          <label className="group/field flex cursor-pointer items-start gap-2.5">
-            <Checkbox
-              checked={settings.enabled}
-              onCheckedChange={() => {
-                if (settings.enabled) {
-                  setConfirmingOff(true);
-                } else {
-                  setOpen((v) => !v);
-                }
-              }}
-              className="mt-0.5"
-            />
-            <span className="flex flex-col gap-0.5">
-              <span className="text-sm font-medium text-foreground">
-                Switch Trust Integration enabled
+          <DisclosureRow
+            open={open}
+            onToggle={() => setOpen((v) => !v)}
+            title="Switch Trust Integration"
+            meta={
+              <span className="flex items-center gap-1.5">
+                <Checkbox checked={settings.hasApiKey} disabled />
+                {settings.hasApiKey ? 'Monitoring Active' : 'Monitoring Inactive'}
               </span>
-              <span className="text-xs text-foreground-muted">
-                {settings.enabled
-                  ? 'Every message this server sends is checked before it goes out.'
-                  : 'Set a Switch Trust endpoint and an API key to turn it on.'}
-              </span>
-            </span>
-          </label>
+            }
+          />
 
           <div className={cn('flex flex-col gap-3 pt-3', !open && 'hidden')}>
+            <p className="text-xs text-foreground-muted">
+              Every message this server sends is checked before it goes out once an endpoint and
+              an API key are set.
+            </p>
             <FieldGroup>
-              <Field>
-                <FieldLabel>Switch Trust Endpoint</FieldLabel>
-                <Input
-                  value={form.endpoint}
-                  onChange={(e) => setForm({ ...form, endpoint: e.target.value })}
-                  spellCheck={false}
-                  autoComplete="off"
-                />
-              </Field>
-              <Field>
-                <FieldLabel>
-                  Guardrails Policy ID
-                  <span className="ml-1 font-normal text-foreground-muted">(optional)</span>
-                </FieldLabel>
-                <Input
-                  value={form.policyId}
-                  onChange={(e) => setForm({ ...form, policyId: e.target.value })}
-                  spellCheck={false}
-                  autoComplete="off"
-                />
-              </Field>
               <Field>
                 <FieldLabel>
                   Switch Trust API key
@@ -216,6 +186,24 @@ export const GuardrailsSection = observer(function GuardrailsSection({
                   onChange={(e) => setForm({ ...form, apiKey: e.target.value })}
                 />
               </Field>
+              <Field>
+                <FieldLabel>Guardrails Policy ID</FieldLabel>
+                <Input
+                  value={form.policyId}
+                  onChange={(e) => setForm({ ...form, policyId: e.target.value })}
+                  spellCheck={false}
+                  autoComplete="off"
+                />
+              </Field>
+              <Field>
+                <FieldLabel>Switch Trust Endpoint</FieldLabel>
+                <Input
+                  value={form.endpoint}
+                  onChange={(e) => setForm({ ...form, endpoint: e.target.value })}
+                  spellCheck={false}
+                  autoComplete="off"
+                />
+              </Field>
             </FieldGroup>
             {actionError && <p className="text-xs text-destructive">{actionError}</p>}
             <div className="flex items-center gap-2">
@@ -226,6 +214,16 @@ export const GuardrailsSection = observer(function GuardrailsSection({
               >
                 {saving ? 'Saving…' : 'Save'}
               </Button>
+              {settings.hasApiKey && !confirmingOff && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={saving || clearing}
+                  onClick={() => setConfirmingOff(true)}
+                >
+                  Turn off
+                </Button>
+              )}
               {confirmingOff && (
                 <>
                   <span className="text-xs text-foreground-muted">Turn off Switch Trust?</span>

@@ -146,7 +146,7 @@ async def test_posts_the_one_message_with_the_expected_headers():
     # Always the same constant agent identity (Switch has no single "agent" to
     # attribute a check to); the room and a fresh per-check id carry the
     # per-call distinction instead.
-    assert seen["agent_name"] == "Switch Rooms"
+    assert seen["agent_name"] == "Switch Rooms Agents"
     assert seen["session_id"] == "room-1"
     assert uuid.UUID(str(seen["turn_id"]))  # a fresh, well-formed UUID
     assert seen["body"] == {"messages": [{"role": "user", "content": "hi"}]}

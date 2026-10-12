@@ -60,7 +60,7 @@ interception point further down the stack.
    added in [hoot#2397](https://github.com/sandbox-quantum/hoot/pull/2397) —
    with headers `x-guardrails-policy-id`, `x-flintai-api-key`, and three
    always-set identity headers Switch Trust uses to group checks:
-   - `x-agent-name`: a constant, `Switch Rooms` — Switch has no single agent
+   - `x-agent-name`: a constant, `Switch Rooms Agents` — Switch has no single agent
      to attribute a check to (a room can hold several, and a human-authored
      message has none at all), so every check is reported under one identity
      rather than inventing a per-sender one Switch Trust has no use for.
