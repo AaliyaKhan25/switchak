@@ -44,6 +44,16 @@ version of their own to them without also giving them a release of their own.
 
 ### [Unreleased]
 
+#### Added
+- **Confluence through the Atlassian connection.** Connecting Atlassian now
+  also asks for Confluence's read, search and (for writing) write scopes, so a
+  granted agent reaches Confluence pages beside Jira issues. People who
+  connected before connect again to consent to them; until then Atlassian
+  shows no Confluence tools. Rovo search and Teamwork Graph, which spend the
+  organization's Rovo credits on every call, are still not asked for; four
+  Confluence write tools (infographics and apps on a page) spend 15-30 credits
+  a request, and the skill tells agents to use them only when asked.
+
 ### [0.30.0] - 2026-10-12
 
 #### Added

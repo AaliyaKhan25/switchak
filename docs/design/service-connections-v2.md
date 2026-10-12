@@ -360,8 +360,15 @@ settings:
 - Access tokens live 8 hours; refresh tokens rotate.
 - The default server lists a few tools, `discover`, and `executeRead`,
   `executeWrite` and `executeDestructive`; those pass through unchanged.
-- Only Jira's scopes are asked for, so no Confluence or Teamwork Graph tools,
-  whose calls spend the organization's Rovo credits.
+- Jira's and Confluence's scopes are asked for (`read`, `search` and, for
+  writing, `write`, each `:agent-interface`). Not Rovo's cross-product search
+  (`search:rovo`) or Teamwork Graph (`read:all:twg`), whose every call spends
+  the organization's Rovo credits. Four Confluence write tools (infographics
+  and apps on a page) spend them too, 15-30 credits a request; tools pass
+  through unclassified, so a write grant offers them, and the skill tells the
+  agent to use them only when asked. A person who connected before Confluence
+  was added connects again to consent to its scopes; until then Atlassian
+  shows no Confluence tools.
 
 To connect: Settings, Connections in Switch Console, then Atlassian. Nothing
 needs configuring on the server. To roll back, add `atlassian` to

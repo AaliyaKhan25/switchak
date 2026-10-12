@@ -149,15 +149,22 @@ def test_the_shipped_atlassian_entry_signs_in_as_the_spike_found_it_must():
     assert definition.access is not None and definition.access.write is not None
     identity = ["read:me", "read:account", "email", "offline_access"]
     jira_read = ["read:jira:agent-interface", "search:jira:agent-interface"]
-    assert definition.access.read.scopes == identity + jira_read
+    confluence_read = [
+        "read:confluence:agent-interface",
+        "search:confluence:agent-interface",
+    ]
+    assert definition.access.read.scopes == identity + jira_read + confluence_read
     assert definition.access.write.scopes == [
         *identity,
         *jira_read,
         "write:jira:agent-interface",
+        *confluence_read,
+        "write:confluence:agent-interface",
     ]
-    # Jira only: nothing that reaches Confluence or spends Rovo credits by scope.
+    # Jira and Confluence, and none of the scopes whose every call spends the
+    # organization's Rovo credits: Rovo search and Teamwork Graph.
     every = set(definition.access.write.scopes)
-    assert not any("confluence" in scope for scope in every)
+    assert not any(":rovo:" in scope or ":twg" in scope for scope in every)
     assert definition.auth.identity is not None
     assert definition.auth.identity.url == "https://api.atlassian.com/me"
 

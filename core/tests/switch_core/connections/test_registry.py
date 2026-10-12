@@ -93,7 +93,9 @@ def test_atlassian_needs_no_settings_and_registers_its_ports_and_scopes() -> Non
     ]
     assert client._request["scope"] == (
         "read:me read:account email offline_access read:jira:agent-interface "
-        "search:jira:agent-interface write:jira:agent-interface"
+        "search:jira:agent-interface read:confluence:agent-interface "
+        "search:confluence:agent-interface write:jira:agent-interface "
+        "write:confluence:agent-interface"
     )
 
 
