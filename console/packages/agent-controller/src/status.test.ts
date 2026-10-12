@@ -1,10 +1,13 @@
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { generateSealingKeyPair, sealProviderLogin } from '@switch-console/agent-providers';
+import { vertexCredentialFixture } from '@switch-console/agent-providers/testing';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { silentLogger } from './log';
 import { type AgentObservation, emptyObservation } from './runtime';
-import { type AgentAssignment, statusReportSchema } from './schemas';
+import { type AgentAssignment, type SealedLoginResponse, statusReportSchema } from './schemas';
+import { SealedLogins } from './sealed-logins';
 import {
   mapAgentProcess,
   PathProviderLocator,
@@ -183,7 +186,7 @@ describe('mapAgentProcess', () => {
 
 describe('providerStatusFrom', () => {
   const at = '2026-01-01T00:00:00Z';
-  const located = { path: '/usr/bin/claude', version: '2.0.0' };
+  const located = { path: '/usr/bin/claude', version: '2.0.0', versionProblem: null };
   const readiness = (status: 'authenticated' | 'unauthenticated' | 'unconfigured' | 'unknown') => ({
     status,
     message: '',
@@ -232,6 +235,7 @@ describe('ProviderStatuses', () => {
     const statuses = new ProviderStatuses({
       locator,
       runtime,
+      sealed: null,
       probeCwd: '/tmp',
       now: () => clock,
       log: silentLogger,
@@ -256,6 +260,153 @@ describe('ProviderStatuses', () => {
   });
 });
 
+describe('ProviderStatuses with logins given to the machine', () => {
+  const keys = generateSealingKeyPair();
+  let answer: SealedLoginResponse | null;
+  let reachable: boolean;
+
+  function sealedAnswer(
+    credential: string,
+    revision = 1,
+    kind: 'setup-token' | 'vertex' = 'setup-token',
+    provider: 'claude' | 'codex' = 'claude'
+  ): SealedLoginResponse {
+    return {
+      provider,
+      revision,
+      sealed: sealProviderLogin({
+        publicKey: keys.publicKey,
+        controllerId: 'controller-1',
+        provider,
+        login: { kind, credential },
+      }),
+    };
+  }
+
+  function build(runtime: FakeRuntime) {
+    return new ProviderStatuses({
+      locator: new FakeLocator(),
+      runtime,
+      sealed: new SealedLogins({
+        client: {
+          sealedLogin: async () => {
+            if (!reachable) throw new Error('Switch is unreachable');
+            return answer;
+          },
+        },
+        keys,
+        controllerId: 'controller-1',
+      }),
+      probeCwd: '/tmp',
+      now: () => NOW,
+      log: silentLogger,
+      onChange: () => {},
+    });
+  }
+
+  beforeEach(() => {
+    answer = null;
+    reachable = true;
+  });
+
+  it('uses the machine’s own login first, and never asks Switch then', async () => {
+    const runtime = new FakeRuntime();
+    answer = sealedAnswer('sk-ant-oat-given');
+    const statuses = build(runtime);
+    expect(await statuses.check('claude')).toMatchObject({ auth: 'ok', auth_source: 'local' });
+    expect(await statuses.givenLogin('claude')).toBeNull();
+    expect(runtime.loginProbes).toEqual([]);
+  });
+
+  it('uses a given login once the provider signs in with it', async () => {
+    const runtime = new FakeRuntime();
+    runtime.readiness = { status: 'unauthenticated', message: 'Not signed in.', models: [] };
+    answer = sealedAnswer('sk-ant-oat-given', 3);
+    const statuses = build(runtime);
+    expect(await statuses.check('claude')).toMatchObject({ auth: 'ok', auth_source: 'sealed' });
+    expect(await statuses.givenLogin('claude')).toEqual({
+      status: 'connected',
+      provider: 'claude',
+      revision: '3',
+      kind: 'setup-token',
+      credential: 'sk-ant-oat-given',
+    });
+    expect(runtime.loginProbes.map((login) => login.credential)).toEqual(['sk-ant-oat-given']);
+  });
+
+  it('uses a given Vertex AI login once Claude signs in with it', async () => {
+    const runtime = new FakeRuntime();
+    runtime.readiness = { status: 'unauthenticated', message: 'Not signed in.', models: [] };
+    answer = sealedAnswer(vertexCredentialFixture(), 4, 'vertex');
+    const statuses = build(runtime);
+    expect(await statuses.check('claude')).toMatchObject({ auth: 'ok', auth_source: 'sealed' });
+    expect(await statuses.givenLogin('claude')).toEqual({
+      status: 'connected',
+      provider: 'claude',
+      revision: '4',
+      kind: 'vertex',
+      credential: vertexCredentialFixture(),
+    });
+    expect(runtime.loginProbes.map((login) => login.kind)).toEqual(['vertex']);
+  });
+
+  it('refuses a Vertex AI login given for another provider than Claude', async () => {
+    const runtime = new FakeRuntime();
+    runtime.readiness = { status: 'unauthenticated', message: '', models: [] };
+    answer = sealedAnswer(vertexCredentialFixture(), 1, 'vertex', 'codex');
+    const statuses = build(runtime);
+    expect(await statuses.check('codex')).toMatchObject({ auth: 'missing' });
+    expect(statuses.loginProblem('codex')).toEqual({
+      code: 'internal',
+      message: expect.stringContaining('Only Claude signs in through Vertex AI.'),
+    });
+    expect(runtime.loginProbes).toEqual([]);
+  });
+
+  it('says why a given login is not used', async () => {
+    const runtime = new FakeRuntime();
+    runtime.readiness = { status: 'unauthenticated', message: '', models: [] };
+    const statuses = build(runtime);
+    expect(await statuses.check('claude')).toMatchObject({
+      auth: 'missing',
+      reason: 'provider_login_missing',
+    });
+    expect(statuses.loginProblem('claude')?.code).toBe('provider_login_missing');
+
+    answer = sealedAnswer('sk-ant-oat-expired');
+    runtime.loginReadiness = { status: 'unauthenticated', message: 'Token expired.', models: [] };
+    const expired = await statuses.check('claude');
+    expect(expired).toMatchObject({
+      auth: 'expired',
+      auth_source: 'sealed',
+      reason: 'provider_login_expired',
+    });
+    expect(expired.auth_problem).toContain('Token expired.');
+    expect(statuses.loginProblem('claude')?.message).toContain('Token expired.');
+    expect(await statuses.givenLogin('claude')).toBeNull();
+
+    answer = {
+      ...sealedAnswer('sk-ant-oat-x'),
+      sealed: { ...sealedAnswer('y').sealed, nonce: answer.sealed.nonce },
+    };
+    expect(await statuses.check('claude')).toMatchObject({ auth: 'missing' });
+    expect(statuses.loginProblem('claude')?.code).toBe('internal');
+  });
+
+  it('keeps the login it holds while Switch cannot be asked', async () => {
+    const runtime = new FakeRuntime();
+    runtime.readiness = { status: 'unauthenticated', message: '', models: [] };
+    answer = sealedAnswer('sk-ant-oat-given');
+    const statuses = build(runtime);
+    await statuses.check('claude');
+    reachable = false;
+    expect(await statuses.check('claude')).toMatchObject({ auth: 'ok', auth_source: 'sealed' });
+    expect((await statuses.givenLogin('claude'))?.credential).toBe('sk-ant-oat-given');
+    statuses.disableGiven();
+    expect(await statuses.givenLogin('claude')).toBeNull();
+  });
+});
+
 describe('PathProviderLocator', () => {
   let dir: string;
   beforeEach(() => {
@@ -268,10 +419,56 @@ describe('PathProviderLocator', () => {
     writeFileSync(script, '#!/bin/sh\necho "2026.01.15-abc"\n');
     chmodSync(script, 0o755);
     writeFileSync(join(dir, 'claude'), 'not executable');
-    const locator = new PathProviderLocator(`/nonexistent:${dir}`);
-    expect(await locator.locate('cursor')).toEqual({ path: script, version: '2026.01.15-abc' });
+    const locator = new PathProviderLocator(`/nonexistent:${dir}`, join(dir, 'probe-home'));
+    expect(await locator.locate('cursor')).toEqual({
+      path: script,
+      version: '2026.01.15-abc',
+      versionProblem: null,
+    });
     expect(await locator.locate('claude')).toBeNull();
     expect(await locator.locate('codex')).toBeNull();
+  });
+
+  it('reads the version of a CLI that writes in its home first, with a home of its own', async () => {
+    const script = join(dir, 'opencode');
+    writeFileSync(
+      script,
+      '#!/bin/sh\nmkdir -p "$XDG_DATA_HOME/opencode" "$HOME/.cache" || exit 1\necho 1.18.35\n'
+    );
+    chmodSync(script, 0o755);
+    const previous = process.env.HOME;
+    process.env.HOME = '/nonexistent';
+    try {
+      const located = await new PathProviderLocator(dir, join(dir, 'probe-home')).locate(
+        'opencode'
+      );
+      expect(located).toEqual({ path: script, version: '1.18.35', versionProblem: null });
+    } finally {
+      process.env.HOME = previous;
+    }
+  });
+});
+
+describe('a CLI whose version cannot be read', () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'controller-version-'));
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  it('says why, so the report can carry it', async () => {
+    const script = join(dir, 'opencode');
+    writeFileSync(script, '#!/bin/sh\necho "EROFS: read-only file system" >&2\nexit 1\n');
+    chmodSync(script, 0o755);
+    const located = await new PathProviderLocator(dir, join(dir, 'probe-home')).locate('opencode');
+    expect(located).toEqual({
+      path: script,
+      version: null,
+      versionProblem: 'exited 1: EROFS: read-only file system',
+    });
+    expect(
+      providerStatusFrom('opencode', located, null, '2026-01-01T00:00:00Z').version_problem
+    ).toBe('exited 1: EROFS: read-only file system');
   });
 });
 
@@ -293,6 +490,7 @@ describe('StatusCollector', () => {
     const providers = new ProviderStatuses({
       locator: new FakeLocator(),
       runtime,
+      sealed: null,
       probeCwd: dir,
       now: () => clock,
       log: silentLogger,

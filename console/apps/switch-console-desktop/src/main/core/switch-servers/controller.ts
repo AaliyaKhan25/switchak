@@ -3,8 +3,8 @@ import { z } from 'zod';
 import { propagateServerApiUrl } from '@main/core/agents/propagate-server-api-url';
 import { appService } from '@main/core/app/service';
 import { embeddedControllerService } from '@main/core/embedded-controller/embedded-controllers';
+import { featureFlagsService } from '@main/core/feature-flags/feature-flags';
 import { isManagedServerRunning } from '@main/core/managed-switch-server/managed-server-status';
-import { getPlugin } from '@main/core/providers/plugin-registry';
 import type { TelemetryAuthMethod, TelemetrySignInFailure } from '@main/core/telemetry/events';
 import { trackEvent } from '@main/core/telemetry/telemetry-service';
 import { reconcileServerWorkspaces } from '@main/core/workspaces/reconcile-workspaces';
@@ -14,15 +14,6 @@ import {
 } from '@main/core/workspaces/workspace-session';
 import { listWorkspacesForServer } from '@main/core/workspaces/workspaces-store';
 import { log } from '@main/lib/logger';
-import type { AgentProviderId } from '@shared/core/providers/agent-provider-registry';
-import {
-  validateClaudeCredential,
-  type ClaudeCredentialKind,
-} from '@shared/core/switch-servers/claude-credential';
-import type {
-  CloudConfigurationInput,
-  CloudLaunchInput,
-} from '@shared/core/switch-servers/cloud-launch';
 import {
   type InviteServer,
   SWITCH_CLOUD_NAME,
@@ -53,25 +44,17 @@ import { bundledChatSignInFor } from './bundled-chat-sign-in';
 import {
   getConnectionCatalog,
   getGitHubConnection,
-  createCloudLaunch,
   fetchAgentIconChoices,
-  cloudLifecycle,
-  getCloudLaunchConfiguration,
-  updateCloudLaunchConfiguration,
   cloudMachineLifecycle,
   ensureCloudMachine,
-  getCloudProviderConnection,
-  connectCloudProvider,
-  disconnectCloudProvider,
+  listCloudMachines,
   disconnectGitHub,
-  getClaudeConnection,
-  connectClaude,
-  disconnectClaude,
   acceptInvitation,
   acceptPendingInvitation,
   joinWorkspaceByDomain,
   createTenant,
   fetchAuthConfig,
+  fetchCanCreateWorkspace,
   fetchMe,
   fetchJoinableWorkspaces,
   fetchPendingInvitations,
@@ -85,12 +68,6 @@ import {
   confirmGitHubBrowserFlow,
   cancelGitHubBrowserFlow,
 } from './github-browser-flow';
-import {
-  getLocalProviderSignIn,
-  localProviderAuthPath,
-  readLocalProviderSignIn,
-  type LocalSignInProvider,
-} from './local-provider-sign-in';
 import { deleteManagedClaudeCredential } from './managed-claude-credential';
 import { hostUnreachable, requireReachableServer, requireServer } from './require-server';
 import {
@@ -213,78 +190,24 @@ async function registerSwitchCloud({ url }: SwitchCloudEndpoint): Promise<Switch
   return server;
 }
 
-/** The agent definition a cloud launch carries, rendered by its provider like a local one. */
-function renderCloudDefinition(input: CloudConfigurationInput): string {
-  const definitions = getPlugin(input.provider).behavior.repoAgents;
-  return definitions
-    ? definitions.renderDefinition({
-        ...input.definition_attributes,
-        name: input.name,
-        description: input.description,
-        instructions: input.instructions,
-      })
-    : '';
+/** Whether the server turns cloud machines on (its `hosted_agents` flag). */
+async function hostedAgentsOn(server: SwitchServer): Promise<boolean> {
+  return (await featureFlagsService.current(server)).flags['hosted_agents'];
 }
 
 export const switchServersController = createRPCController({
-  getLocalProviderSignIn,
-  connectLocalProviderSignIn: async (serverId: string, provider: LocalSignInProvider) => {
-    const credential = await readLocalProviderSignIn(provider, localProviderAuthPath(provider));
-    if (!credential) throw new Error('Local sign-in file is missing. Sign in locally first.');
-    return withReachableServerWorkspaceSession(serverId, (server) =>
-      connectCloudProvider(server, provider, 'auth-json', credential)
-    );
-  },
-  getCloudProviderConnection: (serverId: string, provider: AgentProviderId) =>
-    withReachableServerWorkspaceSession(serverId, (server) =>
-      getCloudProviderConnection(server, provider)
-    ),
-  connectCloudProvider: (
-    serverId: string,
-    provider: Exclude<AgentProviderId, 'claude'>,
-    kind: 'api-key' | 'auth-json',
-    credential: string
-  ) =>
-    withReachableServerWorkspaceSession(serverId, (server) =>
-      connectCloudProvider(server, provider, kind, credential)
-    ),
-  disconnectCloudProvider: (serverId: string, provider: Exclude<AgentProviderId, 'claude'>) =>
-    withReachableServerWorkspaceSession(serverId, (server) =>
-      disconnectCloudProvider(server, provider)
-    ),
   /** The icons the server generates for an agent called `name`, one page at a time. */
   agentIconChoices: (params: { serverId: string; name: string; page: number }) =>
     withReachableServerWorkspaceSession(params.serverId, (server) =>
       fetchAgentIconChoices(server, params.name, params.page)
     ),
-  createCloudLaunch: (serverId: string, input: CloudLaunchInput) =>
-    withReachableServerWorkspaceSession(serverId, (server) =>
-      createCloudLaunch(server, { ...input, definition: renderCloudDefinition(input) })
-    ),
-  getCloudLaunchConfiguration: (serverId: string, requestId: string) =>
-    withReachableServerWorkspaceSession(serverId, (server) =>
-      getCloudLaunchConfiguration(server, requestId)
-    ),
-  updateCloudLaunchConfiguration: (
-    serverId: string,
-    requestId: string,
-    input: CloudConfigurationInput
-  ) =>
-    withReachableServerWorkspaceSession(serverId, (server) =>
-      updateCloudLaunchConfiguration(server, requestId, {
-        instructions: input.instructions,
-        definition_attributes: input.definition_attributes,
-        definition: renderCloudDefinition(input),
-      })
-    ),
-  cloudLifecycle: (
-    serverId: string,
-    requestId: string,
-    action: 'stop' | 'start' | 'restart' | 'remove' | 'retry',
-    revision: number
-  ) =>
-    withReachableServerWorkspaceSession(serverId, (server) =>
-      cloudLifecycle(server, requestId, action, revision)
+  /** Whether the signed-in account may create a workspace on the server. */
+  canCreateWorkspace: (serverId: string) =>
+    withServerWorkspaceSession(serverId, (server) => fetchCanCreateWorkspace(server)),
+  /** The caller's cloud machines, or null when the server offers none. */
+  cloudMachines: (serverId: string) =>
+    withServerWorkspaceSession(serverId, async (server) =>
+      (await hostedAgentsOn(server)) ? listCloudMachines(server) : null
     ),
   cloudMachineLifecycle: (
     serverId: string,
@@ -300,14 +223,6 @@ export const switchServersController = createRPCController({
         revision
       )
     ),
-  getClaudeConnection: (serverId: string) =>
-    withServerWorkspaceSession(serverId, (server) => getClaudeConnection(server)),
-  connectClaude: (serverId: string, kind: ClaudeCredentialKind, credential: string) => {
-    const value = validateClaudeCredential(kind, credential);
-    return withServerWorkspaceSession(serverId, (server) => connectClaude(server, kind, value));
-  },
-  disconnectClaude: (serverId: string) =>
-    withServerWorkspaceSession(serverId, (server) => disconnectClaude(server)),
 
   listServers: (): Promise<SwitchServer[]> => listServers(),
 
@@ -578,7 +493,12 @@ export const switchServersController = createRPCController({
   },
 
   ensureCloudMachine: (serverId: string) =>
-    withReachableServerWorkspaceSession(serverId, (server) => ensureCloudMachine(server)),
+    withReachableServerWorkspaceSession(serverId, async (server) => {
+      if (!(await hostedAgentsOn(server))) {
+        throw new Error(`${server.name} does not have cloud machines turned on.`);
+      }
+      return ensureCloudMachine(server);
+    }),
 
   logout: async (serverId: string): Promise<void> => {
     // Read before the cookie goes, so the kind of server is still knowable — and

@@ -28,8 +28,8 @@ module, never directly through a store any endpoint could declare for itself.
 **A raw `session_factory()` call** is the other surface. It inherits whatever
 is ambient, which in background code is nothing at all, since the long-lived
 tasks deliberately unbind (see `tenant_context.no_tenant`). Such a session can
-now only read the tables that carry no policy — `users`, `oidc_identities`,
-`feature_flags` — so it is no longer a way to cross a tenant boundary, but it
+now only read the tables that carry no policy — `users`, `oidc_identities`
+and the installation's telemetry records — so it is no longer a way to cross a tenant boundary, but it
 is still a session whose call site did not say what it was for.
 
 A module failing either check is not a bug in the test. It means someone
@@ -84,6 +84,11 @@ _ALLOWED_MODULES = {
     # is reachable by any endpoint that declares it, which would make this
     # list name one module while the exemption was open to every route.
     "switch_core.gateway.auth",
+    # A user's cloud machine is global and the cloud controller acts for no
+    # tenant: which workspaces a machine serves comes from
+    # `tenants_of_cloud_machine`, and each one's row on the machine is then
+    # read with that workspace bound.
+    "switch_core.db.stores.hosted_machine_store",
     # Enumerating tenants at boot, and starting one bridge or one connector by
     # id from a context bound to somebody else's tenant.
     "switch_core.clients.client_lifecycle_service",

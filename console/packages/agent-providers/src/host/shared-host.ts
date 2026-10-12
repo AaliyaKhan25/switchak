@@ -93,9 +93,9 @@ export function parkAfterMs(): number | null {
 }
 
 /**
- * How long a session waiting on a fresh-conversation decision keeps its worker
- * awake. Past it the decision and the room messages it holds stay recorded,
- * but no longer count as busy, so the worker may sleep.
+ * How long a session waiting on a fresh-conversation decision keeps its host
+ * busy. Past it the decision and the room messages it holds stay recorded,
+ * but no longer count as busy, so the host may park.
  */
 export const RESET_HOLD_MS = 15 * 60_000;
 
@@ -103,9 +103,8 @@ export const RESET_HOLD_MS = 15 * 60_000;
 export type ResetHold = 'none' | 'holding' | 'ended';
 
 /**
- * Why a session is busy, if it is: what keeps a hosted worker awake and what
- * keeps a host from parking. A session that is stopped or failed with nothing
- * left to decide is not busy. Work the provider is still doing after its turn
+ * Why a session is busy, if it is: what keeps a host from parking. A session
+ * that is stopped or failed with nothing left to decide is not busy. Work the provider is still doing after its turn
  * ended, such as background subagents, counts as a running turn.
  */
 export function sessionBusy(
@@ -125,6 +124,31 @@ export function sessionBusy(
   add('reset_waiting', reset === 'holding' ? 1 : 0);
   add('room_pending', reset === 'ended' ? 0 : roomsPending);
   return { busy: reasons.length > 0, reasons };
+}
+
+/**
+ * The Switch tools that put something the agent wrote in front of a room: a
+ * turn that called one of them has answered. Each posts to the room the
+ * session is connected to (only `send_attachment` can name another), so a
+ * call counts whichever room it reached.
+ */
+export const ROOM_POSTING_TOOLS = new Set([
+  'post_message',
+  'send_targeted_message',
+  'send_attachment',
+  'delegate_task',
+  'update_task',
+  'finalise_task',
+]);
+
+/** Whether a Switch tool result is a post that landed. */
+export function postedToRoom(name: string, result: unknown): boolean {
+  if (!ROOM_POSTING_TOOLS.has(name)) return false;
+  return (
+    typeof result === 'object' &&
+    result !== null &&
+    (result as { isError?: unknown }).isError !== true
+  );
 }
 
 class TransportError extends Error {}
@@ -187,6 +211,7 @@ export async function runSharedHost(
   let failure: unknown = null;
   let shutdown: Promise<void> | null = null;
   let reporting: Promise<void> | null = null;
+  let stopHearingTools: (() => void) | null = null;
 
   const callOnce = async (
     route: string,
@@ -316,9 +341,17 @@ export async function runSharedHost(
       return { data, sha256: createHash('sha256').update(data).digest('hex') };
     };
 
+    const parentChannel = options.parent;
     host = await HostedSession.start(
       options.root,
       {
+        ...(parentChannel && options.roomConnection
+          ? {
+              replyToRoom: async (reply) => {
+                await parentChannel.ask({ type: 'room-reply', ...reply });
+              },
+            }
+          : {}),
         session: options.session,
         input: options.input,
         resumeOperationId: options.resumeOperationId,
@@ -342,6 +375,13 @@ export async function runSharedHost(
       },
       adapter
     );
+    // Every Switch tool call the provider makes goes up this pipe, whatever
+    // the provider calls the tool in its own transcript.
+    const hosted = host;
+    stopHearingTools =
+      parentChannel?.onToolAnswered((name, result) => {
+        if (postedToRoom(name, result)) hosted.agentPostedToRoom();
+      }) ?? null;
 
     // ── What the host reports ────────────────────────────────────────────────
     const reporter = await ActivityReporter.load(options.root);
@@ -546,7 +586,7 @@ export async function runSharedHost(
       if (key === announcedBusy) return;
       if (resetHold() === 'ended')
         console.warn(
-          `Session ${options.session.sessionId} has waited ${RESET_HOLD_MS / 60_000} min for a fresh-conversation decision; it no longer keeps its worker awake. The decision and its ${rooms?.pending().length ?? 0} held room message(s) are kept for when it next runs.`
+          `Session ${options.session.sessionId} has waited ${RESET_HOLD_MS / 60_000} min for a fresh-conversation decision; it no longer keeps its host busy. The decision and its ${rooms?.pending().length ?? 0} held room message(s) are kept for when it next runs.`
         );
       announcedBusy = key;
       options.parent?.busy(state, null);
@@ -859,6 +899,7 @@ export async function runSharedHost(
   } catch (error) {
     if (!signal.aborted) failure ??= error;
   } finally {
+    stopHearingTools?.();
     stopped.abort();
     await reporting;
     try {

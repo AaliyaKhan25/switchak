@@ -20,21 +20,19 @@ import {
   lockHolderSentence,
   othersRecentlySeen,
 } from '@shared/core/managed-switch-server/managed-switch-server';
-import type { AgentProviderId } from '@shared/core/providers/agent-provider-registry';
 import type {
   AddServerChoiceName,
   AddServerStepName,
 } from '@shared/core/switch-servers/add-server-steps';
-import type {
-  ServerApiUrlPropagation,
-  SwitchServer,
+import {
+  type ServerApiUrlPropagation,
+  type SwitchServer,
+  urlOrigin,
 } from '@shared/core/switch-servers/switch-servers';
 import { ConnectionsStep } from './connections-step';
 import { LinkAccountsStep } from './link-accounts-step';
 import { localServerStore } from './local-server-store';
 import { LogTail } from './log-tail';
-import { ManagedProviderConnectionSequence } from './managed-provider-connection-step';
-import { ManagedProvidersStep } from './managed-providers-step';
 import { remoteServerStore } from './remote-server-store';
 import { type RemoteSetupAction, remoteSetupAction } from './remote-setup-action';
 import {
@@ -89,11 +87,19 @@ type Props = BaseModalProps<void> & {
   mode?: 'local' | 'remoteHost' | 'external';
 };
 
+/**
+ * Where signing in to Switch Cloud leads: on to setting up cloud agents when
+ * the Cloud offers them (its `hosted_agents` flag), otherwise to the step any
+ * other server ends on.
+ */
+async function stepAfterCloudSignIn(serverId: string): Promise<Step> {
+  const flags = await rpc.featureFlags.current(serverId);
+  return flags.success && flags.data.flags.hosted_agents ? 'managedGitHub' : 'linkAccounts';
+}
+
 type Step =
   | 'managedAgent'
   | 'managedGitHub'
-  | 'managedClaude'
-  | 'managedReady'
   | 'choose'
   | 'local'
   | 'remoteHost'
@@ -135,8 +141,6 @@ void _stepsAreComplete;
  */
 const CHOICE_FOR_STEP: Record<Step, AddServerChoiceName | null> = {
   choose: 'none',
-  managedReady: 'cloud',
-  managedClaude: 'cloud',
   managedGitHub: 'cloud',
   managedAgent: 'cloud',
   local: 'local',
@@ -151,8 +155,6 @@ export const AddServerModal = observer(function AddServerModal(props: Props) {
   const openedAt: Step = isEdit ? 'external' : (props.mode ?? 'choose');
   const openedWith = CHOICE_FOR_STEP[openedAt] ?? 'none';
   const [step, setStep] = useState<Step>(openedAt);
-  const [providerIndex, setProviderIndex] = useState(0);
-  const [selectedProviders, setSelectedProviders] = useState<AgentProviderId[]>([]);
   // Which path was taken at the chooser, carried so every later step can be
   // attributed to it. `none` while still on the chooser, which is what makes a
   // drop-off before choosing distinguishable from one after.
@@ -218,8 +220,10 @@ export const AddServerModal = observer(function AddServerModal(props: Props) {
    * chooser rather than to a connect-by-URL form it never passed through. An
    * account already signed in goes on to setting up its cloud agents.
    */
-  const enterCloud = (server: SwitchServer) => {
-    const next: Step = switchServersStore.isConnected(server.id) ? 'managedReady' : 'signIn';
+  const enterCloud = async (server: SwitchServer) => {
+    const next: Step = switchServersStore.isConnected(server.id)
+      ? await stepAfterCloudSignIn(server.id)
+      : 'signIn';
     setConnected(server);
     setChoice('cloud');
     setStep(next);
@@ -267,22 +271,6 @@ export const AddServerModal = observer(function AddServerModal(props: Props) {
       />
     );
   }
-  if (step === 'managedClaude' && connected) {
-    return (
-      <>
-        {machineNotice}
-        <ManagedProviderConnectionSequence
-          serverId={connected.id}
-          providers={selectedProviders}
-          index={providerIndex}
-          onIndexChange={setProviderIndex}
-          onBack={() => goToStep('managedReady')}
-          onDone={() => goToStep('managedGitHub')}
-          doneStepName="GitHub"
-        />
-      </>
-    );
-  }
   if (step === 'managedAgent' && connected) {
     return (
       <>
@@ -304,23 +292,7 @@ export const AddServerModal = observer(function AddServerModal(props: Props) {
         <ConnectionsStep
           onContinue={() => goToStep('managedAgent')}
           serverId={connected.id}
-          onBack={() => goToStep('managedClaude')}
-          onSkip={() => finish(connected.id)}
-        />
-      </>
-    );
-  }
-  if (step === 'managedReady' && connected) {
-    return (
-      <>
-        {machineNotice}
-        <ManagedProvidersStep
-          selected={selectedProviders}
-          onSelectionChange={setSelectedProviders}
-          onContinue={() => {
-            setProviderIndex(0);
-            goToStep('managedClaude');
-          }}
+          onBack={() => goToStep('choose')}
           onSkip={() => finish(connected.id)}
         />
       </>
@@ -334,7 +306,8 @@ export const AddServerModal = observer(function AddServerModal(props: Props) {
         onClose={props.onClose}
         onSignedIn={(signedIn) => {
           setMachineUnavailable(machineUnavailableReason(signedIn));
-          goToStep(choice === 'cloud' ? 'managedReady' : 'linkAccounts');
+          if (choice === 'cloud') void stepAfterCloudSignIn(connected.id).then(goToStep);
+          else goToStep('linkAccounts');
         }}
       />
     );
@@ -372,7 +345,7 @@ export const AddServerModal = observer(function AddServerModal(props: Props) {
 // Step 1 — choose where the server lives
 // ---------------------------------------------------------------------------
 
-function ChooseStep({
+export const ChooseStep = observer(function ChooseStep({
   onLocal,
   onRemoteHost,
   onExternal,
@@ -386,6 +359,13 @@ function ChooseStep({
   onClose: () => void;
 }) {
   const cloud = useSwitchCloud();
+  // Switch Cloud is one server: once it is added, its workspaces are in the
+  // switcher, and offering to add it again would only lead back to it.
+  const cloudAdded =
+    cloud.kind === 'open' &&
+    switchServersStore.servers.some(
+      (server) => urlOrigin(server.gatewayUrl) === urlOrigin(cloud.url)
+    );
   const [cloudAttempt, setCloudAttempt] = useState<{ connecting: boolean; error: string | null }>({
     connecting: false,
     error: null,
@@ -415,7 +395,7 @@ function ChooseStep({
       <div className="grid gap-3">
         {/* Offered only when this build knows where the Cloud is. A failed read
             is shown rather than dropped, since it means the build is broken. */}
-        {cloud.kind === 'open' && (
+        {cloud.kind === 'open' && !cloudAdded && (
           <ChoiceCard
             icon={
               cloudAttempt.connecting ? (
@@ -465,7 +445,7 @@ function ChooseStep({
       </div>
     </WizardFrame>
   );
-}
+});
 
 export function ChoiceCard({
   icon,

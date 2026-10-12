@@ -8,7 +8,6 @@ import signal
 import time
 from collections.abc import AsyncIterator, Coroutine
 from contextlib import asynccontextmanager
-from functools import partial
 from pathlib import Path
 
 import httpx
@@ -27,7 +26,6 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.pool import NullPool
 
 from switch_core.bridges.agent.app import create_agent_bridge_app
-from switch_core.bridges.agent.hosted_mailbox import mailbox_upkeep
 from switch_core.bridges.agent.protocol.agent_connections import (
     HEARTBEAT_TTL_SECONDS,
     AgentConnectionRegistry,
@@ -54,7 +52,6 @@ from switch_core.bridges.agent.server_connectors.opencode.connector import (
 from switch_core.bridges.collaboration.adapter import PlatformAdapter
 from switch_core.bridges.collaboration.discord.adapter import (
     DiscordAdapter,
-    DiscordConnectionConfig,
 )
 from switch_core.bridges.collaboration.discord.connection import DiscordConnection
 from switch_core.bridges.collaboration.discord.gateway import DiscordGatewayClient
@@ -71,19 +68,8 @@ from switch_core.bridges.collaboration.install_service import MessagingInstallSe
 from switch_core.bridges.collaboration.lifecycle_service import (
     CollaborationBridgeLifecycleService,
 )
-from switch_core.bridges.collaboration.mattermost.adapter import (
-    MattermostAdapter,
-    MattermostConnectionConfig,
-)
-from switch_core.bridges.collaboration.slack.adapter import (
-    SlackAdapter,
-    SlackConnectionConfig,
-)
+from switch_core.bridges.collaboration.platforms import register_platforms
 from switch_core.bridges.collaboration.slack.install import SlackAppInstaller
-from switch_core.bridges.collaboration.teams.adapter import (
-    TeamsAdapter,
-    TeamsConnectionConfig,
-)
 from switch_core.bridges.collaboration.teams.app_package import (
     build_distributed_app_package,
 )
@@ -91,13 +77,16 @@ from switch_core.bridges.collaboration.teams.install import TeamsAppInstaller
 from switch_core.bridges.collaboration.teams.shared_app import TeamsSharedApp
 from switch_core.bridges.collaboration.telegram.adapter import (
     TelegramAdapter,
-    TelegramConnectionConfig,
 )
 from switch_core.bridges.collaboration.telegram.app_client import (
     TelegramAppClient,
     bot_resource,
 )
 from switch_core.bridges.collaboration.telegram.install import TelegramAppInstaller
+from switch_core.bridges.collaboration.webhooks import (
+    BridgeWebhookService,
+    create_bridge_webhook_router,
+)
 from switch_core.bridges.resource.service import ResourceService
 from switch_core.clients.actor import Actor, AgentActor, HumanActor, SystemActor
 from switch_core.clients.agent_consumer import AgentConsumer
@@ -135,7 +124,6 @@ from switch_core.db.stores.client_store import ClientStore
 from switch_core.db.stores.collaboration_bridge_store import CollaborationBridgeStore
 from switch_core.db.stores.document_store import DocumentStore
 from switch_core.db.stores.external_user_store import ExternalUserStore
-from switch_core.db.stores.hosted_launch_store import HostedLaunchStore
 from switch_core.db.stores.invitation_store import InvitationStore
 from switch_core.db.stores.join_domain_store import JoinDomainStore
 from switch_core.db.stores.media_store import MediaStore
@@ -649,7 +637,6 @@ async def run(config: SwitchConfig) -> None:
         agent_session_store=agent_session_store,
         room_role_store=room_role_store,
         external_user_store=external_user_store,
-        hosted_launch_store=HostedLaunchStore(),
         connections=connections,
         frontend_base_url=config.frontend_base_url,
         message_telemetry=message_telemetry,
@@ -724,7 +711,7 @@ async def run(config: SwitchConfig) -> None:
         frontend_base_url=config.frontend_base_url,
     )
 
-    # ── Agent management (off unless AGENT_MANAGEMENT_ENABLED) ───────────────
+    # ── Agent management (off unless the agent_management flag is on) ─────────
     # Built before the agent bridge app because its authenticator is the bearer
     # middleware's controller branch; its routes are installed once both apps
     # exist, below.
@@ -888,18 +875,7 @@ async def run(config: SwitchConfig) -> None:
         config=config,
     )
 
-    # Register collaboration bridge adapter types
-    collab_lifecycle.register_adapter(
-        "mattermost", MattermostAdapter, MattermostConnectionConfig
-    )
-    collab_lifecycle.register_adapter("slack", SlackAdapter, SlackConnectionConfig)
-    collab_lifecycle.register_adapter("teams", TeamsAdapter, TeamsConnectionConfig)
-    collab_lifecycle.register_adapter(
-        "discord", DiscordAdapter, DiscordConnectionConfig
-    )
-    collab_lifecycle.register_adapter(
-        "telegram", TelegramAdapter, TelegramConnectionConfig
-    )
+    register_platforms(collab_lifecycle)
 
     # Liveness, and cheap on purpose: the gateway Deployment and the setup Job
     # wait on it at boot, so anything it checked would become a boot-ordering
@@ -931,6 +907,16 @@ async def run(config: SwitchConfig) -> None:
             create_messaging_install_router(install_service),
             tags=["messaging-installs"],
         )
+    agent_bridge_app.include_router(
+        create_bridge_webhook_router(
+            BridgeWebhookService(
+                lifecycle=collab_lifecycle,
+                session_factory=session_factory,
+                receipts=MessagingEventReceiptStore(),
+            )
+        ),
+        tags=["bridge-webhooks"],
+    )
 
     if management is not None:
         management.install(
@@ -987,9 +973,7 @@ async def run(config: SwitchConfig) -> None:
             asyncio.create_task(connector_lifecycle.start_all())
             sweep_task = asyncio.create_task(_runtime_state_sweep_loop(protocol))
             session_activity_task = asyncio.create_task(
-                session_activity_maintenance_loop(
-                    session_factory, partial(mailbox_upkeep, protocol)
-                )
+                session_activity_maintenance_loop(session_factory)
             )
             connection_sweep_task = asyncio.create_task(
                 _connection_sweep_loop(protocol, observability.lag)
