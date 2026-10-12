@@ -44,7 +44,31 @@ version of their own to them without also giving them a release of their own.
 
 ### [Unreleased]
 
+### [0.30.0] - 2026-10-12
+
 #### Added
+- **Multi-tenancy.** Several workspaces per person, with sign-up, invitations,
+  workspace roles, per-workspace usage budgets, and Switch Cloud sign-in (#627).
+- **Distributed Telegram app.** One Telegram app any workspace connects, like
+  the other platforms (#583).
+- **Distributed Teams app.** A Teams app any organisation installs for itself
+  (#632).
+- **Switch Trust guardrails.** Every message is checked before it is sent;
+  blocked, redacted and alerted/errored outcomes are handled, blocked senders
+  are named and redacted senders notified. Configurable from a Switch Trust
+  settings panel backed by a gateway API (#679, #739, #747).
+- **Per-message telemetry and activity tiers.** switch-core reports per-message
+  events and rolls activity into tiers for the dashboards, on top of an events
+  refactor and dashboard-accuracy fixes (#719, #610, #558).
+- **Room-wide mention.** A mention that pages a room's people on its platform
+  and wakes no agent (#542).
+- **Windows support for managed agents and the controller** (#765).
+- **Self-contained integration points.** Adding a messaging platform (#720) or
+  an agent CLI (#763) is now a single plugin entry.
+- **Build provenance and usage reporting.** switch-core reports the commit it
+  was built from with its metrics and logs (#710), how long garbage collection
+  pauses the process by generation (#711), and the count of active staff
+  accounts in the usage snapshot (#724).
 - **Deploy-time feature flags.** Capabilities are gated by a feature-flag
   setting (`FEATURE_FLAGS_ENABLED`, Helm `switchCore.featureFlags.enabled`)
   rather than per-capability environment variables. Known flags:
@@ -211,6 +235,15 @@ version of their own to them without also giving them a release of their own.
   carry a `main` tag that follows the newest build of main.
 
 #### Changed
+- **The agent connection runs over a single WebSocket** between the server and
+  the runtime, replacing the previous connection (#652, #687).
+- **Room access-permission changes are restricted to owners/admins** (#638).
+- **The bundled Mattermost no longer calls Mattermost Inc.** (#733).
+- **Agent icons switched to DiceBear gaze** (#685).
+- **Faster startup and fewer requests.** Agents and rooms are read in bulk at
+  startup (#743), the room and agent list queries are batched so they don't grow
+  with the data (#709), and Console makes fewer managed-agent requests with one
+  query for their machines (#702).
 - **Agent management moved behind the `agent_management` feature flag.** The old
   `AGENT_MANAGEMENT_ENABLED` setting is gone: switch-core refuses to start when
   it is still set to true, and the Helm chart refuses to render with
@@ -246,7 +279,16 @@ version of their own to them without also giving them a release of their own.
   warning, for this release. It names no signing key, so GitHub can then be
   connected but not granted.
 
+#### Security
+- **Multi-tenant security hardening** across the server and gateway (#641).
+
 #### Fixed
+- **A silent Mattermost no longer freezes all of switch-core** (#660).
+- **Teams no longer adds users to the whole team** when a private channel is
+  mistaken for public (#591).
+- **A client that fails on the database at start is retried** instead of being
+  dropped (#742).
+- **The clock no longer redraws turns for offline agents** (#715).
 - **The Helm chart's Ingress now routes every agent API path to switch-core.**
   `/agent-sessions` (session starts, turn activity, approval requests and their
   answers), `/version` and `/deeplink` were missing from
