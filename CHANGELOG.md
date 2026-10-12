@@ -1622,12 +1622,6 @@ version of their own to them without also giving them a release of their own.
   no agent shows Service access, and setting up Switch Cloud goes straight
   from signing in to the first cloud agent; turning it on reaches a running
   Console without a restart.
-- **Managed servers turn agent management on.** A server Console runs, on
-  this computer or on an SSH host, now starts with agent management enabled
-  and the controller token secret it needs, generated once and shared by every
-  Console using that server. On a switch-core release that offers agent
-  management, Console then moves your agents onto managed machines by itself.
-  Releases from before agent management ignore both settings.
 - **Agents / Rooms sidebar and a reworked workspace menu.** On a server with
   agent management, Console leads with Agents and Rooms above the legacy
   Sessions, behind the server's feature flags, and the workspace menu is

@@ -75,8 +75,8 @@ describe('buildEnvFile', () => {
     expect(vars.MATTERMOST_USER_PASSWORD).toBe('mm-user');
   });
 
-  it('turns agent management on', () => {
-    expect(vars.FEATURE_FLAGS_ENABLED).toBe('agent_management');
+  it('starts a managed stack with no feature flags (agent management off)', () => {
+    expect(vars.FEATURE_FLAGS_ENABLED).toBe('');
   });
 
   it('runs switch-core as the restricted runtime role, not the schema owner', () => {

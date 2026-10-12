@@ -33,8 +33,9 @@ export type LocalServerEnvParams = {
   telemetryInternal: boolean;
 };
 
-/** The feature flags every managed stack is started with. */
-export const MANAGED_SERVER_FEATURE_FLAGS = ['agent_management'] as const;
+/** The feature flags every managed stack is started with. Empty: a managed
+ * stack starts with no feature flags on (agent management included). */
+export const MANAGED_SERVER_FEATURE_FLAGS = [] as const;
 
 /** The variable the server reads its telemetry gate from. Named here because
  * reading the choice back off a host has to look for the same key. */
@@ -88,9 +89,9 @@ export function buildEnvFile(params: LocalServerEnvParams): string {
     `AGENT_REGISTRATION_TOKEN=${secrets.agentRegistrationToken}`,
     `JWT_SECRET_KEY=${secrets.jwtSecretKey}`,
     `SECRET_KEYS=${secrets.secretKeys}`,
-    // The flags a managed stack runs with. Agent management is the one it
-    // turns on: Console moves this machine's agents onto controllers once the
-    // server offers it, and a release that does not know the variable ignores it.
+    // The flags a managed stack runs with (MANAGED_SERVER_FEATURE_FLAGS).
+    // Currently none: a managed stack starts with agent management off. The
+    // variable is still written (empty) so the stack's flag set is explicit.
     `FEATURE_FLAGS_ENABLED=${MANAGED_SERVER_FEATURE_FLAGS.join(',')}`,
     `CONTROLLER_TOKEN_SECRET=${secrets.controllerTokenSecret}`,
     `GATEWAY_ADMIN_EMAIL=${LOCAL_SERVER_ADMIN_EMAIL}`,
