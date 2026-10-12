@@ -26,6 +26,7 @@ import type { ProviderRuntimeEvent } from '../events';
 import { ChatProjector } from '../session-v1/chat-projector';
 import { ATTACHMENT_MIME_TYPES } from './attachments';
 import { Journal } from './journal';
+import { fitModelCatalog } from './model-catalog';
 
 export const hostInboxRecordSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('accepted'), command: commandSchema }),
@@ -420,13 +421,26 @@ export class HostedSession {
           'The provider did not return a model catalog on resume. Showing the last known choices; the provider will validate each change.',
       });
     }
-    this.config.session.models = models;
-    this.config.session.model = this.config.input.model
+    const selected = this.config.input.model
       ? { id: this.config.input.model.id, options: this.config.input.model.options ?? {} }
       : null;
-    this.config.session.capabilities.modelChange = Boolean(models.length && this.adapter.setModel);
+    const fitted = fitModelCatalog(models, selected?.id ?? null);
+    this.config.session.models = fitted.models;
+    this.config.session.model = selected;
+    this.config.session.capabilities.modelChange = Boolean(
+      fitted.models.length && this.adapter.setModel
+    );
     this.updateAttachmentCapabilities();
     await this.publish({ type: 'session.upsert', session: structuredClone(this.config.session) });
+    if (fitted.omitted || fitted.optionsDropped)
+      await this.publish({
+        type: 'notice',
+        level: 'warning',
+        code: 'MODEL_CATALOG_TRUNCATED',
+        message: fitted.omitted
+          ? `The provider offers ${models.length} models, more than a session can list: only ${fitted.models.length} are offered here, without their options. Narrow the providers it is signed in to, or pick a model in its own settings.`
+          : `The provider offers ${models.length} models: they are listed without their options, which would not fit. The selected model keeps its own.`,
+      });
   }
 
   private updateAttachmentCapabilities(): void {
@@ -1230,7 +1244,18 @@ export class HostedSession {
     this.fault = error instanceof Error ? error : new Error(String(error));
     this.config.session.status = 'error';
     try {
-      await this.publish({ type: 'session.upsert', session: structuredClone(this.config.session) });
+      try {
+        await this.publish({
+          type: 'session.upsert',
+          session: structuredClone(this.config.session),
+        });
+      } catch (upsertError) {
+        // The failure is recorded even when the session record is what could
+        // not be: without its model catalog it is a few hundred bytes.
+        console.error('SDK host could not record its session:', String(upsertError));
+        const { models: _models, ...session } = structuredClone(this.config.session);
+        await this.publish({ type: 'session.upsert', session });
+      }
       await this.publish({
         type: 'notice',
         level: 'error',

@@ -1486,6 +1486,14 @@ version of their own to them without also giving them a release of their own.
   provider signs in with it on the machine.
 
 #### Fixed
+- **A session whose provider offers hundreds of models no longer dies on its
+  next message.** OpenCode signed in to many providers lists more models than
+  a session event can hold, so every update to the session was refused and
+  the host stopped when the next message arrived, leaving the room
+  unanswered. The catalog is now cut to fit (without the models' options
+  first, then without the models past what fits, the selected one kept), and
+  the session says so. A host that fails also records its failure without the
+  catalog, rather than failing again on it.
 - **A machine whose controller Switch refuses for good says so instead of
   restarting it forever.** When the server needs a newer agents controller than
   Console carries, "This computer as a machine" shows that Console needs an

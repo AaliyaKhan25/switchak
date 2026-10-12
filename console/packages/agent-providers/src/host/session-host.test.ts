@@ -602,6 +602,34 @@ it('validates native model choices and persists a confirmed choice across restar
   );
 });
 
+it('lists a catalog too large for a session event without its overflow, and keeps working', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'sdk-model-test-'));
+  roots.push(root);
+  const fixture = setup('opencode');
+  const catalog = Array.from({ length: 600 }, (_, i) => ({
+    id: `provider-${i}/model-with-a-long-identifier-${i}`,
+    label: `Provider ${i} · A model with a long, descriptive label ${i}`,
+    options: { variant: ['low', 'medium', 'high', 'max'] },
+  }));
+  fixture.adapter.listModels = vi.fn(async () => catalog);
+  fixture.adapter.setModel = vi.fn(async () => {});
+  const host = await HostedSession.start(root, fixture.config, fixture.adapter);
+  hosts.push(host);
+  await waitFor(() => expect(host.snapshot().session.models?.length).toBeGreaterThan(0));
+  const listed = host.snapshot().session.models!;
+  expect(listed.length).toBeLessThan(catalog.length);
+  expect(listed.every((model) => Object.keys(model.options).length === 0)).toBe(true);
+  expect(host.replay(0).events.map((e) => e.body)).toContainEqual(
+    expect.objectContaining({ code: 'MODEL_CATALOG_TRUNCATED' })
+  );
+  expect(host.replay(0).events.map((e) => e.body)).not.toContainEqual(
+    expect.objectContaining({ code: 'MODEL_CATALOG_UNAVAILABLE' })
+  );
+  // The session record is published again on every turn; it still fits.
+  expect((await host.command(message('after-catalog'))).status).not.toBe('rejected');
+  expect(host.snapshot().session.status).not.toBe('error');
+});
+
 it('leaves a lost model acknowledgement unknown and does not retry it', async () => {
   const root = await mkdtemp(join(tmpdir(), 'sdk-model-test-'));
   roots.push(root);
