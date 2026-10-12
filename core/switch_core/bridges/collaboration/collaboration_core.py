@@ -991,6 +991,16 @@ class CollaborationCore:
             annotation = trust_annotation(check)
             if annotation is not None:
                 content = f"{content}\n\n{annotation}"
+                # The room itself never relays a human-authored event back out
+                # to a platform (see handle_outbound_message's human-sender
+                # skip), so without this the sender would never see the
+                # annotation their own client just appended to their message.
+                notice_type = (
+                    AdminMessageType.TRUST_ALERTED
+                    if check.outcome == "alerted"
+                    else AdminMessageType.TRUST_ERRORED
+                )
+                await self._post_trust_notice(msg, annotation, notice_type)
             event_id = await human_actor.send_message(
                 transport_room_id,
                 content,
@@ -1068,9 +1078,10 @@ class CollaborationCore:
     async def _post_trust_notice(
         self, msg: InboundMessage, body: str, message_type: AdminMessageType
     ) -> None:
-        """Tell the sender's platform a message was blocked or redacted.
-        Never lets a failed notice take the inbound message down with it —
-        mirrors `AgentCore._post_trust_blocked_notice`."""
+        """Tell the sender's platform what Switch Trust did with their message
+        — blocked, redacted, alerted, or errored. Never lets a failed notice
+        take the inbound message down with it — mirrors
+        `AgentCore._post_trust_blocked_notice`."""
         try:
             await self._adapter.admin_message(
                 msg.channel_id,
