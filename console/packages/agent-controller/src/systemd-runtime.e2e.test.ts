@@ -133,6 +133,7 @@ describe.skipIf(!dataDir)('agents as users of their own, under systemd', () => {
               ? { path: fakeClaude, version: '2.0.0', versionProblem: null }
               : null,
         },
+        tools: async () => [],
         fetch,
         openWebSocket: core.openWebSocket,
         log: silentLogger,

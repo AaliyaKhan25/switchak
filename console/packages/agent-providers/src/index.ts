@@ -137,6 +137,7 @@ export {
   vertexLoginCredential,
   vertexLoginSchema,
 } from './vertex-login';
+export { cliToolsBase, readCliToolStatuses } from './host/cli-binaries';
 export {
   SessionHostFailedError,
   SessionLinks,

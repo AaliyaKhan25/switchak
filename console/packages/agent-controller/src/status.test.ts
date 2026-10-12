@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { generateSealingKeyPair, sealProviderLogin } from '@switch-console/agent-providers';
@@ -16,6 +16,7 @@ import {
   ProviderStatuses,
   StatusCollector,
   statusFingerprint,
+  toolStatuses,
 } from './status';
 import { type AgentRow, ControllerStore } from './store';
 import { FakeLocator, FakeRuntime } from './testing/fake-runtime';
@@ -487,6 +488,56 @@ describe('a CLI whose version cannot be read', () => {
   });
 });
 
+describe('toolStatuses', () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'controller-tools-'));
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  // PATH is looked up as this machine does, so the POSIX case runs off Windows.
+  it.skipIf(process.platform === 'win32')('reports git and gh as found on PATH', async () => {
+    writeFileSync(join(dir, 'git'), '#!/bin/sh\n');
+    chmodSync(join(dir, 'git'), 0o755);
+    writeFileSync(join(dir, 'gh'), 'not executable');
+    expect(await toolStatuses(`/nonexistent:${dir}`, 'linux', join(dir, 'tools'))).toEqual([
+      { tool: 'git', state: 'ok' },
+      { tool: 'gh', state: 'missing' },
+    ]);
+  });
+
+  it('reports git and gh as unsupported on Windows', async () => {
+    const noVendorTools = join(dir, 'tools');
+    expect(await toolStatuses(dir, 'win32', noVendorTools)).toEqual([
+      { tool: 'git', state: 'unsupported' },
+      { tool: 'gh', state: 'unsupported' },
+    ]);
+  });
+
+  it('reports each vendor tool a session here has set up', async () => {
+    const tools = join(dir, 'tools');
+    mkdirSync(tools);
+    const entry = (state: string) => ({
+      version: '1.2.3',
+      target: 'linux-x64',
+      state,
+      detail: null,
+      checked_at: '2026-10-08T00:00:00Z',
+    });
+    writeFileSync(
+      join(tools, 'status.json'),
+      JSON.stringify({ zcli: entry('failed'), excli: entry('ok'), wincli: entry('unsupported') })
+    );
+    expect(await toolStatuses('/nonexistent', 'linux', tools)).toEqual([
+      { tool: 'git', state: 'missing' },
+      { tool: 'gh', state: 'missing' },
+      { tool: 'excli', state: 'ok' },
+      { tool: 'wincli', state: 'unsupported' },
+      { tool: 'zcli', state: 'missing' },
+    ]);
+  });
+});
+
 describe('StatusCollector', () => {
   let dir: string;
   let store: ControllerStore;
@@ -516,6 +567,10 @@ describe('StatusCollector', () => {
       store,
       runtime,
       providers,
+      tools: async () => [
+        { tool: 'git', state: 'ok' },
+        { tool: 'gh', state: 'missing' },
+      ],
       attached: () => true,
       dataDir: dir,
       workspacesDir: join(dir, 'workspaces'),
@@ -530,6 +585,10 @@ describe('StatusCollector', () => {
     expect(statusReportSchema.safeParse({ ...first, seq: 1 }).success).toBe(true);
     expect(first.controller).toEqual({ version: '0.1.0', protocol: 2, assignment_revision: 7 });
     expect(first.providers.map((p) => p.provider)).toEqual(['claude']);
+    expect(first.tools).toEqual([
+      { tool: 'git', state: 'ok' },
+      { tool: 'gh', state: 'missing' },
+    ]);
     expect(first.agents[0]).toMatchObject({
       agent_id: 'agent-1',
       applied_revision: 2,

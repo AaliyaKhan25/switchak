@@ -13,8 +13,15 @@ import { replaceOwner } from './ownership-lock';
 import { ownProcessGroup } from './process-fence';
 import { checkProviderReadiness } from './provider-readiness';
 import { adapterFor } from './server';
+import { grantedSkills } from './service-access';
+import { runGitCredentialHelper, runGitHubCli } from './service-github';
 import { HOST_EXIT_GRACE_MS, SessionLinks } from './session-channel';
-import { readProviderLogin, readSharedCredentials, sharedConfigSchema } from './shared-config';
+import {
+  readProviderLogin,
+  readSharedCredentials,
+  sessionServiceGrants,
+  sharedConfigSchema,
+} from './shared-config';
 import { hostSessionProcess } from './shared-host';
 import { onStopRequest } from './stop-request';
 import { superviseSharedHost } from './supervisor';
@@ -22,12 +29,12 @@ import { recordWatcherHealth } from './watcher-health-file';
 import { WatcherControl } from './watcher-tools';
 
 const [root, configPath, mode] = process.argv.slice(2);
-if (!root || !configPath)
-  throw new Error('Shared SDK host requires a state directory and configuration file.');
 async function main(): Promise<void> {
+  if (!root || !configPath)
+    throw new Error('Shared SDK host requires a state directory and configuration file.');
   if (root === '--models') {
     const provider = sharedConfigSchema.shape.start.shape.provider.parse(configPath);
-    const adapter = adapterFor(provider, process.argv[5], '');
+    const adapter = adapterFor(provider, process.argv[5], '', []);
     const sessionId = randomUUID();
     let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
@@ -197,14 +204,18 @@ async function main(): Promise<void> {
     // Started by a parent that talks to it: it goes when the parent goes.
     process.on('disconnect', () => stop.abort());
     try {
+      const services = await sessionServiceGrants(config);
       await hostSessionProcess({
         root,
         config,
         adapter: adapterFor(
           config.start.provider,
           config.execution?.binaryPath,
-          config.execution?.skill ?? ''
+          config.execution?.skill ?? '',
+          grantedSkills(services.grants)
         ),
+        services,
+        entrypoint: process.argv[1]!,
         port: process,
         authenticate:
           config.start.provider === 'claude'
@@ -238,20 +249,45 @@ async function main(): Promise<void> {
     }
   }
 }
-try {
-  await main();
-} catch (error) {
-  if (
-    root !== '--probe' &&
-    root !== '--models' &&
-    mode !== '--supervise' &&
-    mode !== '--watch-supervise'
-  ) {
-    await mkdir(join(root, 'supervisor'), { recursive: true, mode: dirMode(0o700) });
-    await replaceOwner(join(root, 'supervisor', 'failure.json'), {
-      message: error instanceof Error ? error.message : String(error),
-    });
+
+/**
+ * Git's credential helper and the `gh` wrapper a session with a GitHub grant
+ * runs (`service-github.ts`): short-lived, run by the CLI, and never a host,
+ * so a failure is told on stderr and recorded nowhere.
+ */
+async function helper(): Promise<void> {
+  try {
+    if (root === '--git-credential')
+      await runGitCredentialHelper(configPath, {
+        stdin: process.stdin,
+        stdout: process.stdout,
+        env: process.env,
+      });
+    else
+      process.exitCode = await runGitHubCli(configPath ?? '', process.argv.slice(4), process.env);
+  } catch (error) {
+    process.stderr.write(`switch: ${error instanceof Error ? error.message : String(error)}\n`);
+    process.exitCode = 1;
   }
-  console.error(error);
-  process.exitCode = 1;
 }
+
+if (root === '--git-credential' || root === '--github-cli') await helper();
+else
+  try {
+    await main();
+  } catch (error) {
+    if (
+      root !== undefined &&
+      root !== '--probe' &&
+      root !== '--models' &&
+      mode !== '--supervise' &&
+      mode !== '--watch-supervise'
+    ) {
+      await mkdir(join(root, 'supervisor'), { recursive: true, mode: dirMode(0o700) });
+      await replaceOwner(join(root, 'supervisor', 'failure.json'), {
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+    console.error(error);
+    process.exitCode = 1;
+  }

@@ -8,6 +8,7 @@ import { z } from 'zod';
 import type { AgentLaunchDefinition, ProviderAdapter, ProviderSessionStartInput } from '../adapter';
 import { isProviderRuntime, providerRuntime, providerRuntimeIds } from '../providers/registry';
 import { replaceFile } from './replace-file';
+import type { ServiceSkill } from './service-access';
 import { HostedSession } from './session-host';
 
 const id = z.string().min(1).max(200);
@@ -67,14 +68,22 @@ const folder = (root: string, sessionId: string) =>
 /**
  * The adapter for one provider. `skill` is the Switch skill file for a provider
  * that loads skills from a directory it is given (OpenCode), or '' for none;
- * Codex takes it through its session home instead.
+ * Codex takes it through its session home instead. `serviceSkills` are the
+ * skills of the agent's service grants, which OpenCode loads the same way;
+ * the other providers take them as system context (`prepareSharedConfig`).
  */
 export function adapterFor(
   provider: Session['provider'],
   binaryPath: string | undefined,
-  skill: string
+  skill: string,
+  serviceSkills: ServiceSkill[]
 ): ProviderAdapter {
-  return providerRuntime(provider).createAdapter({ binaryPath, logger: undefined, skill });
+  return providerRuntime(provider).createAdapter({
+    binaryPath,
+    logger: undefined,
+    skill,
+    serviceSkills,
+  });
 }
 
 async function body(request: IncomingMessage): Promise<unknown> {
@@ -109,7 +118,7 @@ export async function startHostServer(
         throw new Error(
           'Shared Switch sessions require the server lease and command transport; local bypass is not permitted.'
         );
-      const adapter = adapterFor(input.provider, undefined, '');
+      const adapter = adapterFor(input.provider, undefined, '', []);
       const path = folder(root, input.input.sessionId);
       await mkdir(path, { recursive: true, mode: 0o700 });
       await writeFile(join(path, 'config.json'), JSON.stringify(input), { mode: 0o600 });

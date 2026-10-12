@@ -142,6 +142,11 @@ POLICY_NAME = "tenant_isolation"
 # deployment (`docs/design/switch-trust-guardrails-v1.md`'s Settings UI
 # section) — a policy that varied per tenant would be a new scoped table, not
 # a row here.
+#
+# `service_oauth_clients` holds the OAuth client Core registered for itself at
+# a vendor that offers no other way to have one. The vendor sees one Switch,
+# so there is one client per deployment and service, shared by every tenant's
+# sign-ins; it holds no person's account, only the deployment's own client.
 GLOBAL_TABLES = frozenset(
     {
         "cloud_machines",
@@ -152,6 +157,7 @@ GLOBAL_TABLES = frozenset(
         "telemetry_snapshot_watermark",
         "switch_core_processes",
         "trust_settings",
+        "service_oauth_clients",
     }
 )
 

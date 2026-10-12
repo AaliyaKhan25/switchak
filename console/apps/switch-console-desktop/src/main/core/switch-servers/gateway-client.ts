@@ -17,12 +17,29 @@ import type {
 } from '@shared/core/managed-agents/managed-agents';
 import { ManagedServerStoppedError } from '@shared/core/managed-switch-server/managed-switch-server';
 import { HostUnreachableError } from '@shared/core/remote-hosts/reachability';
-import { connectionCatalogSchema } from '@shared/core/switch-servers/connection-catalog';
+import {
+  type ConnectionCatalogEntry,
+  connectionCatalogSchema,
+  serviceConnectionsSchema,
+} from '@shared/core/switch-servers/connection-catalog';
 import {
   gitHubConnectionSchema,
   gitHubFlowSchema,
 } from '@shared/core/switch-servers/github-connection';
 import { policyNamesOwner } from '@shared/core/switch-servers/owner-policy';
+import {
+  SERVICE_CALLBACK_PATH,
+  type ServiceFlowStart,
+  type ServiceKeyConnected,
+  serviceFlowSchema,
+  serviceFlowStartSchema,
+  serviceKeyConnectedSchema,
+} from '@shared/core/switch-servers/service-connection';
+import {
+  type ServiceGrants,
+  serviceGrantWarningSchema,
+  serviceGrantsSchema,
+} from '@shared/core/switch-servers/service-grants';
 import type {
   AddressingPolicy,
   AddTeamsTeamResult,
@@ -163,7 +180,10 @@ export class GatewayError extends Error {
     readonly code?: string,
     /** The response body as it came, for a caller that reads an envelope other
      * than FastAPI's (agent management answers `{"error": {...}}`). */
-    readonly body?: string
+    readonly body?: string,
+    /** Whether the refusal says a retry can succeed, from a body such as
+     * `{"detail": …, "code": …, "retryable": true}`. Absent when it does not say. */
+    readonly retryable?: boolean
   ) {
     super(message);
     this.name = 'GatewayError';
@@ -326,6 +346,17 @@ export async function gatewayRequest(
   return response;
 }
 
+/** The `retryable` beside `detail` in a coded refusal, or undefined without one. */
+function parseErrorRetryable(body: string): boolean | undefined {
+  if (!body) return undefined;
+  try {
+    const parsed = JSON.parse(body) as { retryable?: unknown };
+    return typeof parsed.retryable === 'boolean' ? parsed.retryable : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function gatewayFetch(
   server: SwitchServer,
   path: string,
@@ -343,7 +374,8 @@ export async function gatewayFetch(
       response.status,
       parseErrorDetail(body),
       parseErrorCode(body),
-      body
+      body,
+      parseErrorRetryable(body)
     );
   }
   return response;
@@ -2728,12 +2760,109 @@ export async function ensureCloudMachine(server: SwitchServer) {
   return cloudMachineSchema.parse(await response.json());
 }
 
-export async function getConnectionCatalog(server: SwitchServer) {
-  return connectionCatalogSchema.parse(
-    await (
-      await gatewayFetch(server, '/provider-connections/catalog', { authenticated: true })
-    ).json()
-  ).connections;
+/**
+ * The services the signed-in person can connect, and their connection to
+ * each: from `/service-connections`, or the older catalog a server from
+ * before service connections answers instead.
+ */
+export async function getConnectionCatalog(
+  server: SwitchServer
+): Promise<ConnectionCatalogEntry[]> {
+  let response: Response;
+  try {
+    response = await gatewayFetch(server, '/service-connections', { authenticated: true });
+  } catch (error) {
+    if (error instanceof GatewayError && error.status === 404) return getOlderCatalog(server);
+    throw error;
+  }
+  return serviceConnectionsSchema.parse(await response.json()).connections.map((entry) => ({
+    slug: entry.slug,
+    name: entry.name,
+    category: entry.category,
+    description: entry.description,
+    enabled: entry.enabled,
+    auth_type: entry.auth_type,
+    connectable: entry.connectable,
+    status: !entry.enabled ? 'coming_soon' : entry.status === 'active' ? 'connected' : entry.status,
+    unavailable_reason: entry.enabled ? entry.unavailable_reason : null,
+    pass_through: entry.pass_through,
+    token_lifetime: entry.token_lifetime,
+    loopback_ports: entry.loopback_ports,
+    key: entry.key,
+    external_identity: entry.external_identity,
+  }));
+}
+
+async function getOlderCatalog(server: SwitchServer): Promise<ConnectionCatalogEntry[]> {
+  const response = await gatewayFetch(server, '/provider-connections/catalog', {
+    authenticated: true,
+  });
+  return (
+    connectionCatalogSchema
+      .parse(await response.json())
+      // GitHub was the one service such a server could connect.
+      .connections.map((entry) => ({
+        ...entry,
+        connectable: entry.enabled && entry.slug === 'github',
+        unavailable_reason: null,
+        pass_through: false,
+        token_lifetime: null,
+        loopback_ports: null,
+        key: null,
+        external_identity: null,
+      }))
+  );
+}
+
+/**
+ * An agent's service grants, or null when the gateway answers that it is not
+ * the signed-in person's agent (a 404): only its owner sees them. Any other
+ * failure is thrown, for the caller to show.
+ */
+export async function fetchServiceGrants(
+  server: SwitchServer,
+  agentId: string
+): Promise<ServiceGrants | null> {
+  let response: Response;
+  try {
+    response = await gatewayFetch(server, `/agents/${encodeURIComponent(agentId)}/service-grants`, {
+      authenticated: true,
+    });
+  } catch (cause) {
+    if (cause instanceof GatewayError && cause.status === 404) return null;
+    throw cause;
+  }
+  return serviceGrantsSchema.parse(await response.json());
+}
+
+/** Create or replace an agent's grant; the warning names access that stays usable a while. */
+export async function setServiceGrant(
+  server: SwitchServer,
+  agentId: string,
+  service: string,
+  grant: { access: 'read' | 'write' | null; resources: Record<string, unknown> }
+): Promise<string | null> {
+  // An on/off grant names no level: Switch gives it the connection's.
+  const body = grant.access === null ? { resources: grant.resources } : grant;
+  const response = await gatewayFetch(
+    server,
+    `/agents/${encodeURIComponent(agentId)}/service-grants/${encodeURIComponent(service)}`,
+    { authenticated: true, method: 'PUT', body }
+  );
+  return serviceGrantWarningSchema.parse(await response.json()).warning;
+}
+
+export async function removeServiceGrant(
+  server: SwitchServer,
+  agentId: string,
+  service: string
+): Promise<string | null> {
+  const response = await gatewayFetch(
+    server,
+    `/agents/${encodeURIComponent(agentId)}/service-grants/${encodeURIComponent(service)}`,
+    { authenticated: true, method: 'DELETE' }
+  );
+  return serviceGrantWarningSchema.parse(await response.json()).warning;
 }
 export async function getGitHubConnection(server: SwitchServer) {
   return gitHubConnectionSchema.parse(
@@ -2822,6 +2951,115 @@ export async function disconnectGitHub(server: SwitchServer) {
     method: 'DELETE',
   });
   if (response.status === 204) return { warning: null };
+  return z.object({ warning: z.string().nullable() }).parse(await response.json());
+}
+
+const serviceFlows = (service: string) =>
+  `/service-connections/${encodeURIComponent(service)}/flows`;
+
+/**
+ * Begin signing in to `service` through Switch's generic OAuth flow. The URL
+ * the browser is sent to is checked: Core's own authorize step on this server,
+ * or the vendor's page returning to this Console's listener with this state.
+ */
+export async function startServiceConnection(
+  server: SwitchServer,
+  service: string,
+  input: { port: number; state: string; completion_secret: string }
+): Promise<ServiceFlowStart> {
+  if (new URL(server.gatewayUrl).protocol !== 'https:')
+    throw new Error('Service connections require HTTPS.');
+  const value = serviceFlowStartSchema.parse(
+    await (
+      await gatewayFetch(server, serviceFlows(service), {
+        authenticated: true,
+        method: 'POST',
+        body: input,
+      })
+    ).json()
+  );
+  const url = new URL(value.url);
+  const valid =
+    value.id === input.state &&
+    !url.username &&
+    !url.password &&
+    (value.mode === 'core'
+      ? url.origin === new URL(server.gatewayUrl).origin &&
+        url.pathname === `/gateway${serviceFlows(service)}/authorize` &&
+        url.searchParams.get('state') === value.id
+      : url.protocol === 'https:' &&
+        url.searchParams.get('state') === value.id &&
+        url.searchParams.get('redirect_uri') ===
+          `http://127.0.0.1:${input.port}${SERVICE_CALLBACK_PATH}`);
+  if (!valid) throw new Error('The server returned an invalid sign-in URL.');
+  return value;
+}
+export async function getServiceFlow(server: SwitchServer, service: string, id: string) {
+  return serviceFlowSchema.parse(
+    await (
+      await gatewayFetch(server, `${serviceFlows(service)}/${encodeURIComponent(id)}`, {
+        authenticated: true,
+      })
+    ).json()
+  );
+}
+export async function completeServiceConnection(
+  server: SwitchServer,
+  service: string,
+  id: string,
+  code: string,
+  completionSecret: string
+) {
+  await gatewayFetch(server, `${serviceFlows(service)}/${encodeURIComponent(id)}/complete`, {
+    authenticated: true,
+    method: 'POST',
+    body: { code, completion_secret: completionSecret },
+  });
+}
+export async function confirmServiceConnection(
+  server: SwitchServer,
+  service: string,
+  id: string,
+  completionSecret: string
+) {
+  const response = await gatewayFetch(
+    server,
+    `${serviceFlows(service)}/${encodeURIComponent(id)}/confirm`,
+    { authenticated: true, method: 'POST', body: { completion_secret: completionSecret } }
+  );
+  return z.object({ warning: z.string().nullable() }).parse(await response.json());
+}
+export async function cancelServiceConnection(server: SwitchServer, service: string, id: string) {
+  await gatewayFetch(server, `${serviceFlows(service)}/${encodeURIComponent(id)}`, {
+    authenticated: true,
+    method: 'DELETE',
+  });
+}
+/**
+ * Connect `service` with a pasted key: Switch checks it with the vendor before
+ * keeping it, and never sends it back. A refusal (the vendor refused the key,
+ * a field is malformed, the account is linked to someone else) is thrown, its
+ * `detail` written for the person.
+ */
+export async function connectServiceWithKey(
+  server: SwitchServer,
+  service: string,
+  fields: Record<string, string>
+): Promise<ServiceKeyConnected> {
+  const response = await gatewayFetch(
+    server,
+    `/service-connections/${encodeURIComponent(service)}/key`,
+    { authenticated: true, method: 'PUT', body: { fields } }
+  );
+  return serviceKeyConnectedSchema.parse(await response.json());
+}
+/** Disconnect `service`: its grants go with it, and what was issued is revoked. */
+export async function disconnectService(server: SwitchServer, service: string) {
+  const response = await gatewayFetch(
+    server,
+    `/service-connections/${encodeURIComponent(service)}`,
+    { authenticated: true, method: 'DELETE' }
+  );
   return z.object({ warning: z.string().nullable() }).parse(await response.json());
 }
 

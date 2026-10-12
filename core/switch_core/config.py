@@ -17,6 +17,7 @@ from switch_core.feature_flags import (
     AGENT_MANAGEMENT,
     HOSTED_AGENTS,
     KNOWN_FEATURE_FLAGS,
+    SERVICE_CONNECTIONS,
 )
 from switch_core.keys import Keyring
 from switch_core.outbound import OutboundPolicy
@@ -75,6 +76,10 @@ def _require_matching_keypair(
             f"{certificate_name} and {key_name} are not a pair: the key does "
             "not match the certificate's public key."
         )
+
+
+# A connection catalog slug (`connections/loader.py`, SLUG_PATTERN).
+_SERVICE_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 
 
 class SwitchConfig(BaseSettings):
@@ -239,8 +244,24 @@ class SwitchConfig(BaseSettings):
     hosted_launch_capacity: int = Field(default=0, ge=0, le=100)
     hosted_idle_stop_minutes: int = Field(default=30, ge=0, le=1440)
     hosted_disk_retention_days: int = Field(default=7, ge=1, le=90)
+    # How long a record of each service token Core issued is kept: which agent,
+    # on whose connection, through which controller, with what reach.
+    service_token_retention_days: int = Field(default=30, ge=1)
     hosted_controller_config_path: str | None = None
     hosted_github_config_path: str | None = None
+    # The GitHub App this deployment connects people's GitHub accounts through
+    # and issues repository tokens from: its JSON settings
+    # ({client_id, client_secret, slug, origin}) and the absolute path to its
+    # signing key. Both or neither. Unset, GitHub is shown as not set up here,
+    # unless the deprecated hosted settings above still name an App.
+    github_app_config_path: str | None = None
+    github_app_private_key_path: str | None = None
+    # Catalog services switched off on this server, each with the reason
+    # people are shown, as JSON: {"<slug>": "<reason>"}. An empty reason shows
+    # "Switched off on this server." A switched-off service is listed with its
+    # reason, and cannot be connected, granted or issued; disconnecting still
+    # works. Unknown slugs stop the server.
+    disabled_services: dict[str, str] = Field(default_factory=dict)
     # Sets the Secure flag on the gateway's cookies (the switch_auth session
     # and the OIDC sign-in cookie), so they are never sent over plain HTTP.
     # Only a local stack served over http:// should turn it off.
@@ -1041,6 +1062,10 @@ class SwitchConfig(BaseSettings):
     def hosted_agents_enabled(self) -> bool:
         return self.feature_flags[HOSTED_AGENTS]
 
+    @property
+    def service_connections_enabled(self) -> bool:
+        return self.feature_flags[SERVICE_CONNECTIONS]
+
     @model_validator(mode="after")
     def _validate_outbound_allowed_private_hosts(self) -> "SwitchConfig":
         OutboundPolicy.parse(self.outbound_allowed_private_hosts)
@@ -1077,6 +1102,36 @@ class SwitchConfig(BaseSettings):
                 "interval such as '15s', '500ms' or a bare count of "
                 f"milliseconds, got {value!r}."
             )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_github_app(self) -> "SwitchConfig":
+        if (self.github_app_config_path is None) != (
+            self.github_app_private_key_path is None
+        ):
+            raise ValueError(
+                "GITHUB_APP_CONFIG_PATH and GITHUB_APP_PRIVATE_KEY_PATH are set "
+                "together or not at all."
+            )
+        if (
+            self.github_app_private_key_path is not None
+            and not Path(self.github_app_private_key_path).is_absolute()
+        ):
+            raise ValueError("GITHUB_APP_PRIVATE_KEY_PATH must be an absolute path.")
+        return self
+
+    @model_validator(mode="after")
+    def _validate_disabled_services(self) -> "SwitchConfig":
+        for slug, reason in self.disabled_services.items():
+            if not _SERVICE_SLUG_RE.fullmatch(slug):
+                raise ValueError(
+                    f"DISABLED_SERVICES names an invalid service: {slug!r}"
+                )
+            if len(reason) > 300 or "\n" in reason:
+                raise ValueError(
+                    f"DISABLED_SERVICES' reason for {slug} must be one line of at "
+                    "most 300 characters."
+                )
         return self
 
     @model_validator(mode="after")

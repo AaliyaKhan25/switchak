@@ -40,7 +40,12 @@ class ProviderAdapterRegistry {
       throw new Error(`No provider adapter for '${providerId}': this build has no such provider.`);
     // No executable is configured, so each adapter takes the CLI on the
     // session's own PATH — the one the user signed in with.
-    return providerRuntime(providerId).createAdapter({ binaryPath: undefined, logger, skill: '' });
+    return providerRuntime(providerId).createAdapter({
+      binaryPath: undefined,
+      logger,
+      skill: '',
+      serviceSkills: [],
+    });
   }
 }
 

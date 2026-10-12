@@ -33,7 +33,23 @@ HOSTED_AGENTS = "hosted_agents"
 # /v1/controllers. With it off none of those routes are mounted.
 AGENT_MANAGEMENT = "agent_management"
 
+# Service connections: people connect outside services (GitHub's grants,
+# Atlassian, Google Workspace, Datadog and the rest of the catalog) and grant
+# them to their agents. With it off, the routes for connections, sign-ins,
+# keys and grants (`/gateway/service-connections`, `/gateway/agents/{id}/
+# service-grants`, `/agents/{id}/service-grants` and `service-tokens`) are not
+# mounted: agent hosts read that as no grants, and Console and the dashboard
+# show no services but GitHub's link, as before connections. GitHub's own
+# connect routes stay.
+SERVICE_CONNECTIONS = "service_connections"
+
 # Every flag the server recognises.
 KNOWN_FEATURE_FLAGS: frozenset[str] = frozenset(
-    {ECOSYSTEM_SHOW_OWNERS, SWITCH_CLOUD, HOSTED_AGENTS, AGENT_MANAGEMENT}
+    {
+        ECOSYSTEM_SHOW_OWNERS,
+        SWITCH_CLOUD,
+        HOSTED_AGENTS,
+        AGENT_MANAGEMENT,
+        SERVICE_CONNECTIONS,
+    }
 )

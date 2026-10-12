@@ -6,6 +6,7 @@ import {
   findOnPath,
   type ProviderReadiness,
   providerUnsupportedReason,
+  readCliToolStatuses,
 } from '@switch-console/agent-providers';
 import { pluginRegistry } from '@switch-console/plugins/agents';
 import { errorMessage, type Logger } from './log';
@@ -22,6 +23,7 @@ import {
   type ProviderStatus,
   type ReasonCode,
   type StatusReport,
+  type ToolStatus,
 } from './schemas';
 import type { GivenLogin, LoginProblem, SealedLogins } from './sealed-logins';
 import type { AgentRow, ControllerStore } from './store';
@@ -48,6 +50,40 @@ export type LocatedProvider = {
   version: string | null;
   versionProblem: string | null;
 };
+
+/**
+ * The tools Switch sets up for a session whose agent has a GitHub grant: `ok`
+ * when on PATH, `missing` when not. Its helpers do not run on Windows, so
+ * there both are `unsupported`, and such an agent uses the machine's own
+ * sign-in.
+ *
+ * Then each vendor command-line tool a session here has set up, from the
+ * machine's tool folder (`cliToolsBase`): `ok` once its pinned build is
+ * installed, `missing` when the last install failed, `unsupported` where the
+ * catalog has no build for this machine. A tool no session has needed yet is
+ * not named.
+ */
+export async function toolStatuses(
+  path: string | undefined,
+  os: NodeJS.Platform,
+  cliBase: string
+): Promise<ToolStatus[]> {
+  return [...(await gitHubToolStatuses(path, os)), ...(await readCliToolStatuses(cliBase))];
+}
+
+async function gitHubToolStatuses(
+  path: string | undefined,
+  os: NodeJS.Platform
+): Promise<ToolStatus[]> {
+  const tools = ['git', 'gh'];
+  if (os === 'win32') return tools.map((tool) => ({ tool, state: 'unsupported' }));
+  return Promise.all(
+    tools.map(
+      async (tool) =>
+        ({ tool, state: (await findOnPath(tool, path)) !== null ? 'ok' : 'missing' }) as const
+    )
+  );
+}
 
 /** Finds a provider's CLI on this machine. */
 export interface ProviderLocator {
@@ -489,6 +525,8 @@ export class StatusCollector {
       store: ControllerStore;
       runtime: AgentRuntime;
       providers: ProviderStatuses;
+      /** The tools sessions are set up with (`toolStatuses`). */
+      tools: () => Promise<ToolStatus[]>;
       /** Whether the relay has the agent attached; see `mapAgentProcess`. */
       attached: (agentId: string) => boolean;
       dataDir: string;
@@ -558,7 +596,7 @@ export class StatusCollector {
         workspaces_dir: this.deps.workspacesDir,
       },
       providers: this.deps.providers.snapshot(),
-      tools: [],
+      tools: await this.deps.tools(),
       agents,
     };
   }
@@ -572,6 +610,7 @@ export function statusFingerprint(report: Omit<StatusReport, 'seq'>): string {
   return JSON.stringify({
     revision: report.controller.assignment_revision,
     providers: report.providers.map((p) => [p.provider, p.installed, p.version, p.auth, p.reason]),
+    tools: report.tools.map((t) => [t.tool, t.state, t.reason]),
     agents: report.agents.map((a) => [
       a.agent_id,
       a.applied_revision,

@@ -49,6 +49,8 @@ import {
   ensureCloudMachine,
   listCloudMachines,
   disconnectGitHub,
+  connectServiceWithKey,
+  disconnectService,
   acceptInvitation,
   acceptPendingInvitation,
   joinWorkspaceByDomain,
@@ -82,6 +84,12 @@ import {
   setActiveServerId,
   updateServer,
 } from './servers-store';
+import {
+  cancelServiceBrowserFlow,
+  confirmServiceBrowserFlow,
+  getServiceBrowserFlow,
+  startServiceBrowserFlow,
+} from './service-browser-flow';
 import { requireSwitchCloudEndpoint, switchCloudEndpoint } from './switch-cloud';
 import {
   clearTrustSettingsOnServer,
@@ -311,6 +319,28 @@ export const switchServersController = createRPCController({
     withReachableServerWorkspaceSession(serverId, (server) => cancelGitHubBrowserFlow(server, id)),
   disconnectGitHub: (serverId: string) =>
     withReachableServerWorkspaceSession(serverId, (server) => disconnectGitHub(server)),
+  startServiceConnection: (serverId: string, service: string) =>
+    withReachableServerWorkspaceSession(serverId, (server) =>
+      startServiceBrowserFlow(server, service, (url) => appService.openExternal(url))
+    ),
+  getServiceFlow: (serverId: string, service: string, id: string) =>
+    withReachableServerWorkspaceSession(serverId, (server) =>
+      getServiceBrowserFlow(server, service, id)
+    ),
+  confirmServiceConnection: (serverId: string, service: string, id: string) =>
+    withReachableServerWorkspaceSession(serverId, (server) =>
+      confirmServiceBrowserFlow(server, service, id)
+    ),
+  cancelServiceConnection: (serverId: string, service: string, id: string) =>
+    withReachableServerWorkspaceSession(serverId, (server) =>
+      cancelServiceBrowserFlow(server, service, id)
+    ),
+  connectServiceWithKey: (serverId: string, service: string, fields: Record<string, string>) =>
+    withReachableServerWorkspaceSession(serverId, (server) =>
+      connectServiceWithKey(server, service, fields)
+    ),
+  disconnectService: (serverId: string, service: string) =>
+    withReachableServerWorkspaceSession(serverId, (server) => disconnectService(server, service)),
   openGitHubInstallation: async (serverId: string) => {
     const connection = await withReachableServerWorkspaceSession(serverId, (server) =>
       getGitHubConnection(server)

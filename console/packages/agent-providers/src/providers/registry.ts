@@ -22,6 +22,12 @@ export interface ProviderRuntimeOptions {
    * home instead, and ACP agents through the session's system context.
    */
   skill: string;
+  /**
+   * The skills of the agent's service grants, which OpenCode loads the same
+   * way as `skill`; the other providers take them as system context
+   * (`prepareSharedConfig`).
+   */
+  serviceSkills: readonly { name: string; content: string }[];
 }
 
 /** What the execution host needs to run one provider. */
@@ -83,11 +89,11 @@ export const PROVIDER_RUNTIMES: readonly ProviderRuntime[] = [
     loginCommand: OPENCODE_LOGIN,
     inheritEnv: [],
     unsupportedPlatforms: {},
-    createAdapter: ({ binaryPath, logger, skill }) =>
+    createAdapter: ({ binaryPath, logger, skill, serviceSkills }) =>
       createOpencodeAdapter({
         binaryPath,
         ...(logger ? { logger } : {}),
-        skills: skill ? [{ name: 'switch', content: skill }] : [],
+        skills: [...(skill ? [{ name: 'switch', content: skill }] : []), ...serviceSkills],
       }),
     checkSignIn: checkOpencodeSignIn,
   },

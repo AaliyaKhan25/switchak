@@ -27,6 +27,7 @@ import { ChatProjector } from '../session-v1/chat-projector';
 import { ATTACHMENT_MIME_TYPES } from './attachments';
 import { Journal } from './journal';
 import { fitModelCatalog } from './model-catalog';
+import type { Redactions } from './redaction';
 
 export const hostInboxRecordSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('accepted'), command: commandSchema }),
@@ -70,6 +71,8 @@ export type HostSessionStart = {
    * where the host has no way to reach the agent's rooms.
    */
   replyToRoom?: (reply: RoomReply) => Promise<void>;
+  /** Service tokens to scrub from every event before it is recorded; none when absent. */
+  redactions?: Redactions;
 };
 /** What the host posts for a turn a room message started that ended without the agent posting. */
 export type RoomReply = { roomId: string; threadId: string | null; body: string };
@@ -172,7 +175,7 @@ export class HostedSession {
       if (record.type === 'model') config.input.model = { id: record.id, options: record.options };
       if (record.type === 'room-reply') this.roomReplies.add(record.commandId);
     }
-    this.projector = new ChatProjector(config.session);
+    this.projector = new ChatProjector(config.session, config.redactions ?? null);
     this.unsubscribe = adapter.subscribe((event) => {
       if (event.sessionId !== config.session.sessionId) return;
       // Process cleanup leaves this conversation available for recovery.
@@ -455,6 +458,11 @@ export class HostedSession {
 
   notice(message: string): Promise<void> {
     return this.publish({ type: 'notice', level: 'error', code: 'ROOM_DELIVERY_FAILED', message });
+  }
+
+  /** A service the session reaches some other way than through Switch: said, not silent. */
+  serviceFallback(message: string): Promise<void> {
+    return this.publish({ type: 'notice', level: 'warning', code: 'SERVICE_FALLBACK', message });
   }
 
   roomDeliveryResumed(): Promise<void> {
@@ -1226,7 +1234,9 @@ export class HostedSession {
         sessionId: this.config.session.sessionId,
         sequence: this.events.records.length + 1,
         occurredAt: new Date().toISOString(),
-        body,
+        // Scrubbed here, once: the journal, Console's view and the activity
+        // rows Switch shows on the bridges are all made from what is recorded.
+        body: this.config.redactions ? this.config.redactions.value(body) : body,
       };
       if (eventBytes(event) > 64 * 1024)
         throw new Error('PAYLOAD_TOO_LARGE: event exceeds 64 KiB.');

@@ -180,6 +180,13 @@ secrets:
 switchCore:
   # Existing Secret with github.json (client_id, client_secret, slug, origin).
   githubConnectionsSecret: ""
+  # Absolute path to the GitHub App's signing key inside a Secret this chart
+  # already mounts: /etc/switch-github/<key> for one kept beside github.json,
+  # or /etc/switch-hosted/<key> in hostedControllerSecret. With
+  # githubConnectionsSecret it sets GITHUB_APP_CONFIG_PATH and
+  # GITHUB_APP_PRIVATE_KEY_PATH, so agents can be granted GitHub. Without it,
+  # GitHub can be connected but not granted.
+  githubAppPrivateKeyPath: ""
   hostedControllerSecret: ""
   # How many cloud machines may run at once; 0 means this server cannot run
   # them. Cloud machines run the agents controller, so above 0 this needs the
@@ -345,7 +352,7 @@ switchCore:
   # ["ecosystem.show_owners"]. Every other flag is off, and no one can change
   # them while the server runs. An unknown flag stops switch-core at startup.
   # Known flags: ecosystem.show_owners, agent_management, switch_cloud,
-  # hosted_agents.
+  # hosted_agents, service_connections.
   featureFlags:
     enabled: []
   # Invitation e-mails. When enabled, an invitation addressed to an e-mail is

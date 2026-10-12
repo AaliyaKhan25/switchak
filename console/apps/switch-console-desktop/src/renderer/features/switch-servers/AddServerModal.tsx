@@ -5,6 +5,7 @@ import { NewAgentForm } from '@renderer/features/locations/components/add-agent-
 import { HostReachabilityNotice } from '@renderer/features/remote-hosts/host-reachability-notice';
 import { describeFailure } from '@renderer/lib/errors/describe-failure';
 import { toast } from '@renderer/lib/hooks/use-toast';
+import { useFeatureFlags } from '@renderer/lib/hooks/useFeatureFlags';
 import { rpc } from '@renderer/lib/ipc';
 import { useNavigate } from '@renderer/lib/layout/navigation-provider';
 import { type BaseModalProps } from '@renderer/lib/modal/modal-provider';
@@ -89,12 +90,14 @@ type Props = BaseModalProps<void> & {
 
 /**
  * Where signing in to Switch Cloud leads: on to setting up cloud agents when
- * the Cloud offers them (its `hosted_agents` flag), otherwise to the step any
+ * the Cloud offers them (its `hosted_agents` flag), by way of its connections
+ * where it offers those too (`service_connections`); otherwise to the step any
  * other server ends on.
  */
 async function stepAfterCloudSignIn(serverId: string): Promise<Step> {
   const flags = await rpc.featureFlags.current(serverId);
-  return flags.success && flags.data.flags.hosted_agents ? 'managedGitHub' : 'linkAccounts';
+  if (!flags.success || !flags.data.flags.hosted_agents) return 'linkAccounts';
+  return flags.data.flags.service_connections ? 'managedGitHub' : 'managedAgent';
 }
 
 type Step =
@@ -202,6 +205,7 @@ export const AddServerModal = observer(function AddServerModal(props: Props) {
   // Why the account just created has no cloud machine warming, carried into
   // the managed steps so it is not lost with the sign-in form.
   const [machineUnavailable, setMachineUnavailable] = useState<string | null>(null);
+  const connectionsOffered = useFeatureFlags(connected?.id).service_connections;
   const machineNotice = machineUnavailable && (
     <MachineUnavailableNotice reason={machineUnavailable} />
   );
@@ -279,7 +283,7 @@ export const AddServerModal = observer(function AddServerModal(props: Props) {
           entryPoint="onboarding"
           initialRunLocation="cloud"
           serverId={connected.id}
-          onBack={() => goToStep('managedGitHub')}
+          onBack={() => goToStep(connectionsOffered ? 'managedGitHub' : 'choose')}
           onClose={() => finish(connected.id)}
         />
       </>

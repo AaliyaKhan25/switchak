@@ -619,8 +619,11 @@ it('lists a catalog too large for a session event without its overflow, and keep
   const listed = host.snapshot().session.models!;
   expect(listed.length).toBeLessThan(catalog.length);
   expect(listed.every((model) => Object.keys(model.options).length === 0)).toBe(true);
-  expect(host.replay(0).events.map((e) => e.body)).toContainEqual(
-    expect.objectContaining({ code: 'MODEL_CATALOG_TRUNCATED' })
+  // The notice follows the session record it explains.
+  await vi.waitFor(() =>
+    expect(host.replay(0).events.map((e) => e.body)).toContainEqual(
+      expect.objectContaining({ code: 'MODEL_CATALOG_TRUNCATED' })
+    )
   );
   expect(host.replay(0).events.map((e) => e.body)).not.toContainEqual(
     expect.objectContaining({ code: 'MODEL_CATALOG_UNAVAILABLE' })

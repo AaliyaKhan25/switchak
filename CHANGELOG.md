@@ -78,6 +78,95 @@ version of their own to them without also giving them a release of their own.
   controller). Giving one queues a `provider.login` operation the machine takes
   it up with; revoking the machine deletes its logins. Migration
   `d41c7a9e2b58` adds `sealed_provider_logins`.
+- **The `service_connections` feature flag** shows or hides service
+  connections. Off, which is the default, the routes for connections,
+  sign-ins, keys and grants are not mounted: agent hosts read that as no
+  grants, and Switch Console and the dashboard offer GitHub's link alone, as
+  before. Turn it on with `FEATURE_FLAGS_ENABLED=service_connections` (Helm:
+  `switchCore.featureFlags.enabled`) for everything below.
+- **Agents use their owner's GitHub through grants.** A person connects their
+  GitHub account once; an agent's owner then grants it repositories, to read or
+  to read and push, from the agent's page in the gateway or in Switch Console.
+  The agent's sessions get installation tokens for exactly those repositories,
+  valid for at most an hour, each issue recorded. They are revoked when the
+  grant narrows or goes, the owner disconnects GitHub or re-links another
+  account, the agent is deleted, or its owner leaves the workspace. Agents with
+  a runtime of their own cannot be granted anything yet. New routes:
+  `GET /agents/{id}/service-grants` and `POST /agents/{id}/service-tokens/{service}`
+  for agents and their controllers, and `/gateway/service-connections` and
+  `/gateway/agents/{id}/service-grants` for people. Pushes, pull requests and
+  comments made this way appear as the GitHub App.
+- **Agents can use their owner's Jira, through the Atlassian connection.** A
+  person connects Atlassian from Switch Console; nothing needs configuring on
+  the server, which registers its own OAuth client with Atlassian on the first
+  connect. An agent's owner then turns Atlassian on for it: on or off, at the
+  level the person consented to when connecting (read, or read and write).
+  The agent acts as its owner in Jira, through Atlassian's MCP tools, which its
+  sessions call without the token ever reaching the coding tool. Only Jira's
+  scopes are asked for. Connecting from the web dashboard is not possible yet.
+- **Services beyond GitHub from the catalog.** A catalog entry can name the
+  generic OAuth/MCP adapter: its sign-in, the vendor's MCP servers, and whether
+  its tokens are minted per issue or the owner's own, passed through with a
+  lifetime cap. A service whose OAuth client the operator registers reads it
+  from the JSON file `<PREFIX>_CLIENT_CONFIG_PATH` names; unset, the service is
+  shown as not set up on this server, and set but unusable, the server does not
+  start. Connecting goes through `/gateway/service-connections/{service}/flows`.
+- **Agents can use their owner's Google Drive, Docs, Sheets, Slides and
+  Calendar, on self-hosted servers.** The server's operator registers an
+  internal Google app and names its client in
+  `GOOGLE_WORKSPACE_CLIENT_CONFIG_PATH` (see
+  `docs/old/google-workspace-setup.md`); without it, Google Workspace is listed
+  as not set up. A person connects from Switch Console, signing in to Google
+  through the server's own callback; their agents' sessions then run Google's
+  `gws` command-line tool with the person's access, on/off like Atlassian.
+  Gmail is not offered. Disconnecting revokes the sign-in at Google.
+- **A catalog service's tools can be the vendor's command-line tool.** An
+  `oauth` entry (the generic adapter, formerly `oauth-mcp`) names either the
+  vendor's MCP servers or a `cli` block: the binary and its pinned builds with
+  their SHA-256s, the commands and flags allowed and refused, which arguments
+  are local files, an output cap, a timeout, and how a run says the vendor
+  refused its token. `auth.oauth.authorization_params` sends extra sign-in
+  parameters a vendor needs, from a fixed allowlist. The grants answer gains
+  `cli_tools`, additively.
+- **Services people connect with a key, starting with Datadog.** A catalog
+  entry with `adapter: api_key` names the fields a person pastes (one to three
+  secret keys) or picks (a site or region, never free text), a call that
+  checks them, and header or environment templates that put them into the
+  vendor's MCP requests or CLI runs. Core checks a key with its vendor before
+  storing it, encrypted, through
+  `PUT /gateway/service-connections/{service}/key`, and hands it to sessions an
+  hour at a time like any pass-through token; the coding tool never sees it.
+  Keys are not refreshed, and disconnecting forgets one but cannot revoke it
+  at the vendor, which the answer says. The grants answer's MCP servers carry
+  their `headers` templates and a CLI its `env` ones (both additive). Datadog
+  needs MCP access turned on for the organization and an application key with
+  `mcp_read`.
+- **`DISABLED_SERVICES`** switches catalog services off on a server, as JSON
+  mapping each to the reason people are shown (an empty one reads "Switched off
+  on this server."). A switched-off service is listed with its reason and
+  cannot be connected, granted or issued a token; disconnecting still works.
+- The service token answer gains `expires_in` and `use_until`: a holder asks
+  again by `use_until`, at most an hour away, whatever the vendor's token
+  lifetime. The grants answer gains each service's `mcp_servers`. Both are
+  additive.
+- **A grant change reaches running sessions within a minute.** The grants
+  answer carries each grant's `revision` and the token answer the
+  `grant_revision` it was issued under (both additive). An agent host holding a
+  token reads the grants again at most every 30 seconds and asks for a new
+  token once its grant has moved on, so a widened grant, one turned off, or
+  one removed and made again applies without restarting the session. A
+  service first granted after a session started reaches it when it next
+  starts, as its tools are set up then.
+- The dashboard's Service access shows services such as Atlassian as on/off
+  switches beside GitHub's grant, and says why one cannot be turned on: not
+  connected yet, or switched off or not set up on this server.
+- **`GITHUB_APP_CONFIG_PATH` and `GITHUB_APP_PRIVATE_KEY_PATH`** configure the
+  GitHub App (both or neither; the key path absolute). The Helm chart sets
+  them from `switchCore.githubConnectionsSecret` and the new
+  `switchCore.githubAppPrivateKeyPath`, the signing key's path in a Secret the
+  chart mounts.
+  `SERVICE_TOKEN_RETENTION_DAYS` (default 30) sets how long issue records are
+  kept; tokens' values are dropped as soon as they expire.
 - **The Helm chart turns agent management on from its values.**
   `switchCore.agentManagement.enabled` and `secrets.controllerTokenSecret` (or
   `CONTROLLER_TOKEN_SECRET` in `secrets.existingSecret`) set
@@ -129,10 +218,33 @@ version of their own to them without also giving them a release of their own.
   instead.
 - **Hosted launches require `agent_management`.** `HOSTED_LAUNCH_CAPACITY` above
   0 now needs the `agent_management` flag enabled.
+- **GitHub moves onto service connections when the new release first starts,**
+  once per workspace: each GitHub connection. A connection that cannot be read
+  is skipped and logged, and its owner connects GitHub again. So is a second
+  person linked to the same GitHub account as someone else: they must connect a
+  different GitHub account, or the first must disconnect theirs. A workspace
+  whose move fails is logged and tried again at the next start; the others
+  still move. The old table is left as it was, but nothing is written back to
+  it: after rolling back to the previous release, people connect GitHub again
+  (GitHub renews sign-ins by replacing them, so the copies there stop working
+  within hours), and disconnects and removed grants made on this release do
+  not carry back. Rolling back means downgrading this release's migrations,
+  which drops the service connection, grant and token record tables and
+  everything made in them on this release. Tokens already handed out then stay
+  valid until they expire, within the hour, as nothing is left to revoke them.
 
 #### Removed
 - **The `feature_flags` table is dropped.** The migration logs which flags were
   on at upgrade so they can be re-expressed through the feature-flag setting.
+- A new migration adds `service_oauth_clients`, where the server keeps the
+  OAuth clients it registered with vendors such as Atlassian, encrypted with
+  the server keys and re-encrypted when they rotate. Downgrading it drops the
+  table; the server registers again on the next connect.
+
+#### Deprecated
+- `HOSTED_GITHUB_CONFIG_PATH` still configures the GitHub App's sign-in, with a
+  warning, for this release. It names no signing key, so GitHub can then be
+  connected but not granted.
 
 #### Fixed
 - **The Helm chart's Ingress now routes every agent API path to switch-core.**
@@ -1461,6 +1573,11 @@ version of their own to them without also giving them a release of their own.
 ### [Unreleased]
 
 #### Added
+- **Service connections follow the server's `service_connections` flag,**
+  apart from cloud machines. With it off, Your Agents offers no Connections,
+  no agent shows Service access, and setting up Switch Cloud goes straight
+  from signing in to the first cloud agent; turning it on reaches a running
+  Console without a restart.
 - **Managed servers turn agent management on.** A server Console runs, on
   this computer or on an SSH host, now starts with agent management enabled
   and the controller token secret it needs, generated once and shared by every
@@ -1484,6 +1601,60 @@ version of their own to them without also giving them a release of their own.
   Codex, OpenCode or Antigravity sign-in. Console seals it to the machine's own
   key before it leaves, so the server only relays it, and shows whether the
   provider signs in with it on the machine.
+- **Agents granted GitHub can use it in every session.** Git's credential
+  helper and a `gh` wrapper are set up for `https://github.com` in the session
+  alone, and ask the agent host for a short-lived token; SSH remotes and other
+  hosts keep your own setup. Nothing is set up for an agent without a GitHub
+  grant, or on Windows yet. A token GitHub refuses is replaced on the next
+  command. Tokens are scrubbed from session logs, transcripts, activity shown
+  on messaging platforms and anything the agent posts to a room.
+- **Service access in an agent's settings and on a managed agent's page,**
+  Switch cloud agents included: its grants, the GitHub repositories they
+  reach, and a warning, with "Make owner-only", when anyone can address the
+  agent.
+- The skills of an agent's granted services reach each session, and a session
+  is told when its agent's grants could not be loaded.
+- A server's Connections show a connection that needs reconnecting, and why a
+  service cannot be granted on that server.
+- Connecting GitHub says when an organization's single sign-on hides its
+  installation of the App, and what to do, instead of waiting on access that
+  cannot appear.
+- **Connect Atlassian, and any other service the server offers, from
+  Connections.** Signing in happens in your browser and comes back to Switch
+  Console, which confirms the account with you before the server keeps it.
+  Atlassian takes a sign-in back only on a few fixed ports on your computer;
+  if all are in use, Switch Console says which to free.
+- **Agents granted a service whose tools are a command-line tool, such as
+  Google Workspace, get that tool in every session.** The session host runs
+  the vendor's pinned build itself, never through a shell, after checking each
+  command against the service's catalog entry, and keeps every file it reads or
+  writes inside the session's folder. Each run works in a folder of its own,
+  with your token in its environment for that run alone; the coding tool never
+  sees the token, and it is scrubbed from the output. The build is downloaded
+  on first use and checked against its pinned SHA-256; the agents controller
+  reports it among its tools.
+- **Agents granted a service such as Atlassian get its tools in every
+  session,** as an MCP server of their own beside Switch's. The session host
+  calls the service with your token, which never reaches the coding tool, and
+  scrubs it from everything the session records. A service that is slow or
+  failing shows as one failed server, and Switch's tools keep working. Only
+  text from a service's tools is passed on; anything else is replaced by a
+  line saying what was left out.
+- Service access in an agent's settings shows services such as Atlassian as an
+  on/off switch, saying what on means and how soon off takes effect.
+- **Connect a service with a key, such as Datadog, from Connections.** You
+  paste its keys and pick its site in a form; Switch checks the key with the
+  service before keeping it, and never shows it again. Agents granted the
+  service use it with your key, which the session host puts in each request or
+  run as the service's catalog entry says, and scrubs each key from everything
+  the session records.
+
+#### Changed
+- The agents controller reports `git` and `gh` as found, missing, or not
+  supported on Windows.
+- **An idle session now parks after a day rather than 30 minutes.** Set
+  `SWITCH_SESSION_PARK_AFTER_MS` on the session host to choose another
+  timeout, or `off` to never park.
 
 #### Fixed
 - **A session whose provider offers hundreds of models no longer dies on its
@@ -1501,16 +1672,13 @@ version of their own to them without also giving them a release of their own.
   its credential, Console forgets it as it does for a removed machine, and
   enrolls the machine again on the next check. SSH hosts set up by Console
   stop restarting on either and enroll again on the second.
+- A session's helper endpoint for GitHub no longer hands out the token of any
+  other service the agent was granted.
 - **A Claude Code session is no longer parked while its background subagents
   are still working.** The idle timer only looked at turns, so a session whose
   turn had ended with subagents still running in the background was stopped
   after the idle timeout, taking the subagents with it. Those subagents now
   count as activity, and the idle wait starts again when the last one stops.
-
-#### Changed
-- **An idle session now parks after a day rather than 30 minutes.** Set
-  `SWITCH_SESSION_PARK_AFTER_MS` on the session host to choose another
-  timeout, or `off` to never park.
 
 ### [0.38.1] - 2026-10-01
 
@@ -3427,6 +3595,11 @@ The remote runtime Switch Console deploys to an agent host. Versioned in
 published on its own.
 
 ### [Unreleased]
+
+#### Added
+- Serves the session-side half of service grants: granted skills in each
+  session, the GitHub credential helper and `gh` wrapper, and scrubbing of
+  issued tokens, as Switch Console does.
 
 ### [1.9.12] - 2026-10-01
 

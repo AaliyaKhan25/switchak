@@ -26,6 +26,9 @@ from switch_core.db.models import (
     MessagingInstall,
     ProviderConnection,
     ServerConnector,
+    ServiceConnection,
+    ServiceOAuthClient,
+    ServiceTokenIssuance,
     TrustSettings,
 )
 from switch_core.db.session_scope import tenant_session
@@ -42,12 +45,15 @@ _ENCRYPTED_TEXT_COLUMNS: tuple[tuple[type[Any], str], ...] = (
     (MessagingInstall, "encrypted_bot_token"),
     (ProviderConnection, "encrypted_credential"),
     (MachineWorkspace, "enrollment_code_encrypted"),
+    (ServiceConnection, "encrypted_secret"),
+    (ServiceTokenIssuance, "encrypted_token"),
 )
-# `trust_settings` is a global table (`rls_ddl.GLOBAL_TABLES`), not a tenant's —
-# one row for the deployment — so it is swept once here rather than through
-# the per-tenant loop below, which would run it redundantly once per tenant.
+# In tables no tenant holds (`db/rls_ddl.py`, GLOBAL_TABLES), one row set for
+# the whole deployment (`trust_settings`, `service_oauth_clients`): rewritten
+# once, in a session bound to no tenant, rather than once per tenant.
 _GLOBAL_ENCRYPTED_TEXT_COLUMNS: tuple[tuple[type[Any], str], ...] = (
     (TrustSettings, "api_key_encrypted"),
+    (ServiceOAuthClient, "encrypted_secret"),
 )
 
 

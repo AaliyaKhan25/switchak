@@ -22,6 +22,7 @@ function adapterCapabilities(provider: Provider): ProviderCapabilities {
     binaryPath: undefined,
     logger: undefined,
     skill: '',
+    serviceSkills: [],
   });
   capabilityCache.set(provider, adapter.capabilities);
   return adapter.capabilities;

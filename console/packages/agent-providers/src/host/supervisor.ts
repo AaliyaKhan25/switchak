@@ -7,6 +7,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { z } from 'zod';
 import { releaseOwner, replaceOwner, withOwnershipLock } from './ownership-lock';
 import { fenceDeadOwner, killProcessTree } from './process-fence';
+import { pipeRedactedLogs } from './redaction';
 import type { SessionLinks } from './session-channel';
 import { requestChildStop } from './stop-request';
 
@@ -61,7 +62,9 @@ export async function superviseSharedHost(input: {
   /**
    * Handed each host as it is spawned, with an IPC channel open to it, for a
    * parent that talks to its sessions directly. Null where nothing in this
-   * process does, and the host is then started without one.
+   * process does, and the host is then started without one. The service
+   * tokens `links` answers to its hosts are scrubbed from what they write to
+   * worker.log.
    */
   links: SessionLinks | null;
 }): Promise<void> {
@@ -85,15 +88,26 @@ export async function superviseSharedHost(input: {
       }
       const log = await open(join(directory, 'worker.log'), 'a', 0o600);
       const spawnedAt = Date.now();
+      // A host linked to this process may be handed service tokens at any
+      // time, so its output always passes through here.
+      const linked = input.links;
       const child = spawn(input.executable, input.args, {
         detached: true,
         windowsHide: true,
         env: input.env,
-        stdio: input.links ? ['ignore', log.fd, log.fd, 'ipc'] : ['ignore', log.fd, log.fd],
+        stdio: linked ? ['ignore', 'pipe', 'pipe', 'ipc'] : ['ignore', log.fd, log.fd],
       });
       input.links?.attach(input.root, child);
       const exited = once(child, 'exit');
-      log.close().catch(() => {});
+      const logged = linked
+        ? pipeRedactedLogs([child.stdout!, child.stderr!], log, () =>
+            linked.redactions.list()
+          ).catch((error: unknown) => {
+            child.kill('SIGKILL');
+            throw error;
+          })
+        : log.close();
+      logged.catch(() => {});
       // Asked first. A host that has not gone `CHILD_STOP_GRACE_MS` later is
       // waiting on something that will not finish — a session host that hung
       // up and stayed alive, say — and is killed with everything it started,
@@ -134,6 +148,12 @@ export async function superviseSharedHost(input: {
           if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
         }
       }
+      if (linked)
+        try {
+          await logged;
+        } finally {
+          await log.close();
+        }
       if (input.signal.aborted) return;
       if (code === 0) return;
       if (code !== null && !crashedOnWindows(code)) {

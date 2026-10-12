@@ -77,7 +77,12 @@ spec:
             - name: HOSTED_IDLE_STOP_MINUTES
               value: {{ .Values.switchCore.hostedIdleStopMinutes | quote }}
             {{- end }}
-            {{- if .Values.switchCore.githubConnectionsSecret }}
+            {{- if and .Values.switchCore.githubConnectionsSecret .Values.switchCore.githubAppPrivateKeyPath }}
+            - name: GITHUB_APP_CONFIG_PATH
+              value: /etc/switch-github/github.json
+            - name: GITHUB_APP_PRIVATE_KEY_PATH
+              value: {{ .Values.switchCore.githubAppPrivateKeyPath | quote }}
+            {{- else if .Values.switchCore.githubConnectionsSecret }}
             - name: HOSTED_GITHUB_CONFIG_PATH
               value: /etc/switch-github/github.json
             {{- end }}

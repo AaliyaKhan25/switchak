@@ -12,6 +12,8 @@ import {
 } from '../adapter';
 import type { ProviderRuntimeEvent } from '../events';
 import { stubSwitchFetch } from '../testing/agent-sessions-server';
+import { Redactions } from './redaction';
+import { ServiceNotices } from './service-notices';
 import { connectParent, type ParentChannel } from './session-channel';
 import { parkAfterMs, RESET_HOLD_MS, runSharedHost, sessionBusy } from './shared-host';
 import { hostParked } from './shared-state';
@@ -267,6 +269,8 @@ async function start(
   const running = runSharedHost(
     {
       root,
+      redactions: new Redactions(),
+      serviceNotices: new ServiceNotices(),
       agentApiUrl: 'http://127.0.0.1/agent',
       token: randomUUID(),
       session,
