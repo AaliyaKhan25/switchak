@@ -259,7 +259,11 @@ async def test_alerted_agent_message_is_sent_with_a_separate_notice(
     )
 
     rows = await _timeline_messages(harness, session_env, room_id)
-    sent = [row for row in rows if row.content.get("body") == "my email is agent@example.com"]
+    sent = [
+        row
+        for row in rows
+        if row.content.get("body") == "my email is agent@example.com"
+    ]
     assert len(sent) == 1
     admin_rows = [row for row in rows if "com.switch.admin" in row.content]
     assert len(admin_rows) == 1
