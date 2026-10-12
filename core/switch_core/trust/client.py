@@ -297,7 +297,7 @@ def trust_annotation(result: TrustCheckResult) -> str | None:
         detail = categories or "policy alert"
         return f"⚠️  _Switch Trust flagged this message (not blocked - {detail})._"
     if result.outcome == "errored":
-        return "⚠️ _Switch Trust could not fully check this message_"
+        return "⚠️ _Switch Trust could not check this message_"
     return None
 
 

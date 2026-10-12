@@ -286,5 +286,5 @@ async def test_trust_check_failure_fails_open_and_notifies_instead_of_blocking(
     admin_rows = [row for row in rows if "com.switch.admin" in row.content]
     assert len(admin_rows) == 1
     assert admin_rows[0].content["com.switch.admin"]["type"] == "trust_errored"
-    assert "Switch Trust could not fully check" in admin_rows[0].content["body"]
+    assert "Switch Trust could not check" in admin_rows[0].content["body"]
     assert admin_rows[0].thread_root_event_id == sent[0].transport_event_id

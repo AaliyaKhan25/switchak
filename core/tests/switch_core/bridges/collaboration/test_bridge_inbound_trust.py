@@ -287,10 +287,10 @@ async def test_trust_check_failure_fails_open_and_annotates_instead_of_blocking(
     assert len(human_actor.sent) == 1
     _, content = human_actor.sent[0]
     assert content.startswith("hello there")
-    assert "Switch Trust could not fully check" in content
+    assert "Switch Trust could not check" in content
     # Same as an alert: the room content alone never reaches the sender's
     # platform, so the degraded-check notice needs its own call too.
     assert len(adapter.admin_messages) == 1
     _, body, _, message_type = adapter.admin_messages[0]
-    assert "Switch Trust could not fully check" in body
+    assert "Switch Trust could not check" in body
     assert message_type == AdminMessageType.TRUST_ERRORED.value
