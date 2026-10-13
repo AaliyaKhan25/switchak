@@ -75,6 +75,17 @@ version of their own to them without also giving them a release of their own.
   and chat clients read such a host differently from Switch, so its checks
   could not tell where the image would be loaded from.
 
+#### Fixed
+- **Usage telemetry no longer carries the `ENVIRONMENT` or `SERVICE_NAME`
+  settings.** From 0.28.0 through 0.30.0, with `TELEMETRY_ENABLED=true`, every
+  event sent to the Flint relay carried both, as `deployment.environment`,
+  `service.name` and the OTLP scope name. They are free text an operator sets
+  for their own logs (Helm `switchCore.logging.environment` and `serviceName`),
+  so a value such as a company name left the deployment despite the promise of
+  no free text. Usage events now always say `switch-core` and omit the
+  environment; `flint_env` still says which Amplitude project they belong in.
+  The operational OTLP export to your own collector is unchanged.
+
 ### [0.30.0] - 2026-10-12
 
 #### Added
@@ -1666,6 +1677,12 @@ version of their own to them without also giving them a release of their own.
   returns it; Console only accepted the gateway's host and refused the sign-in
   as an invalid URL. It now accepts either of the server's own origins, over
   HTTPS. Google Workspace connects this way.
+- **The usage-data note says what a "yes" does on a shared server.** The
+  consent dialog and Settings said the answer applies to a server Console runs
+  for you. On a server other people also run from their own Console, a "no"
+  turns sharing off for everyone at your next start, while a "yes" leaves it as
+  it is — on stays on, off stays off — unless none of them has used the server
+  in the last 14 days. The note now says so.
 
 ### [0.39.0] - 2026-10-12
 
