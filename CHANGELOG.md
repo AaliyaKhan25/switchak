@@ -1624,6 +1624,14 @@ version of their own to them without also giving them a release of their own.
 
 ### [Unreleased]
 
+#### Fixed
+- **Signing in to a service through Core works on a server whose gateway and
+  API are on different hosts.** Core sends the browser through its own
+  authorize step at its public address, the API's host, where the vendor
+  returns it; Console only accepted the gateway's host and refused the sign-in
+  as an invalid URL. It now accepts either of the server's own origins, over
+  HTTPS. Google Workspace connects this way.
+
 ### [0.39.0] - 2026-10-12
 
 #### Added

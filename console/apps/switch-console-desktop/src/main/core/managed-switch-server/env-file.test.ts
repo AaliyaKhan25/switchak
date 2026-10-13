@@ -155,6 +155,9 @@ describe('buildEnvFile', () => {
       'TEAMS_APP_PRIVACY_URL',
       'TEAMS_APP_TERMS_URL',
       'TEAMS_APP_NAME',
+      // Written, but empty on purpose: a managed stack starts with no feature
+      // flag on (MANAGED_SERVER_FEATURE_FLAGS).
+      'FEATURE_FLAGS_ENABLED',
     ]);
 
     const missing = [...interpolated]

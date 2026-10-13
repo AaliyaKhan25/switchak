@@ -2961,6 +2961,11 @@ const serviceFlows = (service: string) =>
  * Begin signing in to `service` through Switch's generic OAuth flow. The URL
  * the browser is sent to is checked: Core's own authorize step on this server,
  * or the vendor's page returning to this Console's listener with this state.
+ *
+ * Core's authorize step is at its public address (`GATEWAY_PUBLIC_URL`), the
+ * host the vendor returns the browser to and whose cookie ties that return to
+ * the browser. A server that serves its gateway and its API on two hosts has it
+ * on the API's, so either of the server's own origins is accepted, over HTTPS.
  */
 export async function startServiceConnection(
   server: SwitchServer,
@@ -2984,7 +2989,8 @@ export async function startServiceConnection(
     !url.username &&
     !url.password &&
     (value.mode === 'core'
-      ? url.origin === new URL(server.gatewayUrl).origin &&
+      ? url.protocol === 'https:' &&
+        [server.gatewayUrl, server.apiUrl].some((own) => new URL(own).origin === url.origin) &&
         url.pathname === `/gateway${serviceFlows(service)}/authorize` &&
         url.searchParams.get('state') === value.id
       : url.protocol === 'https:' &&

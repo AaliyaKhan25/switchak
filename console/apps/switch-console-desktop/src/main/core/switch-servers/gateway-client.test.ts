@@ -116,6 +116,7 @@ const SERVER = {
   id: 'srv-1',
   name: 'S',
   gatewayUrl: 'https://switch.example.com',
+  apiUrl: 'https://switch-api.example.com',
   managed: false,
 } as never;
 const MANAGED = {
@@ -1317,7 +1318,18 @@ describe('a service sign-in', () => {
     );
   });
 
+  it('accepts Core’s authorize step on the server’s API host, where it returns', async () => {
+    const url = `https://switch-api.example.com/gateway/service-connections/example/flows/authorize?state=${state}`;
+    answer({ id: state, mode: 'core', url });
+    expect((await startServiceConnection(SERVER, 'example', input)).url).toBe(url);
+  });
+
   it.each([
+    [
+      'the server’s API host over plain HTTP',
+      'core',
+      `http://switch-api.example.com/gateway/service-connections/example/flows/authorize?state=${state}`,
+    ],
     [
       'another server in core mode',
       'core',
