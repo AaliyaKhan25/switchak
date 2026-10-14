@@ -27,6 +27,12 @@ import {
   type SessionRequest,
   SessionUnavailableError,
 } from './session-channel';
+import {
+  currentServicesShape,
+  GRANTS_CHECK_MS,
+  recordedServicesShape,
+  servicesChanged,
+} from './session-services';
 import { readSharedCredentials, sharedConfigSchema, type SharedHostConfig } from './shared-config';
 import { readTakenOver, recordTakenOver } from './taken-over';
 import { awaitWatchChange, onConfigReplaced, readWatchFlags } from './watch-flags';
@@ -111,6 +117,11 @@ function isParked(record: WatchRecord): record is z.infer<typeof parkedSchema> {
 
 function isReleased(record: WatchRecord): record is z.infer<typeof releasedSchema> {
   return 'released' in record;
+}
+
+/** Whether a relayed room control is a reset (`!reset`). */
+function isReset(command: Record<string, unknown>): boolean {
+  return z.object({ type: z.literal('session.reset') }).safeParse(command.body).success;
 }
 
 function isAssignment(record: WatchRecord): record is Assignment {
@@ -651,6 +662,7 @@ export async function runAgentHost(
   let fault: Error | null = null;
   let pending: Promise<void> = Promise.resolve();
   let retry: NodeJS.Timeout | null = null;
+  let grantsCheck: NodeJS.Timeout | null = null;
   const unbind: (() => void)[] = [];
   const fail = (error: Error) => {
     fault = error;
@@ -814,6 +826,65 @@ export async function runAgentHost(
     /** The watcher's template as it stands now, which admitting a room reads too. */
     const currentTemplate = async (): Promise<SharedHostConfig> =>
       sharedConfigSchema.parse(JSON.parse(await readFile(join(root, 'config.json'), 'utf8')));
+    /**
+     * The shape of the agent's grants as last read (`servicesShape`), which
+     * every session's host is compared against: null until first read.
+     */
+    let servicesNow: string | null = null;
+    const startedServices = async (sessionRoot: string): Promise<string | null | undefined> => {
+      try {
+        return await recordedServicesShape(sessionRoot);
+      } catch (error) {
+        console.warn(
+          `Could not read which services the session at ${sessionRoot} started with, so it is not restarted for a change to them: ${error instanceof Error ? error.message : String(error)}`
+        );
+        return undefined;
+      }
+    };
+    /**
+     * The grants each session's host was last restarted for. A host that comes
+     * back recording other grants still (its own read of them failing, say) is
+     * not restarted for the same grants again: once is a fix, more is a loop.
+     */
+    const restartedFor = new Map<string, string>();
+    const servicesStale = async (sessionRoot: string, current: string | null) => {
+      if (current === null || restartedFor.get(sessionRoot) === current) return false;
+      return servicesChanged(await startedServices(sessionRoot), current);
+    };
+    /**
+     * Restarts a session's host, on its own conversation, when it started
+     * under other granted services than the agent has now. True when it did.
+     */
+    const restartForServices = async (sessionId: string): Promise<boolean> => {
+      const sessionRoot = sharedSessionRoot(sessionId);
+      if (!links.ready(sessionRoot)) return false;
+      const saved = await sessionConfigAt(sessionRoot);
+      const current = await currentTemplate();
+      if (
+        !saved ||
+        saved.session.agentId !== agentId ||
+        saved.start.provider !== current.start.provider ||
+        saved.start.input.cwd !== current.start.input.cwd
+      )
+        return false;
+      const shape = await currentServicesShape(current);
+      if (shape !== null) servicesNow = shape;
+      if (!(await servicesStale(sessionRoot, shape))) return false;
+      restartedFor.set(sessionRoot, shape!);
+      console.warn(
+        `Session ${sessionId} is being reset with other services granted to its agent than it started with; restarting its host first so the new conversation has them.`
+      );
+      await ensureSharedProcess({
+        root: sessionRoot,
+        config: reachableBy(withDefinitionOf(saved, current), connectionId),
+        resuming: true,
+        watcher: false,
+        restart: true,
+        supervision,
+        startSource: null,
+      });
+      return true;
+    };
     const launch = async (config: SharedHostConfig) => {
       // Both flags are re-read here rather than taken from whoever asked for the
       // launch. Everything that reaches this point was admitted earlier and may
@@ -857,11 +928,16 @@ export async function runAgentHost(
      * Ask the host of one of this agent's sessions, if it runs here. False
      * when it is not this agent's, or nothing is running it.
      */
-    const askSession = async (sessionId: string, request: SessionRequest, what: string) => {
+    const askSession = async (
+      sessionId: string,
+      request: SessionRequest,
+      what: string,
+      waitMs: number
+    ) => {
       const sessionRoot = sharedSessionRoot(sessionId);
       if (!(await sessionConfig(sessionId))) return false;
       try {
-        await links.request(sessionRoot, request, 0);
+        await links.request(sessionRoot, request, waitMs);
         return true;
       } catch (error) {
         console.warn(`Could not pass ${what} to session ${sessionId}: ${String(error)}`);
@@ -1132,7 +1208,7 @@ export async function runAgentHost(
         });
       },
       onApprovalOutcome: async (outcome) => {
-        await askSession(outcome.session_id, { type: 'approvals' }, 'an approval answer');
+        await askSession(outcome.session_id, { type: 'approvals' }, 'an approval answer', 0);
       },
       // A room control (!reset, !interrupt) typed in one of the agent's rooms,
       // which only Switch sees. Handed to the session's host like any other.
@@ -1147,6 +1223,16 @@ export async function runAgentHost(
           return;
         }
         const command = { ...rest, sessionId };
+        // A reset runs in the host the session has, which keeps the tools it
+        // started with: one granted or taken away since needs a new host first.
+        const restarted =
+          isReset(command) &&
+          (await restartForServices(sessionId).catch((error: unknown) => {
+            console.warn(
+              `Could not restart session ${sessionId} for its agent's granted services before its reset, so it is reset with the tools it has: ${error instanceof Error ? error.message : String(error)}`
+            );
+            return false;
+          }));
         const taken = await askSession(
           sessionId,
           {
@@ -1154,7 +1240,8 @@ export async function runAgentHost(
             command,
             requesterName: typeof requesterName === 'string' ? requesterName : null,
           },
-          `command ${command.commandId}`
+          `command ${command.commandId}`,
+          restarted ? HOST_START_MS : 0
         );
         if (!taken)
           console.warn(
@@ -1303,6 +1390,11 @@ export async function runAgentHost(
      * `redefinitionDue` until its host says it is done. One saved under another
      * provider or directory belongs to an earlier identity of the agent and is
      * left alone.
+     *
+     * A session whose host started under other granted services than the
+     * agent has now (`servicesNow`, read every `GRANTS_CHECK_MS`) is restarted
+     * the same way: its tools are built as its host starts, so a service
+     * granted or taken away reaches it only through a new host.
      */
     const redefinitionDue = new Set<string>();
     let redefining = false;
@@ -1320,21 +1412,23 @@ export async function runAgentHost(
           !saved ||
           saved.session.agentId !== agentId ||
           saved.start.provider !== current.start.provider ||
-          saved.start.input.cwd !== current.start.input.cwd ||
-          !definitionChanged(saved, current)
+          saved.start.input.cwd !== current.start.input.cwd
         )
+          continue;
+        if (!definitionChanged(saved, current) && !(await servicesStale(sessionRoot, servicesNow)))
           continue;
         if (links.busy(sessionRoot)?.busy !== false) redefinitionDue.add(sessionRoot);
         else idle.push({ root: sessionRoot, saved });
       }
       if (idle.length === 0 && redefinitionDue.size === 0) return;
       console.warn(
-        `Agent ${agentId}'s definition changed: restarting ${idle.length} idle session(s) under it now; ${redefinitionDue.size} more once their turn ends.`
+        `Agent ${agentId}'s definition or granted services changed: restarting ${idle.length} idle session(s) under them now; ${redefinitionDue.size} more once their turn ends.`
       );
       for (const { root: sessionRoot, saved } of idle) {
         console.warn(
-          `Session ${saved.session.sessionId} runs under an earlier definition of its agent (model, instructions, advanced configuration or approval mode); restarting it on the same conversation under the current one.`
+          `Session ${saved.session.sessionId} runs under an earlier definition of its agent (model, instructions, advanced configuration or approval mode) or its granted services; restarting it on the same conversation under the current ones.`
         );
+        if (servicesNow !== null) restartedFor.set(sessionRoot, servicesNow);
         try {
           await ensureSharedProcess({
             root: sessionRoot,
@@ -1378,6 +1472,33 @@ export async function runAgentHost(
         redefinitionDue.delete(exitedRoot);
       })
     );
+    /** Whether any session of this agent's has a host running here. */
+    const anyLive = (): boolean => {
+      const ours = new Set(
+        assignments.sessions().map((config) => sharedSessionRoot(config.session.sessionId))
+      );
+      return links.live().some((sessionRoot) => ours.has(sessionRoot));
+    };
+    let checkingGrants = false;
+    grantsCheck = setInterval(() => {
+      if (checkingGrants || !anyLive()) return;
+      checkingGrants = true;
+      void (async () => {
+        const shape = await currentServicesShape(await currentTemplate());
+        if (shape === null) return;
+        servicesNow = shape;
+        redefine();
+      })()
+        .catch((error: unknown) => {
+          console.warn(
+            `Could not check agent ${agentId}'s granted services: ${error instanceof Error ? error.message : String(error)}`
+          );
+        })
+        .finally(() => {
+          checkingGrants = false;
+        });
+    }, GRANTS_CHECK_MS);
+    grantsCheck.unref();
     while (!stop.signal.aborted) {
       const changed = await awaitWatchChange(root, flags, stop.signal);
       if (!changed) break;
@@ -1404,6 +1525,7 @@ export async function runAgentHost(
     for (const release of unbind) release();
     stop.abort();
     if (retry) clearInterval(retry);
+    if (grantsCheck) clearInterval(grantsCheck);
     signal.removeEventListener('abort', abort);
     await pending.catch(() => {});
     const failure = fault ?? thrown;

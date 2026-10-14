@@ -16,6 +16,7 @@ import { adapterFor } from './server';
 import { grantedSkills } from './service-access';
 import { runGitCredentialHelper, runGitHubCli } from './service-github';
 import { HOST_EXIT_GRACE_MS, SessionLinks } from './session-channel';
+import { recordSessionServices } from './session-services';
 import {
   readProviderLogin,
   readSharedCredentials,
@@ -205,6 +206,9 @@ async function main(): Promise<void> {
     process.on('disconnect', () => stop.abort());
     try {
       const services = await sessionServiceGrants(config);
+      // What the watcher compares the agent's grants against, to restart this
+      // host when a service is granted or taken away (`servicesChanged`).
+      await recordSessionServices(resolve(root), services);
       await hostSessionProcess({
         root,
         config,
