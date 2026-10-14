@@ -142,6 +142,7 @@ if TYPE_CHECKING:
     from switch_core.clients.actor import Actor
     from switch_core.clients.client_lifecycle_service import ClientLifecycleService
     from switch_core.config import SwitchConfig
+    from switch_core.connections.broker import ServiceBroker
     from switch_core.db.stores.agent_session_store import AgentSessionStore
     from switch_core.db.stores.agent_store import AgentStore
     from switch_core.db.stores.api_key_store import ApiKeyStore
@@ -162,6 +163,7 @@ logger = logging.getLogger(__name__)
 # \A and \Z rather than ^ and $: Python's $ also matches before a single
 # trailing newline, which would let an identifier carry a line break.
 _VALID_NAME_RE = re.compile(r"\A[a-z0-9][a-z0-9._-]*\Z")
+VALID_AGENT_NAME_RE = _VALID_NAME_RE
 
 # A hard ceiling on one read_context call, whatever limit the caller asks for.
 # History comes from a single indexed query now, so the only thing this guards
@@ -284,6 +286,9 @@ class AgentCore:
     # still exists. Set by the process wiring when something outside Core keeps
     # state about agents that a cascade alone would drop without telling anyone.
     _agent_removal_listener: Callable[[str, str], Awaitable[None]] | None = None
+    # The credential broker, set by the process wiring when service
+    # connections are on; None means they are off, and nothing can be granted.
+    service_broker: ServiceBroker | None = None
 
     def __init__(
         self,

@@ -1900,8 +1900,11 @@ export async function detachPackageFromRoom(
 
 export interface TemplateSummary {
   id: string;
-  owner_id: string;
+  /** Null for a template that comes with Switch. */
+  owner_id: string | null;
   owner_name: string | null;
+  /** Comes with Switch: on every workspace, and changed by nobody. */
+  official: boolean;
   name: string;
   description: string;
   kind: string;

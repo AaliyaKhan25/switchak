@@ -13,6 +13,10 @@ import {
   beginChatClaim,
   changeTemplateRun,
   createRoomFromTemplate,
+  runTemplateDocument,
+  runTemplateWithAgents,
+  type TemplateRunAgent,
+  type TemplateRunResult,
   createTemplate,
   deleteRoom,
   deleteTemplate,
@@ -530,6 +534,34 @@ export const workspacesController = createRPCController({
     withWorkspaceSession(workspaceId, (server) =>
       createRoomFromTemplate(server, yamlText, inputs, templateName)
     ),
+
+  /**
+   * Run a template that creates agents in one request: the agents as managed
+   * agents on the signed-in person's machines, then its rooms. Nothing is
+   * kept when it is refused; the result says why, per agent.
+   */
+  runTemplateWithAgents: (
+    workspaceId: string,
+    body: {
+      agents: TemplateRunAgent[];
+      yamlText: string | null;
+      inputs: Record<string, string | number | boolean>;
+      templateName: string;
+    }
+  ): Promise<TemplateRunResult> =>
+    withWorkspaceSession(workspaceId, (server) => runTemplateWithAgents(server, body)),
+
+  /** Run a template from its document: the server works the agents and rooms out of it. */
+  runTemplateDocument: (
+    workspaceId: string,
+    body: {
+      template: string;
+      inputs: Record<string, string | number | boolean>;
+      filled: Record<string, string>;
+      templateName: string;
+    }
+  ): Promise<TemplateRunResult> =>
+    withWorkspaceSession(workspaceId, (server) => runTemplateDocument(server, body)),
 
   /** The runs the user may see, or null when the server does not record runs. */
   listTemplateRuns: (params: { workspaceId: string }): Promise<TemplateRun[] | null> =>

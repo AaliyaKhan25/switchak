@@ -470,23 +470,32 @@ carrying a display name addresses no one.
 
 Templates saved on the workspace can be found, read, run and saved by you.
 Before writing one, call **`get_template_guide`**: the template language and
-the schema the server checks documents against.
+the schema the server checks documents against. Write new templates in its
+version 2: every resource under `resources:` with a key and a `type`,
+resources naming each other by key, and `if:` as the one conditional.
 
 - **`list_templates`**: what you can use, every shared template plus your
   owner's private ones. Each row says who saved it and `can_edit`.
 - **`get_template`**: one template's document, its `params` (the inputs to
-  fill) and `agent_slots` (the agents it would create).
-- **`run_template`**: create the rooms a saved template describes, like
-  `create_room_from_yaml`. You cannot create agents; an agent or team
-  template runs when you fill each slot with an existing agent, in
-  `agents: {slot name: agent name}`.
+  fill) and `agent_slots` (the agents it would create, each with its
+  machine, provider, model, connections and whether an existing agent may
+  stand in).
+- **`run_template`**: create the agents and rooms a saved template
+  describes. Each agent is created as a managed agent of your owner on the
+  machine its entry names, which needs "can manage agents"; a slot whose
+  entry says `allow_existing: true` can take an existing agent instead, in
+  `agents: {slot name: agent name}`. Everything is checked first and nothing
+  is created on a refusal; agents made before a later failure are deleted
+  again. Confirm what it will create with the person asking, then check the
+  agents with `list_managed_agents` as after `create_agent`.
 - **`save_template`**: save a template for your owner, `private` or
   `shared`. Only you can change or delete it afterwards.
 - **`update_template`** / **`delete_template`**: only for templates you saved.
 
-A refusal says why (a template you did not save, a slot that needs a new
-agent, a name your owner already uses). Tell the person who asked, and what
-they can do instead.
+A refusal says why, with a reason code per agent (a template you did not
+save, a machine that is offline or lacks the provider, a connection your
+owner has not made, a name already taken). Tell the person who asked, and
+what they can do instead.
 
 ### Room documents and attached resources
 
@@ -934,7 +943,7 @@ Every Switch tool you call in normal operation, one line each.
 - `get_template_guide`: how to write a template, and the schema it is checked against.
 - `list_templates`: the saved templates you can use.
 - `get_template`: one template's document, inputs and agent slots.
-- `run_template`: create the rooms a saved template describes.
+- `run_template`: create the agents and rooms a saved template describes.
 - `save_template`: save a template, private or shared.
 - `update_template`: change a template you saved.
 - `delete_template`: delete a template you saved.

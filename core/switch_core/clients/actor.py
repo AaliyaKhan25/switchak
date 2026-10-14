@@ -125,6 +125,18 @@ class Actor[ConfigT: ClientConfig]:
     async def wait_ready(self) -> None:
         await self._ready.wait()
 
+    async def wait_receiving(self, timeout: float) -> bool:
+        """Block until this actor's client is taking events, so a room it is
+        added to from now on is one it reads from the start, up to `timeout`
+        seconds. False on timeout."""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        try:
+            await asyncio.wait_for(self._ready.wait(), timeout)
+        except TimeoutError:
+            return False
+        return await self._transport.wait_receiving(max(0.0, deadline - loop.time()))
+
     async def set_display_name(self, display_name: str) -> None:
         """Change the name this actor shows under.
 

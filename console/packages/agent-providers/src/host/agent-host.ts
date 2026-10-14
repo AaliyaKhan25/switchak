@@ -757,6 +757,29 @@ export async function runAgentHost(
         })
       )
     );
+    /**
+     * Per session, the messages handed to it and not yet acknowledged, sent
+     * down the IPC pipe one at a time and in order. Each is parked in the
+     * journal first and released on the host's acknowledgement, so one this
+     * controller dies holding is routed again when it restarts.
+     *
+     * `failed` is set when the host stopped on a failure it recorded, or
+     * would not take a message however often it was started again: the
+     * messages stay queued and the host is not started again until something
+     * changes — another room message for it, or its host coming up because
+     * somebody started it from Console. `restarts` counts the starts in a row
+     * that did not get the first queued message taken.
+     */
+    type Pump = {
+      queue: Handoff[];
+      running: boolean;
+      failed: string | null;
+      restarts: number;
+      config: SharedHostConfig;
+    };
+    // Declared before the ready listener below reads it: another session can
+    // come up while this host is still awaiting its own start-up.
+    const pumps = new Map<string, Pump>();
     // A host coming up — started from Console after it failed, say — takes
     // the messages that waited for it.
     unbind.push(
@@ -899,27 +922,6 @@ export async function runAgentHost(
         );
       }
     };
-    /**
-     * Per session, the messages handed to it and not yet acknowledged, sent
-     * down the IPC pipe one at a time and in order. Each is parked in the
-     * journal first and released on the host's acknowledgement, so one this
-     * controller dies holding is routed again when it restarts.
-     *
-     * `failed` is set when the host stopped on a failure it recorded, or
-     * would not take a message however often it was started again: the
-     * messages stay queued and the host is not started again until something
-     * changes — another room message for it, or its host coming up because
-     * somebody started it from Console. `restarts` counts the starts in a row
-     * that did not get the first queued message taken.
-     */
-    type Pump = {
-      queue: Handoff[];
-      running: boolean;
-      failed: string | null;
-      restarts: number;
-      config: SharedHostConfig;
-    };
-    const pumps = new Map<string, Pump>();
     const pump = (config: SharedHostConfig) => {
       const sessionId = config.session.sessionId;
       const entry = pumps.get(sessionId)!;

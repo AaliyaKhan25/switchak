@@ -69,6 +69,11 @@ class MessageTransport(Protocol):
         """Deliver inbound events to the registered handlers until closed."""
         ...
 
+    async def wait_receiving(self, timeout: float) -> bool:
+        """Block until `receive_forever` is taking events and will hear an
+        invite to a new room, up to `timeout` seconds. False on timeout."""
+        ...
+
     # ── Outbound ──────────────────────────────────────────────────────────────
 
     async def send_message(

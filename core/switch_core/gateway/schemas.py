@@ -1384,13 +1384,17 @@ class TemplateSummary(BaseModel):
     """
 
     id: str
-    owner_id: str
+    # None for an official template, which comes with Switch.
+    owner_id: str | None
     owner_name: str | None = None
     name: str
     description: str
     kind: str
     read_visibility: str
     write_visibility: str
+    # Comes with Switch: served by the server on every workspace, and changed
+    # by nobody (see `official_templates`).
+    official: bool = False
     # What the caller may do with it, so a client shows Edit and Remove only
     # where the server would say yes. Admin here means the tenant's, which a
     # client cannot tell from the user's global role.

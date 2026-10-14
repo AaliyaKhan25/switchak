@@ -124,6 +124,10 @@ class _FakeClientLifecycle:
     def start_client(self, client: Client) -> None:
         return None
 
+    def get_by_agent_id(self, agent_id: str) -> None:
+        """No client is ever started here."""
+        return None
+
 
 class _NoBridges:
     def bridges_for_tenant(self, tenant_id: str) -> list[object]:

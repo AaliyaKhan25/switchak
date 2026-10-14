@@ -1080,6 +1080,28 @@ class ManagementService:
             )
         self.presence.bind(binding_of(tenant_id, row, controller))
 
+    async def check_new_managed_agent(
+        self,
+        session: AsyncSession,
+        tenant_id: str,
+        owner_id: str,
+        request: CreateManagedAgentRequest,
+    ) -> None:
+        """The checks `create_managed_agent` makes before it registers
+        anything, raising as it would, with nothing created."""
+        await self._check_target(
+            session,
+            tenant_id,
+            owner_id,
+            request.controller_id,
+            request.definition.provider,
+            check_placement=True,
+        )
+        try:
+            normalise_icon_url(request.icon_url)
+        except InvalidIconUrl as exc:
+            raise ManagementError(422, reason_codes.VALIDATION_ERROR, str(exc)) from exc
+
     async def create_managed_agent(
         self,
         session: AsyncSession,

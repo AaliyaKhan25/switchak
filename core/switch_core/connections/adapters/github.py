@@ -131,6 +131,44 @@ class GitHubAdapter:
             raise _vendor_error(error) from None
         return ConnectionSecret({**secret.values, **refreshed})
 
+    async def resolve_repositories(
+        self, access_token: str, names: list[str]
+    ) -> dict[str, Any]:
+        """A grant's resources for repositories named `owner/name`: the one
+        installation of the App that reaches them all, and their ids."""
+        try:
+            reach = await self._connections.repositories(access_token)
+        except GitHubError as error:
+            raise _vendor_error(error) from None
+        wanted = {name.lower(): name for name in names}
+        for installation in reach.installations:
+            found = {
+                repo["name"].lower(): repo["id"]
+                for repo in installation["repositories"]
+                if repo["name"].lower() in wanted
+            }
+            if len(found) == len(wanted):
+                return {
+                    "installation_id": installation["id"],
+                    "repository_ids": sorted(found.values()),
+                }
+        reached = {
+            repo["name"].lower()
+            for installation in reach.installations
+            for repo in installation["repositories"]
+        }
+        unseen = sorted(name for key, name in wanted.items() if key not in reached)
+        if unseen:
+            raise ServiceAdapterError(
+                "Your GitHub account does not reach "
+                f"{', '.join(unseen)} through the GitHub App. Install the App on "
+                "it, or check the name is owner/name."
+            )
+        raise ServiceAdapterError(
+            "One GitHub grant reaches repositories of one installation of the "
+            f"GitHub App, and {', '.join(names)} span several."
+        )
+
     async def check_grant(
         self, access_token: str, request: IssueRequest
     ) -> dict[str, Any]:

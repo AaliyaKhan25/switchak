@@ -991,6 +991,8 @@ async def run(config: SwitchConfig) -> None:
     )
     agent_bridge_app.state.service_broker = service_broker
     gateway_app.state.service_broker = service_broker
+    if config.service_connections_enabled:
+        protocol.service_broker = service_broker
 
     snapshot_reporter = SnapshotReporter(
         telemetry=telemetry,

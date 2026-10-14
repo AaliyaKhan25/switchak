@@ -282,6 +282,28 @@ def _require_owners_controller(principal: Principal, owner_id: str | None) -> No
         )
 
 
+@dataclass(frozen=True)
+class _GrantTerms:
+    name: str
+    adapter: ServiceAdapter
+    access: AccessLevel
+    reach: dict[str, Any]
+    tool_mode: Literal["allow", "deny"]
+    tools: list[str]
+    passes_through: bool
+
+
+@dataclass(frozen=True)
+class CheckedGrant:
+    """A grant `check_grant_terms` found the owner can make: what to pass
+    `set_grant` once the agent exists. `access` is None for a service whose
+    grant is on or off."""
+
+    service: str
+    access: AccessLevel | None
+    resources: dict[str, Any]
+
+
 def get_service_broker(request: Request) -> ServiceBroker:
     """The broker `main` installs on the agent bridge and the gateway."""
     broker = getattr(request.app.state, "service_broker", None)
@@ -1031,29 +1053,19 @@ class ServiceBroker:
         verb = "read and write" if access == "write" else "read"
         return f"{agent_name} can {verb} {self._entry(grant.service).definition.name}."
 
-    async def set_grant(
+    async def _grant_terms(
         self,
         session: AsyncSession,
         *,
-        agent: Agent,
-        actor_id: str,
+        owner_id: str,
         service: str,
         access: AccessLevel | None,
         tool_mode: Literal["allow", "deny"] | None,
         tools: list[str] | None,
-        resources: dict[str, Any],
-    ) -> tuple[ServiceGrant, str | None]:
-        """Create or replace the agent's grant on its owner's own connection.
-
-        A new grant with no `access` reads, with the level's tools. A
-        pass-through service's grant is on or off: it names no level or tools,
-        and takes the connection's. Commits `session`. Replacing a grant with
-        one that reaches less, or on a different account, revokes what was
-        issued under the old one, and the warning says when some of it could
-        not be revoked yet.
-        """
-        if agent.owner_id != actor_id:
-            raise ServiceError(404, NOT_FOUND, "Agent not found.", retryable=False)
+    ) -> _GrantTerms:
+        """What a grant on the owner's connection to `service` would be, or
+        the refusal: the service is set up here, the owner is connected to it
+        and allows the level, and the tools are the level's."""
         if service not in self._catalog:
             raise ServiceError(
                 404, NOT_FOUND, f"No service named {service!r}.", retryable=False
@@ -1064,7 +1076,7 @@ class ServiceBroker:
         entry = self._entry(service)
         name = entry.definition.name
         adapter = self._adapter(service)
-        connection = await self._store.get_connection(session, actor_id, service)
+        connection = await self._store.get_connection(session, owner_id, service)
         if connection is None:
             raise ServiceError(
                 409,
@@ -1121,6 +1133,116 @@ class ServiceBroker:
                 f"Not {level_name} tools of {name}: {', '.join(unknown)}.",
                 retryable=False,
             )
+        return _GrantTerms(
+            name=name,
+            adapter=adapter,
+            access=level_name,
+            reach=reach,
+            tool_mode=mode,
+            tools=chosen,
+            passes_through=_passes_through(entry),
+        )
+
+    async def check_grant_terms(
+        self,
+        session: AsyncSession,
+        *,
+        owner_id: str,
+        service: str,
+        access: AccessLevel | None,
+        repositories: list[str],
+    ) -> CheckedGrant:
+        """Whether an agent of the owner's could be granted `service`, checked
+        as `set_grant` would and with the vendor, without granting anything.
+
+        `repositories` names what a GitHub grant reaches (`owner/name`); the
+        result carries them as the grant's resources. Ends `session`'s
+        transaction.
+        """
+        terms = await self._grant_terms(
+            session,
+            owner_id=owner_id,
+            service=service,
+            access=access,
+            tool_mode=None,
+            tools=None,
+        )
+        await session.commit()
+        owner_token = await self._access_token(owner_id, service, terms.adapter)
+        resources: dict[str, Any] = {}
+        try:
+            if repositories:
+                resolve = getattr(terms.adapter, "resolve_repositories", None)
+                if resolve is None:
+                    raise ServiceError(
+                        422,
+                        VALIDATION_ERROR,
+                        f"{terms.name} has no repositories to choose from; "
+                        "leave out repos.",
+                        retryable=False,
+                    )
+                resources = await resolve(owner_token.token, repositories)
+            checked = await terms.adapter.check_grant(
+                owner_token.token,
+                IssueRequest(
+                    service=service,
+                    access=terms.access,
+                    reach=terms.reach,
+                    resources=resources,
+                ),
+            )
+        except ReauthorizationRequiredError as error:
+            raise await self._needs_reauthorization(owner_id, service, error) from None
+        except ServiceUnavailableError as error:
+            raise ServiceError(503, INTERNAL, str(error), retryable=True) from None
+        except ServiceAdapterError as error:
+            raise ServiceError(
+                422, VALIDATION_ERROR, str(error), retryable=False
+            ) from None
+        return CheckedGrant(
+            service=service,
+            access=None if terms.passes_through else terms.access,
+            resources=checked,
+        )
+
+    async def set_grant(
+        self,
+        session: AsyncSession,
+        *,
+        agent: Agent,
+        actor_id: str,
+        service: str,
+        access: AccessLevel | None,
+        tool_mode: Literal["allow", "deny"] | None,
+        tools: list[str] | None,
+        resources: dict[str, Any],
+    ) -> tuple[ServiceGrant, str | None]:
+        """Create or replace the agent's grant on its owner's own connection.
+
+        A new grant with no `access` reads, with the level's tools. A
+        pass-through service's grant is on or off: it names no level or tools,
+        and takes the connection's. Commits `session`. Replacing a grant with
+        one that reaches less, or on a different account, revokes what was
+        issued under the old one, and the warning says when some of it could
+        not be revoked yet.
+        """
+        if agent.owner_id != actor_id:
+            raise ServiceError(404, NOT_FOUND, "Agent not found.", retryable=False)
+        terms = await self._grant_terms(
+            session,
+            owner_id=actor_id,
+            service=service,
+            access=access,
+            tool_mode=tool_mode,
+            tools=tools,
+        )
+        name, adapter = terms.name, terms.adapter
+        level_name, reach, mode, chosen = (
+            terms.access,
+            terms.reach,
+            terms.tool_mode,
+            terms.tools,
+        )
         await session.commit()
 
         owner_token = await self._access_token(actor_id, service, adapter)
