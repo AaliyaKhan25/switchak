@@ -19,6 +19,7 @@ import { silentLogger } from './log';
 import type { LocalRelay } from './relay';
 import type { AgentAssignment, StatusReport } from './schemas';
 import { CONTROLLER_CREDENTIAL, FileSecretStore, MemorySecretStore } from './secrets';
+import { type ReleaseInstaller, SelfUpdater, type UpdateAttempt } from './self-update';
 import { ControllerStore } from './store';
 import { buildWatcherTemplate } from './template';
 import { FakeCore } from './testing/fake-core';
@@ -82,6 +83,7 @@ function deps(server = core.url): ControllerDeps {
     dataDir: dir,
     workspacesFor: () => join(dir, 'workspaces'),
     version: '0.1.0',
+    selfUpdate: null,
     now: Date.now,
     random: () => 0,
     timing: {
@@ -630,6 +632,71 @@ describe('runController', () => {
     const wiped = runController(enrolled, stop.signal);
     await expect(wiped).rejects.toThrow(/revoked at/);
     await expect(wiped).rejects.toBeInstanceOf(ConfigurationError);
+  });
+});
+
+describe('the release Switch names', () => {
+  function selfUpdate() {
+    const installed: string[] = [];
+    const installer: ReleaseInstaller = {
+      unavailable: null,
+      prepare: async () => {},
+      activate: async (version) => void installed.push(version),
+    };
+    let attempt: UpdateAttempt | null = null;
+    const updater = new SelfUpdater({
+      version: '0.1.0',
+      installer,
+      download: async () => join(dir, 'never-written.tgz'),
+      attempts: { last: () => attempt, save: (saved) => void (attempt = saved) },
+      supervised: true,
+      log: silentLogger,
+      now: Date.now,
+    });
+    return { updater, installed };
+  }
+
+  const release = {
+    version: '0.2.0',
+    url: 'https://example.invalid/switch-agent-controller-0.2.0.tgz',
+    sha256: 'c'.repeat(64),
+  };
+
+  it('is installed while no session runs, and the controller ends to restart on it', async () => {
+    core.setAssignment({ revision: 1, agents: [agent(1)] });
+    core.controllerRelease = release;
+    const { updater, installed } = selfUpdate();
+    running = runController({ ...deps(), selfUpdate: updater }, stop.signal);
+    expect(await running).toBe('restarting');
+    expect(installed).toEqual(['0.2.0']);
+  });
+
+  it('waits while a session runs, and says so in the status', async () => {
+    core.setAssignment({ revision: 1, agents: [agent(1)] });
+    const { updater, installed } = selfUpdate();
+    running = runController({ ...deps(), selfUpdate: updater }, stop.signal);
+    await waitFor(() => runtime.launches('agent-1').length === 1, 'the agent started');
+    runtime.observation('agent-1').health!.placements = { 'session-1': 'room-a' };
+    core.controllerRelease = release;
+    await waitFor(
+      () => core.statusReports.some((report) => report.update?.state === 'waiting_idle'),
+      'a status saying the update waits'
+    );
+    expect(core.statusReports.at(-1)?.update).toEqual({ target: '0.2.0', state: 'waiting_idle' });
+    expect(installed).toEqual([]);
+    runtime.observation('agent-1').health!.placements = {};
+    expect(await running).toBe('restarting');
+    expect(installed).toEqual(['0.2.0']);
+  });
+
+  it('is left alone by a controller that does not update itself', async () => {
+    core.setAssignment({ revision: 1, agents: [agent(1)] });
+    core.controllerRelease = release;
+    running = runController(deps(), stop.signal);
+    await waitFor(() => core.statusReports.length >= 2, 'two status reports');
+    expect(core.statusReports.every((report) => report.update === undefined)).toBe(true);
+    stop.abort();
+    expect(await running).toBe('stopped');
   });
 });
 

@@ -19,6 +19,7 @@ from typing import Any, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from switch_core.config import ControllerRelease
 from switch_core.db.models import (
     Agent,
     AgentController,
@@ -522,8 +523,46 @@ def connection_view(
     }
 
 
+def release_for(
+    controller: AgentController, release: ControllerRelease | None
+) -> ControllerRelease | None:
+    """The release this controller is told to run. None for a Switch Console
+    one, whatever is set: the controller Console runs ships with Console and
+    updates with it."""
+    return None if controller.kind == "console" else release
+
+
+def controller_release_view(
+    controller: AgentController, release: ControllerRelease | None
+) -> dict[str, str] | None:
+    """The release the controller is told to run, or null when it is told none."""
+    wanted = release_for(controller, release)
+    if wanted is None:
+        return None
+    return {"version": wanted.version, "url": wanted.url, "sha256": wanted.sha256}
+
+
+def release_view(
+    controller: AgentController, release: ControllerRelease | None
+) -> dict[str, Any] | None:
+    """Whether the controller runs the release it is told to run: the version
+    wanted, the one it last reported, and whether they are the same. Null when
+    it is told none."""
+    release = release_for(controller, release)
+    if release is None:
+        return None
+    return {
+        "wanted": release.version,
+        "running": controller.version,
+        "current": controller.version == release.version,
+    }
+
+
 def controller_view(
-    controller: AgentController, state: str, leases: ProcessLeases
+    controller: AgentController,
+    state: str,
+    leases: ProcessLeases,
+    release: ControllerRelease | None,
 ) -> dict[str, Any]:
     return {
         "id": controller.id,
@@ -532,6 +571,7 @@ def controller_view(
         "kind": controller.kind,
         "platform": controller.platform,
         "version": controller.version,
+        "release": release_view(controller, release),
         "state": state,
         "last_seen_at": wire_time_or_none(controller.last_seen_at),
         "connection": connection_view(controller, leases),

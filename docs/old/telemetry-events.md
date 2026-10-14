@@ -764,7 +764,7 @@ This is what each carries.
 | `room_group_deleted` | `room_count` (number); `age_days` (number) |
 | `template_created` | `template_kind` (`room` \| `group` \| `agent` \| `other`) |
 | `template_deleted` | `template_kind` (`room` \| `group` \| `agent` \| `other`); `age_days` (number) |
-| `agent_request_refused` | `operation` (`list_templates` \| `get_template` \| `run_template` \| `save_template` \| `update_template` \| `delete_template` \| `create_room` \| `create_room_from_yaml`); `reason` (`not_found` \| `not_yours` \| `name_taken` \| `visibility_not_allowed` \| `invalid` \| `too_large` \| `missing_agents` \| `agent_creation_console_only` \| `busy` \| `run_paused` \| `run_stopped` \| `repeat` \| `kickoff_ignored`) |
+| `agent_request_refused` | `operation` (`list_templates` \| `get_template` \| `run_template` \| `save_template` \| `update_template` \| `delete_template` \| `create_room` \| `create_room_from_yaml`); `reason` (`not_found` \| `not_yours` \| `name_taken` \| `visibility_not_allowed` \| `invalid` \| `too_large` \| `has_warnings` \| `missing_agents` \| `agent_creation_console_only` \| `agents_not_created` \| `run_undone` \| `busy` \| `run_paused` \| `run_stopped` \| `repeat` \| `kickoff_ignored`) |
 | `room_link_created` | none |
 | `room_link_removed` | none |
 | `room_role_defined` | `exclusive` (boolean) |

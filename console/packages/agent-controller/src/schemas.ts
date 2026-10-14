@@ -264,12 +264,26 @@ export const statusReportSchema = z.object({
   providers: z.array(providerStatusSchema),
   tools: z.array(toolStatusSchema),
   agents: z.array(agentStatusSchema),
+  /** Why this controller does not run the release Switch names, when it does not. */
+  update: z
+    .object({
+      target: z.string().min(1),
+      state: z.enum(['waiting_idle', 'failed', 'restart_needed']),
+      problem: z.string().max(500).optional(),
+    })
+    .optional(),
 });
 export type StatusReport = z.infer<typeof statusReportSchema>;
 
 export const statusResponseSchema = z.object({
   assignment_revision: revision,
   report_within_s: z.number().int().positive(),
+  /**
+   * The release Switch wants this controller to run, or null/absent for none.
+   * Kept unread here so a malformed one cannot fail the whole response:
+   * `readControllerRelease` reads it.
+   */
+  controller_release: z.unknown().optional(),
 });
 export type StatusResponse = z.infer<typeof statusResponseSchema>;
 

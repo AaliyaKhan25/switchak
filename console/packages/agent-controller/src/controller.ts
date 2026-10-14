@@ -28,6 +28,7 @@ import {
 } from './schemas';
 import { type GivenLogin, registerSealingKey, SealedLogins, sealingKeys } from './sealed-logins';
 import { CONTROLLER_CREDENTIAL, type SecretStore } from './secrets';
+import type { SelfUpdater } from './self-update';
 import {
   type ProviderLocator,
   ProviderStatuses,
@@ -89,6 +90,12 @@ export type ControllerDeps = {
   /** Where agents' working directories go when their definition names none, for a server. */
   workspacesFor: (server: string) => string;
   version: string;
+  /**
+   * Follows the release Switch names for this controller; null where the
+   * controller is updated some other way (Switch Console's own, which
+   * updates with Console).
+   */
+  selfUpdate: SelfUpdater | null;
   now: () => number;
   random: () => number;
   timing: ControllerTiming;
@@ -103,13 +110,17 @@ export type ControllerDeps = {
  * controller's protocol, or knows no controller by its credential. Both are
  * refusals the server marks not retryable, and asking again cannot change
  * them, so this one ends rather than retrying forever.
+ *
+ * `restarting`: the release Switch names is installed, and the controller
+ * ends for its service to start it again on that release.
  */
 export type ControllerExit =
   | 'stopped'
   | 'revoked'
   | 'taken_over'
   | 'upgrade_required'
-  | 'credential_invalid';
+  | 'credential_invalid'
+  | 'restarting';
 
 /**
  * Makes an agent's credentials file name the relay, its hub, and a token the
@@ -345,6 +356,12 @@ export async function runController(
     stop.abort();
   };
 
+  let restarting = false;
+  const restart = () => {
+    restarting = true;
+    stop.abort();
+  };
+
   const failed = (what: string, error: unknown) => {
     if (isRevoked(error)) {
       void revoke();
@@ -482,13 +499,24 @@ export async function runController(
     });
   };
 
+  const idle = async () => (await collector.collect(assignment)).machine.sessions_running === 0;
   reporter = new StatusReporter({
-    collect: () => collector.collect(assignment),
+    collect: async () => {
+      const collected = await collector.collect(assignment);
+      const update = deps.selfUpdate?.status();
+      return update ? { ...collected, update } : collected;
+    },
     send: async (report) => {
       const answer = await client.putStatus(report);
       reportWithinS = answer.report_within_s;
       if (assignment === null || answer.assignment_revision > assignment.revision)
         void sync('status says the assignment moved on');
+      if (deps.selfUpdate && !stop.signal.aborted)
+        void deps.selfUpdate.offer(answer.controller_release, {
+          idle,
+          restart,
+          signal: stop.signal,
+        });
     },
     seq: () => store.nextStatusSeq(deps.now()),
     minGapMs: timing.statusMinGapMs,
@@ -627,6 +655,8 @@ export async function runController(
       log.error(
         'Switch knows no controller by this credential; it stops its agents and exits. Enroll this machine again.'
       );
+    if (restarting && !refused && !revocation)
+      log.info('Exiting for the service to start this controller on its new release.');
   } finally {
     clearInterval(resync);
     clearInterval(poll);
@@ -636,12 +666,14 @@ export async function runController(
       if (revocation) await revocation;
       await queue.drain();
       await reporter.idle();
+      await deps.selfUpdate?.settled();
     } finally {
       await runtime.close();
       await relay.close();
     }
   }
-  return revocation ? 'revoked' : (refused ?? ending);
+  if (revocation) return 'revoked';
+  return refused ?? (restarting ? 'restarting' : ending);
 }
 
 /**

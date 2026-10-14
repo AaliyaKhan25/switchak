@@ -45,6 +45,7 @@ from switch_core.bridges.agent.protocol.controller_presence import (
 )
 from switch_core.bridges.agent.protocol.controller_stream import IDLE
 from switch_core.bridges.agent.protocol.event_buffer import EventBuffer
+from switch_core.config import ControllerRelease
 from switch_core.connections.broker import ServiceBroker
 from switch_core.db.models import (
     TENANT_ZERO_ID,
@@ -197,6 +198,7 @@ def build_harness(
     controller_auth_ttl_seconds: float = 5,
     server_url: str | None = SERVER_URL,
     third_party_avatars: bool = True,
+    controller_release: ControllerRelease | None = None,
 ) -> Harness:
     """The controller-token cache is on, as it is by default in production,
     so every management test runs through it."""
@@ -211,6 +213,7 @@ def build_harness(
         status_interval_seconds=STATUS_INTERVAL,
         server_url=server_url,
         third_party_avatars=third_party_avatars,
+        controller_release=controller_release,
         session_factory=session_factory,
         presence=protocol.connections.controllers,
         auth_cache=controller_auth_cache,
@@ -371,6 +374,36 @@ async def enroll_console(
     return EnrolledController(
         controller_id=body["controller_id"],
         credential=body["credential"],
+        access_token=token.json()["access_token"],
+        owner=owner,
+        harness=harness,
+    )
+
+
+async def enroll_daemon(
+    harness: Harness, client: httpx.AsyncClient, owner: User, name: str = "build-box"
+) -> EnrolledController:
+    """Enroll a headless controller for `owner` with a one-time code, as
+    `switch-agent-controller enroll` does, and exchange its credential."""
+    code = await client.post(
+        "/gateway/management/enrollment-codes", cookies=cookies_for(owner)
+    )
+    assert code.status_code == 201, code.text
+    body = fixture("enroll_request.json")
+    body["proof"]["code"] = code.json()["code"]
+    body["controller"]["name"] = name
+    enrolled = await client.post("/v1/management/controllers/enroll", json=body)
+    assert enrolled.status_code == 201, enrolled.text
+    controller_id = enrolled.json()["controller_id"]
+    credential = enrolled.json()["credential"]
+    token = await client.post(
+        f"/v1/management/controllers/{controller_id}/token",
+        json={"credential": credential},
+    )
+    assert token.status_code == 200, token.text
+    return EnrolledController(
+        controller_id=controller_id,
+        credential=credential,
         access_token=token.json()["access_token"],
         owner=owner,
         harness=harness,

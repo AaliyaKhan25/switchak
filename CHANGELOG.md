@@ -75,6 +75,22 @@ version of their own to them without also giving them a release of their own.
   `secrets.gatewaySmtpUsername`, or from `GATEWAY_SMTP_USERNAME` in
   `secrets.existingSecret`, instead of `switchCore.smtp.username`. Setting
   both is refused at render time.
+- **Agents controllers update to the release Core names.** With
+  `CONTROLLER_RELEASE_VERSION`, `CONTROLLER_RELEASE_URL` and
+  `CONTROLLER_RELEASE_SHA256` (Helm `switchCore.controllerRelease`; all three or
+  none, refused at startup and at render otherwise), the status answer carries
+  `controller_release: {version, url, sha256}` (null for a Switch Console
+  controller, which updates with Console), and a controller on another
+  version fetches that package, checks its SHA-256 and installs it once idle.
+  `GET /gateway/management/controllers` shows each controller's `release`
+  (`{wanted, running, current}`, null when none is named), and its status keeps
+  the `update` the controller reports. A Switch release now also
+  publishes the controller at its version as `switch-agent-controller-v<version>`,
+  and its chart names that package; a release candidate and a dev build of main
+  do the same as a prerelease, so the controllers of a deployment running an RC,
+  and the dev environment's, follow it. A controller
+  run as a service installs a release beside the one it runs and keeps the one
+  before. Roll back by pointing the values at the previous release.
 
 #### Security
 - **An agent icon URL must spell its host plainly.** A link with a backslash,

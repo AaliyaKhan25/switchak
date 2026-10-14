@@ -43,6 +43,7 @@ from switch_core.bridges.agent.protocol.controller_presence import (
     Binding,
     ControllerPresence,
 )
+from switch_core.config import ControllerRelease
 from switch_core.db.models import (
     CONTROLLER_ENROLLMENT_KEY_TYPE,
     CONTROLLER_KEY_TYPE,
@@ -84,6 +85,7 @@ from switch_core.management.schemas import (
     DefinitionV1,
     StatusReport,
     assignment_entry,
+    controller_release_view,
     controller_view,
     managed_agent_view,
     operation_view,
@@ -119,6 +121,9 @@ class ManagementSettings:
     # `THIRD_PARTY_AVATARS_ENABLED`. Off, a new agent with no chosen icon
     # stores none rather than the generated one, which carries its name.
     third_party_avatars: bool
+    # The controller release every controller is told to run; None when the
+    # deployment names none, and then controllers are told nothing.
+    controller_release: ControllerRelease | None
 
 
 @dataclass(frozen=True)
@@ -475,6 +480,9 @@ class ManagementService:
         return {
             "assignment_revision": revision,
             "report_within_s": self.settings.status_interval_seconds,
+            "controller_release": controller_release_view(
+                controller, self.settings.controller_release
+            ),
         }
 
     async def connection_state(
@@ -633,7 +641,12 @@ class ManagementService:
         )
         leases = await self.leases(session)
         return [
-            controller_view(controller, self.state_of(controller, leases), leases)
+            controller_view(
+                controller,
+                self.state_of(controller, leases),
+                leases,
+                self.settings.controller_release,
+            )
             for controller in controllers
         ]
 
@@ -688,7 +701,10 @@ class ManagementService:
         if not details:
             leases = await self.leases(session)
             view = controller_view(
-                controller, self.state_of(controller, leases), leases
+                controller,
+                self.state_of(controller, leases),
+                leases,
+                self.settings.controller_release,
             )
             await session.commit()
             return view
@@ -707,7 +723,12 @@ class ManagementService:
             session, tenant_id, controller_id, changes
         )
         leases = await self.leases(session)
-        view = controller_view(controller, self.state_of(controller, leases), leases)
+        view = controller_view(
+            controller,
+            self.state_of(controller, leases),
+            leases,
+            self.settings.controller_release,
+        )
         await session.commit()
         if "name" in changes:
             self.presence.rename_controller(controller_id, controller.name)

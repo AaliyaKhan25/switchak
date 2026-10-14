@@ -270,7 +270,7 @@ async def put_status(
     principal: PathController,
     management: Management,
     session: Session,
-) -> dict[str, int]:
+) -> dict[str, Any]:
     if len(await request.body()) > MAX_STATUS_BYTES:
         raise ManagementError(
             413,

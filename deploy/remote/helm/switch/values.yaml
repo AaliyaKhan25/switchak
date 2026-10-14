@@ -362,6 +362,22 @@ switchCore:
     # How often a controller must report; one silent for three of these is
     # shown as unknown and gets no new placements.
     statusIntervalSeconds: 60
+  # The agents controller release switch-core tells every controller to run
+  # (CONTROLLER_RELEASE_VERSION / _URL / _SHA256), except Switch Console's own,
+  # which updates with Console. A controller that runs
+  # another version downloads the package from `url`, refuses it unless its
+  # SHA-256 is `sha256`, and installs it and restarts once no agent session
+  # is running on it. Set all three or none; with none, controllers are told
+  # nothing and keep the version they have. A chart from a Switch release
+  # ships with that release's controller package filled in here. To roll
+  # controllers back, point these at the previous release's package.
+  controllerRelease:
+    # x.y.z, or a dev build's x.y.z-<prerelease>.
+    version: ""
+    # An https URL to the switch-agent-controller-<version>.tgz package.
+    url: ""
+    # The package's SHA-256, 64 lowercase hex characters.
+    sha256: ""
   # Private hosts switch-core may reach at a URL a tenant or agent supplied —
   # a Mattermost server, an OpenCode server, an agent icon. Hostnames or CIDRs.
   # Anything else that is not a public address is refused, and link-local and

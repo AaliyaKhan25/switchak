@@ -4,6 +4,7 @@
 {{- include "switch.validateDbTls" . }}
 {{- include "switch.validateLogging" . }}
 {{- include "switch.validateObservability" . }}
+{{- include "switch.validateControllerRelease" . }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:

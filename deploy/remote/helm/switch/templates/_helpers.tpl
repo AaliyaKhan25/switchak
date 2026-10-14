@@ -613,6 +613,30 @@ rather than from a CrashLoopBackOff.
 {{- end }}
 
 {{/*
+Refuse a controller release switch-core would refuse at startup: all three
+values or none, an x.y.z or x.y.z-<prerelease> version, an https URL, a lowercase
+SHA-256.
+*/}}
+{{- define "switch.validateControllerRelease" -}}
+{{- with .Values.switchCore.controllerRelease }}
+{{- if or .version .url .sha256 -}}
+{{- if not (and .version .url .sha256) -}}
+{{- fail "switchCore.controllerRelease.version, .url and .sha256 are set all together or not at all: switch-core refuses to start with only some of them." -}}
+{{- end -}}
+{{- if not (regexMatch "^[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z]+(\\.[0-9A-Za-z]+)*)?$" .version) -}}
+{{- fail (printf "switchCore.controllerRelease.version must be x.y.z or x.y.z-<prerelease>, got %q." .version) -}}
+{{- end -}}
+{{- if not (regexMatch "^https://[^/?#\\s]+" .url) -}}
+{{- fail (printf "switchCore.controllerRelease.url must be an https URL, got %q." .url) -}}
+{{- end -}}
+{{- if not (regexMatch "^[0-9a-f]{64}$" .sha256) -}}
+{{- fail (printf "switchCore.controllerRelease.sha256 must be 64 lowercase hex characters, got %q." .sha256) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end }}
+
+{{/*
 switch-core container env. Shared by the switch-core Deployment and the
 pre-upgrade migration Job so they always run against the same configuration
 (env.py builds a full SwitchConfig, so the migration Job needs every var too).
@@ -717,6 +741,16 @@ this one. Drop it once the oldest supported image reads ID_SERVER_NAME. */}}
       key: CONTROLLER_TOKEN_SECRET
 - name: CONTROLLER_STATUS_INTERVAL_SECONDS
   value: {{ .Values.switchCore.agentManagement.statusIntervalSeconds | quote }}
+{{- end }}
+{{- with .Values.switchCore.controllerRelease }}
+{{- if .version }}
+- name: CONTROLLER_RELEASE_VERSION
+  value: {{ .version | quote }}
+- name: CONTROLLER_RELEASE_URL
+  value: {{ .url | quote }}
+- name: CONTROLLER_RELEASE_SHA256
+  value: {{ .sha256 | quote }}
+{{- end }}
 {{- end }}
 - name: GATEWAY_ADMIN_EMAIL
   valueFrom:

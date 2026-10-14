@@ -2,6 +2,7 @@ import os
 import re
 import ssl
 import uuid
+from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
 from typing import Literal
@@ -80,6 +81,22 @@ def _require_matching_keypair(
 
 # A connection catalog slug (`connections/loader.py`, SLUG_PATTERN).
 _SERVICE_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
+
+# The version shape the controller's package script accepts: a release's
+# x.y.z, or a dev build's x.y.z-<prerelease> (0.31.1-dev.412.gabc1234).
+_CONTROLLER_RELEASE_VERSION_RE = re.compile(
+    r"\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*)?"
+)
+_SHA256_HEX_RE = re.compile(r"[0-9a-f]{64}")
+
+
+@dataclass(frozen=True)
+class ControllerRelease:
+    """The agents controller package every controller is told to run."""
+
+    version: str
+    url: str
+    sha256: str
 
 
 class SwitchConfig(BaseSettings):
@@ -664,6 +681,15 @@ class SwitchConfig(BaseSettings):
     # `report_within_s`; a controller that has not reported for three of these
     # is shown as unknown and refused new placements.
     controller_status_interval_seconds: int = 60
+    # The agents controller release every controller is told to run, in
+    # answer to its status report. Set all three or none: with none, no
+    # controller is told anything and each keeps the version it has. A
+    # controller downloads the package from the URL, refuses it unless its
+    # SHA-256 matches, and installs it once no agent session is running.
+    # Switch Console's own controller is told nothing: it updates with Console.
+    controller_release_version: str | None = None
+    controller_release_url: str | None = None
+    controller_release_sha256: str | None = None
     # Share one read of a room's new messages between every client in it
     # (`transport/room_cache.py`). Without it, a room of N agents reads each
     # new page N times, which is what exhausted the pool in a restart burst.
@@ -780,6 +806,57 @@ class SwitchConfig(BaseSettings):
                 f"{len(self.controller_token_secret)}."
             )
         return self
+
+    @model_validator(mode="after")
+    def _validate_controller_release(self) -> "SwitchConfig":
+        settings = {
+            "CONTROLLER_RELEASE_VERSION": self.controller_release_version,
+            "CONTROLLER_RELEASE_URL": self.controller_release_url,
+            "CONTROLLER_RELEASE_SHA256": self.controller_release_sha256,
+        }
+        given = sorted(name for name, value in settings.items() if value)
+        if not given:
+            return self
+        if len(given) != len(settings):
+            missing = sorted(set(settings) - set(given))
+            raise ValueError(
+                "The controller release is set all together or not at all: "
+                f"{', '.join(given)} is set but {', '.join(missing)} is not."
+            )
+        version = self.controller_release_version or ""
+        if not _CONTROLLER_RELEASE_VERSION_RE.fullmatch(version):
+            raise ValueError(
+                "CONTROLLER_RELEASE_VERSION must be x.y.z or x.y.z-<prerelease>, got "
+                f"{version!r}."
+            )
+        url = self.controller_release_url or ""
+        parts = urlsplit(url)
+        if parts.scheme != "https" or not parts.netloc or url != url.strip():
+            raise ValueError(
+                f"CONTROLLER_RELEASE_URL must be an https URL with a host, got {url!r}."
+            )
+        sha256 = self.controller_release_sha256 or ""
+        if not _SHA256_HEX_RE.fullmatch(sha256):
+            raise ValueError(
+                "CONTROLLER_RELEASE_SHA256 must be 64 lowercase hex characters, "
+                f"got {sha256!r}."
+            )
+        return self
+
+    @property
+    def controller_release(self) -> ControllerRelease | None:
+        """The release controllers are told to run, or None when not set."""
+        if not (
+            self.controller_release_version
+            and self.controller_release_url
+            and self.controller_release_sha256
+        ):
+            return None
+        return ControllerRelease(
+            version=self.controller_release_version,
+            url=self.controller_release_url,
+            sha256=self.controller_release_sha256,
+        )
 
     @model_validator(mode="after")
     def _validate_logging(self) -> "SwitchConfig":

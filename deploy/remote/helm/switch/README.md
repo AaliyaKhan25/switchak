@@ -233,3 +233,26 @@ A deployment that set these variables with `kubectl set env` should remove them
 before the first upgrade that renders them (`kubectl set env deployment/<release>-switch-core
 AGENT_MANAGEMENT_ENABLED- CONTROLLER_TOKEN_SECRET-`). Otherwise Helm merges its
 `valueFrom` into the live `value` and the API server rejects the Deployment.
+
+### Controller updates
+
+`switchCore.controllerRelease` names the agents controller release switch-core
+tells every controller to run (cloud machines, and `switch-agent-controller`
+on SSH hosts and laptops; Switch Console's own controller updates with Console):
+
+```yaml
+switchCore:
+  controllerRelease:
+    version: "0.31.0"
+    url: "https://github.com/sandbox-quantum/switch/releases/download/switch-agent-controller-v0.31.0/switch-agent-controller-0.31.0.tgz"
+    sha256: "<sha256 of that file>"
+```
+
+A controller running another version downloads the package, refuses it unless
+its SHA-256 matches, and installs it and restarts once none of its agents has a
+session running. The chart published with a Switch release has these filled in
+with that release's controller package, so upgrading Switch upgrades the
+controllers too. Set all three or none (the chart refuses to render otherwise);
+with none, controllers are told nothing and keep their version. To roll
+controllers back, point the three values at the previous release's package and
+upgrade.

@@ -117,8 +117,31 @@ A full snapshot every time, not a delta. It's sent on every change, and at least
 ```
 PUT /v1/management/controllers/{id}/status
   StatusReport                                     // ≤ 64 KiB
-  → 200 { assignment_revision: number, report_within_s: number }  // tells the controller if it's behind
+  → 200 {
+      assignment_revision: number,                 // tells the controller if it's behind
+      report_within_s: number,
+      controller_release: ControllerRelease | null // the release to run; null = none named
+    }
 ```
+
+```ts
+type ControllerRelease = {
+  version: string   // x.y.z, or a dev build's x.y.z-<prerelease>
+  url: string       // https, the switch-agent-controller-<version>.tgz package
+  sha256: string    // the package's SHA-256, 64 lowercase hex characters
+}
+```
+
+`controller_release` is what the deployment sets (`CONTROLLER_RELEASE_VERSION`,
+`_URL`, `_SHA256`; Helm `switchCore.controllerRelease`), and the chart from a
+Switch release names that release's controller. A controller running another
+version downloads the package, refuses it unless its SHA-256 matches, and installs
+it and restarts once no agent session is running. It says how that is going in
+its report's `update` (`{ target, state, problem? }`), which Core stores with the
+rest of the report. Rolling back is pointing the setting at the previous
+release's package. A controller older than the field ignores it. A Switch Console
+controller (kind `console`) is always told null: it ships with Console and updates
+with it.
 
 ```ts
 type StatusReport = {
@@ -135,6 +158,11 @@ type StatusReport = {
   providers: ProviderStatus[]
   tools: ToolStatus[]
   agents: AgentStatus[]
+  update?: {                           // why it does not run controller_release yet. Absent when it does, and from older controllers
+    target: string                     // the version it is moving to
+    state: "waiting_idle" | "failed" | "restart_needed"
+    problem?: string                   // human-readable, when it failed
+  }
 }
 
 type ProviderStatus = {

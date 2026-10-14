@@ -621,5 +621,8 @@ export function statusFingerprint(report: Omit<StatusReport, 'seq'>): string {
       a.sessions.ids,
       a.directory,
     ]),
+    update: report.update
+      ? [report.update.target, report.update.state, report.update.problem]
+      : null,
   });
 }
