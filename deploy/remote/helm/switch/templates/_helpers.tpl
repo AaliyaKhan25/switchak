@@ -78,8 +78,11 @@ MATTERMOST_USER_PASSWORD: {{ .Values.secrets.mattermostUserPassword | default .V
 {{- if .Values.switchCore.oidc.enabled }}
 GATEWAY_OIDC_CLIENT_SECRET: {{ required "secrets.gatewayOidcClientSecret is required when switchCore.oidc.enabled" .Values.secrets.gatewayOidcClientSecret | b64enc | quote }}
 {{- end }}
-{{- if and .Values.switchCore.smtp.enabled .Values.switchCore.smtp.username }}
-GATEWAY_SMTP_PASSWORD: {{ required "secrets.gatewaySmtpPassword is required when switchCore.smtp.username is set" .Values.secrets.gatewaySmtpPassword | b64enc | quote }}
+{{- if and .Values.switchCore.smtp.enabled (or .Values.switchCore.smtp.username .Values.switchCore.smtp.usernameFromSecret) }}
+GATEWAY_SMTP_PASSWORD: {{ required "secrets.gatewaySmtpPassword is required when an SMTP username is set" .Values.secrets.gatewaySmtpPassword | b64enc | quote }}
+{{- end }}
+{{- if and .Values.switchCore.smtp.enabled .Values.switchCore.smtp.usernameFromSecret }}
+GATEWAY_SMTP_USERNAME: {{ required "secrets.gatewaySmtpUsername is required when switchCore.smtp.usernameFromSecret is true" .Values.secrets.gatewaySmtpUsername | b64enc | quote }}
 {{- end }}
 {{- if .Values.secrets.otlpHeaders }}
 OTLP_HEADERS: {{ .Values.secrets.otlpHeaders | b64enc | quote }}
@@ -800,9 +803,19 @@ this one. Drop it once the oldest supported image reads ID_SERVER_NAME. */}}
   value: {{ required "switchCore.smtp.from is required when smtp.enabled" .from | quote }}
 - name: GATEWAY_INVITE_EMAILS_PER_DAY
   value: {{ .emailsPerDayPerWorkspace | quote }}
-{{- if .username }}
+{{- if and .username .usernameFromSecret }}
+{{- fail "switchCore.smtp.username and switchCore.smtp.usernameFromSecret are mutually exclusive: set one." }}
+{{- end }}
+{{- if or .username .usernameFromSecret }}
 - name: GATEWAY_SMTP_USERNAME
+{{- if .usernameFromSecret }}
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "switch.secretName" $ }}
+      key: GATEWAY_SMTP_USERNAME
+{{- else }}
   value: {{ .username | quote }}
+{{- end }}
 - name: GATEWAY_SMTP_PASSWORD
   valueFrom:
     secretKeyRef:
