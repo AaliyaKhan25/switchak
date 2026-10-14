@@ -27,7 +27,8 @@
     "controller": {
       "version": "0.1.0",
       "protocol": 1,
-      "assignment_revision": 3
+      "assignment_revision": 3,
+      "updated_by": "self"
     },
     "machine": {
       "platform": {

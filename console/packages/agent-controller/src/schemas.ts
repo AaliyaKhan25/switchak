@@ -242,6 +242,13 @@ export const agentStatusSchema = z
   );
 export type AgentStatus = z.infer<typeof agentStatusSchema>;
 
+/**
+ * Who moves this controller onto another release: itself, following the one
+ * Switch names, or Switch Console, which runs it and replaces its bundle.
+ */
+export const updatedBySchema = z.enum(['self', 'console']);
+export type UpdatedBy = z.infer<typeof updatedBySchema>;
+
 export const statusReportSchema = z.object({
   seq: z.number().int().positive(),
   observed_at: time,
@@ -249,6 +256,7 @@ export const statusReportSchema = z.object({
     version: z.string().min(1),
     protocol: z.literal(PROTOCOL_VERSION),
     assignment_revision: revision,
+    updated_by: updatedBySchema,
   }),
   machine: z.object({
     platform: platformSchema,

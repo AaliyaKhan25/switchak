@@ -604,6 +604,7 @@ describe('StatusCollector', () => {
       dataDir: dir,
       workspacesDir: join(dir, 'workspaces'),
       version: '0.1.0',
+      updatedBy: 'self',
       now: () => clock,
     });
     store.recordApplied('agent-1', 2, '2026-01-01T11:00:00Z');
@@ -612,7 +613,12 @@ describe('StatusCollector', () => {
     const assignment = { revision: 7, agents: [entry()] };
     const first = await collector.collect(assignment);
     expect(statusReportSchema.safeParse({ ...first, seq: 1 }).success).toBe(true);
-    expect(first.controller).toEqual({ version: '0.1.0', protocol: 2, assignment_revision: 7 });
+    expect(first.controller).toEqual({
+      version: '0.1.0',
+      protocol: 2,
+      assignment_revision: 7,
+      updated_by: 'self',
+    });
     expect(first.providers.map((p) => p.provider)).toEqual(['claude']);
     expect(first.tools).toEqual([
       { tool: 'git', state: 'ok' },

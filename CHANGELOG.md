@@ -99,6 +99,13 @@ version of their own to them without also giving them a release of their own.
   could not tell where the image would be loaded from.
 
 #### Fixed
+- **A controller Switch Console runs on an SSH host is no longer shown as behind.**
+  It enrolls like a standalone controller, so Core named it the release and the
+  Machines page marked it behind, though it runs Console's bundle and cannot
+  follow Core. Console now starts it with `--updated-by-console`; it follows no
+  release, reports `controller.updated_by: "console"` in its status, and Core
+  names it none, as for Console's own controller. One started from an older
+  Console bundle shows behind until Console replaces that bundle.
 - **Usage telemetry no longer carries the `ENVIRONMENT` or `SERVICE_NAME`
   settings.** From 0.28.0 through 0.30.0, with `TELEMETRY_ENABLED=true`, every
   event sent to the Flint relay carried both, as `deployment.environment`,

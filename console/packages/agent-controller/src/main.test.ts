@@ -45,6 +45,10 @@ describe('main', () => {
     expect(lastLine()).toBe(
       'switch-agent-controller: --controller-id and --server adopt an identity together; pass both.'
     );
+    expect(await main(['run', '--updated-by-console', '--releases-dir', '/tmp/releases'])).toBe(
+      EXIT_CONFIGURATION
+    );
+    expect(lastLine()).toMatch(/--updated-by-console and --releases-dir disagree/);
     expect(await main(['enroll', '--server', 'https://switch.example.com'])).toBe(
       EXIT_CONFIGURATION
     );

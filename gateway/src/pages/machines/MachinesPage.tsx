@@ -142,9 +142,11 @@ function controllerVersion(row: Controller) {
     return (
       <Tooltip
         title={
-          release === null
-            ? "Switch names no controller release for this machine."
-            : `Runs ${release.wanted}, the release Switch names.`
+          release !== null
+            ? `Runs ${release.wanted}, the release Switch names.`
+            : row.kind === "console" || row.status?.controller.updated_by === "console"
+              ? "Updates with Switch Console, which runs it."
+              : "Switch names no controller release for this machine."
         }
       >
         <span>{running ?? EM_DASH}</span>
@@ -159,7 +161,7 @@ function controllerVersion(row: Controller) {
       color: "warning",
       why:
         row.state === "online"
-          ? "It has said nothing about moving to it: a controller older than self-update never does, so update it by hand once."
+          ? "It has said nothing about moving to it: a controller older than self-update never does. Reinstall it once on the machine, or, if Switch Console runs it on an SSH host, update Console."
           : "It moves to it once it is connected again.",
     };
   else if (update.state === "waiting_idle")

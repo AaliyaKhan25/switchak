@@ -83,7 +83,13 @@ export interface AgentStatus {
 export interface StatusReport {
   seq: number;
   observed_at: string;
-  controller: { version: string; protocol: number; assignment_revision: number };
+  controller: {
+    version: string;
+    protocol: number;
+    assignment_revision: number;
+    /** Who moves it onto another release; absent from older controllers. */
+    updated_by?: "self" | "console";
+  };
   machine: {
     platform: Platform;
     disk_free_bytes: number;

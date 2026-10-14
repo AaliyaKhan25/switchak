@@ -546,6 +546,48 @@ class TestControllerRelease:
         assert response.json()["controller_release"] is None
         assert listed.json()[0]["release"] is None
 
+    async def test_a_controller_console_updates_is_told_no_release(
+        self, harness: Harness
+    ) -> None:
+        """One Switch Console runs on an SSH host enrolls as a daemon, but
+        follows Console's bundle, not the release Core names."""
+        owner = await add_member(harness.session_factory, "ada")
+        report = status_report(1)
+        report["controller"]["updated_by"] = "console"
+        async with harness.client() as client:
+            controller = await enroll_daemon(harness, client, owner)
+            await ensure_connected(client, controller)
+            response = await client.put(
+                f"/v1/management/controllers/{controller.controller_id}/status",
+                json=report,
+                headers=controller.headers,
+            )
+            listed = await client.get(
+                "/gateway/management/controllers", cookies=cookies_for(owner)
+            )
+        assert response.status_code == 200, response.text
+        assert response.json()["controller_release"] is None
+        view = listed.json()[0]
+        assert view["release"] is None
+        assert view["status"]["controller"]["updated_by"] == "console"
+
+    async def test_a_controller_that_updates_itself_is_told_the_release(
+        self, harness: Harness
+    ) -> None:
+        owner = await add_member(harness.session_factory, "ada")
+        report = status_report(1)
+        report["controller"]["updated_by"] = "self"
+        async with harness.client() as client:
+            controller = await enroll_daemon(harness, client, owner)
+            await ensure_connected(client, controller)
+            response = await client.put(
+                f"/v1/management/controllers/{controller.controller_id}/status",
+                json=report,
+                headers=controller.headers,
+            )
+        assert response.status_code == 200, response.text
+        assert response.json()["controller_release"]["version"] == "0.31.0"
+
 
 async def _placed_agent(
     harness: Harness, client, controller: EnrolledController, name: str = "reviewer"

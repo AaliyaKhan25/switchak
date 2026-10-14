@@ -25,6 +25,7 @@ import {
   type StatusReport,
   statusReportSchema,
   type ToolStatus,
+  type UpdatedBy,
 } from './schemas';
 import { type GivenLogin, registerSealingKey, SealedLogins, sealingKeys } from './sealed-logins';
 import { CONTROLLER_CREDENTIAL, type SecretStore } from './secrets';
@@ -98,10 +99,11 @@ export type ControllerDeps = {
   /** Where agents' working directories go when their definition names none, for a server. */
   workspacesFor: (server: string) => string;
   version: string;
+  /** Who moves it onto another release, as its status reports to Switch. */
+  updatedBy: UpdatedBy;
   /**
-   * Follows the release Switch names for this controller; null where the
-   * controller is updated some other way (Switch Console's own, which
-   * updates with Console).
+   * Follows the release Switch names for this controller; null where Switch
+   * Console updates it instead.
    */
   selfUpdate: SelfUpdater | null;
   now: () => number;
@@ -412,6 +414,7 @@ export async function runController(
     dataDir: deps.dataDir,
     workspacesDir: workspaces,
     version: deps.version,
+    updatedBy: deps.updatedBy,
     now: deps.now,
   });
   const reconcileDeps: ReconcileDeps = {

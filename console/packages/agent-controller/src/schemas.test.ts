@@ -180,7 +180,7 @@ describe('status report', () => {
   const report = {
     seq: 1,
     observed_at: '2026-01-01T00:00:00Z',
-    controller: { version: '0.1.0', protocol: 2, assignment_revision: 0 },
+    controller: { version: '0.1.0', protocol: 2, assignment_revision: 0, updated_by: 'self' },
     machine: {
       platform: { os: 'linux', arch: 'x64', os_version: '6.1' },
       disk_free_bytes: 1,

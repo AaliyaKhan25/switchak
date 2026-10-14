@@ -48,7 +48,7 @@ import { definitionProblem } from './reconcile';
 import { isManagedRelease, readCurrent, throughCurrent } from './releases';
 import { emptyObservation, InProcessRuntime, observeOnDisk, probeProvider } from './runtime';
 import { AgentRuntimes } from './runtimes';
-import { type ControllerInfoChange, PROTOCOL_VERSION } from './schemas';
+import { type ControllerInfoChange, PROTOCOL_VERSION, type UpdatedBy } from './schemas';
 import {
   CONTROLLER_CREDENTIAL,
   defaultSecretStoreKind,
@@ -115,7 +115,7 @@ Commands:
   run [--data-dir <dir>] [--shared-host-bundle <path>]
       [--controller-id <id> --server <agent-bridge-url> [--name <name>]]
       [--credential-stdin] [--agent-runtime default|separate-user]
-      [--releases-dir <dir>]
+      [--releases-dir <dir> | --updated-by-console]
       Run the agents assigned to this machine and report their status.
       --agent-runtime separate-user runs every agent as a Linux user of its
       own, as set up by install-service --separate-users.
@@ -125,6 +125,9 @@ Commands:
       controller credential from stdin and keeps it in memory only.
       --releases-dir, which install-service passes, is where it installs
       the releases Switch names, beside the ones before.
+      --updated-by-console, which Switch Console passes to a controller it
+      runs on an SSH host, says Console updates it: it follows no release
+      Switch names, and tells Switch so.
   set-info [--name <name>] [--description <text>] [--data-dir <dir>]
       Rename this machine and/or change its description on the server, with
       this controller's own credential. Either or both; --description ""
@@ -375,6 +378,7 @@ async function runCommand(args: string[]): Promise<number> {
       launchd: { type: 'boolean' },
       'agent-runtime': { type: 'string' },
       'releases-dir': { type: 'string' },
+      'updated-by-console': { type: 'boolean' },
     },
     strict: true,
   });
@@ -386,6 +390,10 @@ async function runCommand(args: string[]): Promise<number> {
       '--releases-dir is for a service of your user; agents as users of their own read it from their setup.'
     );
   const releasesDir = values['releases-dir'] ? resolve(values['releases-dir']) : null;
+  if (values['updated-by-console'] && releasesDir !== null)
+    throw new UsageError(
+      '--updated-by-console and --releases-dir disagree: a controller Switch Console updates installs no releases of its own.'
+    );
   // Before anything reads the environment: the agents inherit it.
   const fromFile = values['env-file'] ? await readEnvFile(resolve(values['env-file'])) : {};
   Object.assign(process.env, fromFile);
@@ -445,11 +453,14 @@ async function runCommand(args: string[]): Promise<number> {
       file: values['env-file'],
       names: Object.keys(fromFile),
     });
-  // A controller a parent runs (Switch Console's own) is updated with the parent.
-  if (credential === null) void announceUpdate(log);
+  // A controller Switch Console runs (its own, handed its credential on stdin,
+  // or one it starts on an SSH host) is updated with Console, not by itself.
+  const updatedBy: UpdatedBy =
+    credential !== null || values['updated-by-console'] === true ? 'console' : 'self';
+  if (updatedBy === 'self') void announceUpdate(log);
   try {
     const selfUpdate =
-      credential === null
+      updatedBy === 'self'
         ? new SelfUpdater({
             version: VERSION,
             installer: await installerFor(
@@ -531,6 +542,7 @@ async function runCommand(args: string[]): Promise<number> {
         // no directory works in a folder of its own there.
         workspacesFor: separateUsers ? () => unitAgentRoot(separateUsers) : serverWorkspacesDir,
         version: VERSION,
+        updatedBy,
         selfUpdate,
         now: Date.now,
         random: Math.random,

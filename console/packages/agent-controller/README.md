@@ -371,8 +371,11 @@ A failed attempt is reported (`update: {"target", "state": "failed", "problem"}`
 and logged, and the same release is not tried again for an hour; the last
 attempt is kept in the data directory, so a restart does not retry it either.
 Absent or null, `controller_release` leaves the controller alone; one that cannot
-be read is logged and treated as absent. Switch Console's own controller (run
-with `--credential-stdin`) never updates itself: it updates with Console.
+be read is logged and treated as absent. A controller Switch Console runs never
+updates itself: its own (run with `--credential-stdin`) and one it starts on an
+SSH host (run with `--updated-by-console`) update when Console replaces their
+bundle. Each reports `controller.updated_by: "console"` in its status (`"self"`
+otherwise), and Switch names it no release.
 
 Where it installs depends on how the controller was installed:
 

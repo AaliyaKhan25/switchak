@@ -140,15 +140,20 @@ it and restarts once no agent session is in the middle of a turn (idle sessions
 are restarted with it and resume their conversations). It says how that is going in
 its report's `update` (`{ target, state, problem? }`), which Core stores with the
 rest of the report. Rolling back is pointing the setting at the previous
-release's package. A controller older than the field ignores it. A Switch Console
-controller (kind `console`) is always told null: it ships with Console and updates
+release's package. A controller older than the field ignores it. A controller
+Switch Console updates is always told null: one of kind `console` (Console's own),
+or one whose last status said `controller.updated_by: "console"` (one Console runs
+on an SSH host, which enrolls as a `daemon`). It ships with Console and updates
 with it.
 
 ```ts
 type StatusReport = {
   seq: number                          // monotonic per controller. The server drops anything older
   observed_at: Time
-  controller: { version: string; protocol: 1; assignment_revision: number }
+  controller: {
+    version: string; protocol: 1; assignment_revision: number
+    updated_by?: "self" | "console"    // who moves it onto another release: itself, following controller_release, or Switch Console, which runs it and replaces its bundle. Absent from older controllers
+  }
   machine: {
     platform: Platform
     disk_free_bytes: number; disk_total_bytes: number

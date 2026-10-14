@@ -24,6 +24,7 @@ import {
   type ReasonCode,
   type StatusReport,
   type ToolStatus,
+  type UpdatedBy,
 } from './schemas';
 import type { GivenLogin, LoginProblem, SealedLogins } from './sealed-logins';
 import type { AgentRow, ControllerStore } from './store';
@@ -550,6 +551,7 @@ export class StatusCollector {
       /** Where agents with no directory of their own work, reported so the server can name it. */
       workspacesDir: string;
       version: string;
+      updatedBy: UpdatedBy;
       now: () => number;
     }
   ) {}
@@ -600,6 +602,7 @@ export class StatusCollector {
         version: this.deps.version,
         protocol: PROTOCOL_VERSION,
         assignment_revision: assignment?.revision ?? 0,
+        updated_by: this.deps.updatedBy,
       },
       machine: {
         platform: contractPlatform(),

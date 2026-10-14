@@ -170,6 +170,10 @@ class StatusControllerInfo(_StatusBody):
     version: str
     protocol: int
     assignment_revision: int
+    # Who moves it onto another release: itself, following the release Core
+    # names, or Switch Console, which runs it (on an SSH host, say) and
+    # replaces its bundle. Absent from a controller older than this field.
+    updated_by: Literal["self", "console"] | None = None
 
 
 class MachineStatus(_StatusBody):
@@ -523,13 +527,22 @@ def connection_view(
     }
 
 
+def updated_by_console(controller: AgentController) -> bool:
+    """Whether Switch Console updates this controller: Console's own, or one
+    Console runs elsewhere and says so in its status. Either ships with
+    Console and cannot follow the release Core names."""
+    if controller.kind == "console":
+        return True
+    info = (controller.status or {}).get("controller") or {}
+    return info.get("updated_by") == "console"
+
+
 def release_for(
     controller: AgentController, release: ControllerRelease | None
 ) -> ControllerRelease | None:
-    """The release this controller is told to run. None for a Switch Console
-    one, whatever is set: the controller Console runs ships with Console and
-    updates with it."""
-    return None if controller.kind == "console" else release
+    """The release this controller is told to run. None for one Switch Console
+    updates, whatever is set."""
+    return None if updated_by_console(controller) else release
 
 
 def controller_release_view(
