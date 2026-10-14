@@ -131,9 +131,10 @@ building from source at deploy time.
 - **The dev charts carry a moving `main` tag.** Once both charts are pushed,
   the run moves their `main` tag to its build, but only while the commit it
   built is still the tip of main, so a slower run cannot move it backwards. An
-  environment that follows main (development, through ArgoCD) tracks that tag
-  and resolves it to a digest; every other environment pins a version. The
-  cleanup never deletes the build `main` points at.
+  environment that follows main can track that tag, or take the highest
+  version of the dev chart (`>=0.0.0-0` in Helm or ArgoCD), which comes to the
+  same build because dev versions sort in build order; every other environment
+  pins a version. The cleanup never deletes the build `main` points at.
 - **Version** `<next patch>-dev.<run number>.g<short sha>`, e.g.
   `0.29.1-dev.512.g7f0c803` after `switch-v0.29.0`: one patch above the newest
   release tag on main, so a dev build sorts after the release it contains and
