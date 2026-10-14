@@ -139,8 +139,13 @@ secrets:
   # Gateway OIDC client secret (required when switchCore.oidc.enabled).
   gatewayOidcClientSecret: ""
   # SMTP relay password for invitation e-mails (required when
-  # switchCore.smtp.enabled and switchCore.smtp.username is set).
+  # switchCore.smtp.enabled and a username is set, either way below).
   gatewaySmtpPassword: ""
+  # SMTP relay username, for switchCore.smtp.usernameFromSecret. Some relays
+  # issue usernames that are themselves credentials (an SES SMTP username is
+  # an access key id). With existingSecret, that Secret carries it as
+  # GATEWAY_SMTP_USERNAME instead.
+  gatewaySmtpUsername: ""
   # `key=value` pairs, comma-separated, sent on every OTLP request. Here rather
   # than beside the other observability settings because the documented use for
   # it is a collector's API key, and every other credential in this chart comes
@@ -385,6 +390,11 @@ switchCore:
     # Leave empty for a relay that needs no login; set it and
     # secrets.gatewaySmtpPassword otherwise.
     username: ""
+    # Read the username from the Secret (secrets.gatewaySmtpUsername, or
+    # GATEWAY_SMTP_USERNAME in secrets.existingSecret) rather than from
+    # `username` above, for a relay whose username should not sit in values.
+    # Mutually exclusive with `username`.
+    usernameFromSecret: false
     # The From address, e.g. "Switch <invites@your-domain>".
     from: ""
     # Addressed invitations one workspace may send per 24 hours. With sign-up

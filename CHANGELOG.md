@@ -68,6 +68,13 @@ version of their own to them without also giving them a release of their own.
   stored to never show. `GET /agents/icon-choices` offers none and says why, and
   `GET /agents/avatar-settings` tells Switch Console the setting. The default is
   unchanged. A server Switch Console runs for you always uses the default.
+- **The Helm chart can take the invitation SMTP username from its Secret.**
+  Some relays issue usernames that are credentials in their own right (an
+  Amazon SES SMTP username is an access key id). With
+  `switchCore.smtp.usernameFromSecret: true`, the chart reads it from
+  `secrets.gatewaySmtpUsername`, or from `GATEWAY_SMTP_USERNAME` in
+  `secrets.existingSecret`, instead of `switchCore.smtp.username`. Setting
+  both is refused at render time.
 
 #### Security
 - **An agent icon URL must spell its host plainly.** A link with a backslash,
