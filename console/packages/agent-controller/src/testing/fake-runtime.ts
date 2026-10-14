@@ -116,6 +116,7 @@ export class FakeRuntime implements AgentRuntime {
         updatedAt: new Date(0).toISOString(),
         current: true,
       },
+      outdated: false,
     } satisfies Partial<AgentObservation>);
   }
 

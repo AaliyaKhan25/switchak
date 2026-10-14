@@ -13,7 +13,9 @@ import { RELEASE_VERSION } from './update';
  * Updating this controller to the release Switch names in its status
  * responses (`controller_release`): fetched, checked against the SHA-256
  * Switch gave, installed, then switched to by exiting with `EXIT_RESTARTING`
- * for the service to start it again. Only while no session runs.
+ * for the service to start it again. Only while no session is in the middle
+ * of a turn: idle sessions are restarted with it and resume their
+ * conversations.
  */
 
 /** The largest package a download is allowed to be. */
@@ -322,7 +324,7 @@ export type SelfUpdaterDeps = {
 
 /** What the running controller lends the updater for one offer. */
 export type UpdateHost = {
-  /** Whether no session runs here now. */
+  /** Whether no session here is in the middle of a turn now. */
   idle: () => Promise<boolean>;
   /** Ends the controller with `restarting`. */
   restart: () => void;
@@ -332,7 +334,7 @@ export type UpdateHost = {
 
 /**
  * Follows the release Switch names: a version other than this one (newer or
- * older, so Switch can roll back) is installed while no session runs, and
+ * older, so Switch can roll back) is installed while no session is mid-turn, and
  * the controller restarts into it. A failed attempt is not repeated for an
  * hour; what stands in the way is reported (`status()`).
  */
@@ -447,7 +449,7 @@ export class SelfUpdater {
     this.report = { target, state: 'waiting_idle' };
     this.logOnce(`waiting:${target}`, () =>
       this.deps.log.info(
-        'Switch names another controller release; it is installed once no session runs',
+        'Switch names another controller release; it is installed once no session is mid-turn',
         {
           from: this.deps.version,
           to: target,

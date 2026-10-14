@@ -318,7 +318,7 @@ it('keeps what a host last said about being busy, and answers a barrier once it 
   child.emit('exit', 0, null);
   await expect(lost).rejects.toThrow(SessionUnavailableError);
   expect(links.busy('root')).toBeNull();
-  expect(heard).toEqual(['root', 'root', 'root']);
+  expect(heard).toEqual(['root', 'root', 'root', 'root']);
 });
 
 it('answers a busy barrier on the host side with the settled state', async () => {

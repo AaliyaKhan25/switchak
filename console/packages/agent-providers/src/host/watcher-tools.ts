@@ -320,6 +320,11 @@ export const watcherHealthSchema = z.object({
   since: z.string(),
   /** Session id → room id, as the watcher routes now. Empty while it is not running. */
   placements: z.record(z.string(), z.string()),
+  /**
+   * The agent's sessions whose host runs here and is mid-turn, or has not yet
+   * said whether it is. Absent from a watcher too old to report it.
+   */
+  busy: z.array(z.string()).optional(),
 });
 export type WatcherHealth = z.infer<typeof watcherHealthSchema>;
 
@@ -400,6 +405,7 @@ export class WatcherControl {
     state?: WatcherState;
     detail?: string | null;
     placements?: PlacementMap;
+    busy?: string[];
   }): void {
     const state = change.state ?? this.current.state;
     const same = state === this.current.state;
@@ -408,11 +414,17 @@ export class WatcherControl {
       detail: change.detail !== undefined ? change.detail : same ? this.current.detail : null,
       since: same ? this.current.since : new Date().toISOString(),
       placements: change.placements ? { ...change.placements } : this.current.placements,
+      ...(change.busy
+        ? { busy: [...change.busy].sort() }
+        : this.current.busy
+          ? { busy: this.current.busy }
+          : {}),
     };
     if (
       same &&
       next.detail === this.current.detail &&
-      samePlacements(next.placements, this.current.placements)
+      samePlacements(next.placements, this.current.placements) &&
+      sameList(next.busy, this.current.busy)
     )
       return;
     this.current = next;
@@ -424,6 +436,11 @@ export class WatcherControl {
       }
     }
   }
+}
+
+function sameList(a: string[] | undefined, b: string[] | undefined): boolean {
+  if (!a || !b) return a === b;
+  return a.length === b.length && a.every((value, index) => value === b[index]);
 }
 
 function samePlacements(a: PlacementMap, b: PlacementMap): boolean {

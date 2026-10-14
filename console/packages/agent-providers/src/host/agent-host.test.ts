@@ -1646,6 +1646,48 @@ it('brings live sessions in step with a rewritten definition, each once its turn
   expect(restarted).toHaveLength(2);
 });
 
+it('reports which of its sessions are mid-turn, as their hosts start, go busy, go idle and exit', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'shared-watch-busy-'));
+  roots.push(root);
+  paths.root = root;
+  const config = await spawning(root);
+  const first = await existing(root, config);
+  const second = await existing(root, config);
+  await assignTo(root, config, 1, 'room', first.sessionId);
+  await assignTo(root, config, 2, 'elsewhere', second.sessionId);
+  vi.spyOn(console, 'warn').mockImplementation(() => {});
+  const hosts = sessionHosts();
+  await hosts.start(first.sessionRoot);
+  hosts.busy(first.sessionRoot, false);
+  const control = new WatcherControl();
+  const abort = new AbortController();
+  const run = runAgentHost(
+    root,
+    config,
+    abort.signal,
+    hosts.supervision,
+    control,
+    openSwitchStream
+  );
+  try {
+    await eventually(() => streams.length === 1);
+    expect(control.health().busy).toEqual([]);
+    hosts.busy(first.sessionRoot, true);
+    expect(control.health().busy).toEqual([first.sessionId]);
+    hosts.busy(first.sessionRoot, false);
+    expect(control.health().busy).toEqual([]);
+    // A host that has not said yet whether it is in a turn is not taken to be idle.
+    await hosts.start(second.sessionRoot);
+    expect(control.health().busy).toEqual([second.sessionId]);
+    hosts.exit(second.sessionRoot);
+    expect(control.health().busy).toEqual([]);
+  } finally {
+    abort.abort();
+    await run;
+  }
+  expect(control.health().busy).toEqual([]);
+});
+
 /** Records, as a session's host does as it starts, the shape of the grants it started with. */
 async function startedWith(sessionRoot: string, shape: string): Promise<void> {
   await writeFile(join(sessionRoot, 'services.json'), JSON.stringify({ shape }));

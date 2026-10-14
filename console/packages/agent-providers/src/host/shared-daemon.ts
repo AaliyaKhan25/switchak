@@ -26,7 +26,7 @@ import {
 import { hostSessionProcess } from './shared-host';
 import { onStopRequest } from './stop-request';
 import { superviseSharedHost } from './supervisor';
-import { recordWatcherHealth } from './watcher-health-file';
+import { bundleIdentity, recordWatcherHealth } from './watcher-health-file';
 import { WatcherControl } from './watcher-tools';
 
 const [root, configPath, mode] = process.argv.slice(2);
@@ -123,6 +123,8 @@ async function main(): Promise<void> {
       links: null,
     });
   } else if (mode === '--watch-worker') {
+    // Read before anything else, while the file is the one this process loaded.
+    const bundle = await bundleIdentity(process.argv[1]!);
     const stop = new AbortController();
     onStopRequest(() => stop.abort(), resolve(root));
     // The sidecar is the parent of the sessions it runs: it talks to each over
@@ -159,7 +161,7 @@ async function main(): Promise<void> {
       : undefined;
     // Console reads the watcher's connection state from this file, with the
     // rest of the host's watcher state, rather than from the control port.
-    const stopRecording = recordWatcherHealth(resolve(root), control);
+    const stopRecording = recordWatcherHealth(resolve(root), control, bundle);
     // A watcher that stops (disabled, stood down after a takeover, or
     // signalled) takes the process with it: the control port and every
     // session host go too, so the supervisor sees a clean exit and does not

@@ -713,8 +713,31 @@ export async function runAgentHost(
       token: credentials.SWITCH_API_TOKEN,
     };
     const placements = await SessionPlacements.open(root, () => assignments.placements());
-    control.report({ state: 'connecting', detail: null, placements: placements.snapshot() });
-    unbind.push(placements.onChange((map) => control.report({ placements: map })));
+    /**
+     * This agent's sessions whose host runs here and has not said it is idle:
+     * the ones an agents controller restarting now would cut off mid-turn.
+     */
+    const busySessions = (): string[] => {
+      const live = new Set(links.live());
+      const ids = new Set([
+        ...assignments.sessions().map((config) => config.session.sessionId),
+        ...Object.keys(placements.snapshot()),
+      ]);
+      return [...ids].filter((sessionId) => {
+        const sessionRoot = sharedSessionRoot(sessionId);
+        return live.has(sessionRoot) && links.busy(sessionRoot)?.busy !== false;
+      });
+    };
+    control.report({
+      state: 'connecting',
+      detail: null,
+      placements: placements.snapshot(),
+      busy: busySessions(),
+    });
+    unbind.push(
+      placements.onChange((map) => control.report({ placements: map, busy: busySessions() })),
+      links.onBusy(() => control.report({ busy: busySessions() }))
+    );
     let stream: AgentEventStream | null = null;
     let publishing: Promise<void> = Promise.resolve();
     /**
@@ -1537,6 +1560,7 @@ export async function runAgentHost(
           : String(failure)
         : ending.detail,
       placements: {},
+      busy: [],
     });
     await releaseOwner(root, ownerPath, owner);
   }

@@ -94,6 +94,7 @@ export {
 } from './host/hub-stream';
 export { clearTakenOver, readTakenOver, type TakenOver } from './host/taken-over';
 export {
+  bundleIdentity,
   recordWatcherHealth,
   WATCHER_HEALTH_FILE,
   type WatcherHealthFile,

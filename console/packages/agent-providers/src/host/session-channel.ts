@@ -279,6 +279,7 @@ export class SessionLinks {
     link.identity = null;
     link.failure = null;
     link.busy = null;
+    for (const listener of this.busyListeners) listener(root);
     child.on('message', (raw) => {
       const parsed = fromChildSchema.safeParse(raw);
       if (!parsed.success) {
@@ -553,7 +554,7 @@ export class SessionLinks {
     return [...this.links].flatMap(([root, link]) => (link.child ? [root] : []));
   }
 
-  /** Hear each change in what a host says about being busy, and each host exit. */
+  /** Hear each host start and exit, and each change in what a host says about being busy. */
   onBusy(listener: (root: string) => void): () => void {
     this.busyListeners.add(listener);
     return () => this.busyListeners.delete(listener);

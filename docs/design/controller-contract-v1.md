@@ -136,7 +136,8 @@ type ControllerRelease = {
 `_URL`, `_SHA256`; Helm `switchCore.controllerRelease`), and the chart from a
 Switch release names that release's controller. A controller running another
 version downloads the package, refuses it unless its SHA-256 matches, and installs
-it and restarts once no agent session is running. It says how that is going in
+it and restarts once no agent session is in the middle of a turn (idle sessions
+are restarted with it and resume their conversations). It says how that is going in
 its report's `update` (`{ target, state, problem? }`), which Core stores with the
 rest of the report. Rolling back is pointing the setting at the previous
 release's package. A controller older than the field ignores it. A Switch Console
@@ -160,7 +161,7 @@ type StatusReport = {
   agents: AgentStatus[]
   update?: {                           // why it does not run controller_release yet. Absent when it does, and from older controllers
     target: string                     // the version it is moving to
-    state: "waiting_idle" | "failed" | "restart_needed"
+    state: "waiting_idle" | "failed" | "restart_needed"   // waiting_idle: a session on the machine is in the middle of a turn
     problem?: string                   // human-readable, when it failed
   }
 }

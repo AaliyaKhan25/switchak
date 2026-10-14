@@ -513,6 +513,23 @@ export function mapAgentProcess(input: {
 }
 
 /**
+ * Whether no session here is in the middle of a turn, as each assigned
+ * agent's host last reported it: what a controller waits for before it
+ * restarts into another release. Idle sessions do not hold it back; they are
+ * restarted with it and resume their conversations. An agent host too old to
+ * report which sessions are busy holds it back while it has any session at
+ * all. An agent host not running, or whose report is not its own, has none.
+ */
+export function noSessionMidTurn(observations: AgentObservation[]): boolean {
+  return observations.every((observation) => {
+    const health = observation.alive && observation.health?.current ? observation.health : null;
+    if (!health) return true;
+    if (health.busy) return health.busy.length === 0;
+    return Object.keys(health.placements).length === 0;
+  });
+}
+
+/**
  * Builds status reports: the machine, the providers as last checked, and every
  * assigned agent as its agent host's files describe it. `since` is kept across
  * reports so it marks when an agent entered its current state.

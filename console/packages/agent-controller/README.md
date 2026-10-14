@@ -348,14 +348,22 @@ When Switch names a release for this controller, `run` follows it; otherwise
 `controller_release: {"version", "url", "sha256"}`. When it names a version other
 than the one running (newer or older: Switch can roll back), the controller:
 
-1. waits until no session runs on the machine (`sessions_running` is 0), checking
-   at each status report, and reports `update: {"target", "state": "waiting_idle"}`
-   in its status meanwhile;
+1. waits until no session on the machine is in the middle of a turn, checking at
+   each status report and every few seconds while it waits, and reports
+   `update: {"target", "state": "waiting_idle"}` in its status meanwhile. Each
+   agent host reports which of its sessions are busy; one that has not said yet
+   counts as busy. Idle sessions do not hold the update back: those in the
+   controller's own process are restarted with it and resume their
+   conversations, and agents running in a process of their own keep running
+   through it (once the controller is back on the new release, it restarts each
+   of those onto it as soon as none of its sessions is mid-turn: each records
+   the shared-host bundle it runs in its `health.json`). An agent host too old to report busy sessions holds it back
+   while it has any session, as `sessions_running` counts them;
 2. downloads the package into `<data dir>/updates/` (at most 200 MB) and checks
    its SHA-256 against the one Switch gave, the only one trusted; a package that
    differs is deleted;
 3. installs it from that file, never from the URL, checks that the installed CLI
-   says `--version` is that version, checks again that no session started
+   says `--version` is that version, checks again that no turn started
    meanwhile, and switches to it;
 4. exits with code `7`, and its service starts it again on the new release.
 

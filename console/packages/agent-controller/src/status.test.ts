@@ -10,6 +10,7 @@ import { type AgentAssignment, type SealedLoginResponse, statusReportSchema } fr
 import { SealedLogins } from './sealed-logins';
 import {
   mapAgentProcess,
+  noSessionMidTurn,
   PathProviderLocator,
   PROVIDER_TTL_MS,
   providerStatusFrom,
@@ -182,6 +183,34 @@ describe('mapAgentProcess', () => {
       'starting'
     );
     expect(map(observed({}))).toMatchObject({ process: 'crashed', reason: 'internal' });
+  });
+});
+
+describe('noSessionMidTurn', () => {
+  const reporting = (busy: string[] | undefined, current = true) =>
+    observed({ alive: true, health: { ...health('connected', null, current)!, busy } });
+
+  it('holds while an agent host reports a session mid-turn, however many sit idle', () => {
+    expect(noSessionMidTurn([reporting([])])).toBe(true);
+    expect(noSessionMidTurn([reporting([]), reporting(['session-a'])])).toBe(false);
+  });
+
+  it('holds while an agent host too old to report busy sessions has any session', () => {
+    expect(noSessionMidTurn([reporting(undefined)])).toBe(false);
+    const empty = reporting(undefined);
+    empty.health!.placements = {};
+    expect(noSessionMidTurn([empty])).toBe(true);
+  });
+
+  it('counts no session for an agent host not running or whose report is not its own', () => {
+    expect(noSessionMidTurn([reporting(['session-a'], false)])).toBe(true);
+    expect(
+      noSessionMidTurn([
+        observed({ alive: false, health: { ...health('connected')!, busy: ['x'] } }),
+      ])
+    ).toBe(true);
+    expect(noSessionMidTurn([emptyObservation(), observed({ alive: true })])).toBe(true);
+    expect(noSessionMidTurn([])).toBe(true);
   });
 });
 

@@ -986,7 +986,7 @@ async function updateCommand(args: string[]): Promise<number> {
   const prefix = installPrefix(cliPath());
   if (prefix && (await isManagedRelease(prefix)))
     throw new ConfigurationError(
-      `This controller runs from ${prefix}, a releases directory install-service set up: it installs the release Switch names itself, once no session runs. To install another by hand, install it with npm and run install-service again.`
+      `This controller runs from ${prefix}, a releases directory install-service set up: it installs the release Switch names itself, once no session is mid-turn. To install another by hand, install it with npm and run install-service again.`
     );
   const dataDir = resolveDataDir(values['data-dir']);
   process.stdout.write(`Installing ${latest.version} from ${latest.packageUrl}\n`);

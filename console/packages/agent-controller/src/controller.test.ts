@@ -662,7 +662,7 @@ describe('the release Switch names', () => {
     sha256: 'c'.repeat(64),
   };
 
-  it('is installed while no session runs, and the controller ends to restart on it', async () => {
+  it('is installed while no session is mid-turn, and the controller ends to restart on it', async () => {
     core.setAssignment({ revision: 1, agents: [agent(1)] });
     core.controllerRelease = release;
     const { updater, installed } = selfUpdate();
@@ -671,7 +671,7 @@ describe('the release Switch names', () => {
     expect(installed).toEqual(['0.2.0']);
   });
 
-  it('waits while a session runs, and says so in the status', async () => {
+  it('waits while an agent host that does not report busy sessions has any, and says so in the status', async () => {
     core.setAssignment({ revision: 1, agents: [agent(1)] });
     const { updater, installed } = selfUpdate();
     running = runController({ ...deps(), selfUpdate: updater }, stop.signal);
@@ -689,12 +689,78 @@ describe('the release Switch names', () => {
     expect(installed).toEqual(['0.2.0']);
   });
 
+  it('waits only while a session is mid-turn when the agent host says which are', async () => {
+    core.setAssignment({ revision: 1, agents: [agent(1)] });
+    const { updater, installed } = selfUpdate();
+    running = runController({ ...deps(), selfUpdate: updater }, stop.signal);
+    await waitFor(() => runtime.launches('agent-1').length === 1, 'the agent started');
+    const health = runtime.observation('agent-1').health!;
+    health.placements = { 'session-1': 'room-a', 'session-2': 'room-b' };
+    health.busy = ['session-1'];
+    core.controllerRelease = release;
+    await waitFor(
+      () => core.statusReports.some((report) => report.update?.state === 'waiting_idle'),
+      'a status saying the update waits'
+    );
+    expect(installed).toEqual([]);
+    health.busy = [];
+    expect(await running).toBe('restarting');
+    expect(installed).toEqual(['0.2.0']);
+  });
+
   it('is left alone by a controller that does not update itself', async () => {
     core.setAssignment({ revision: 1, agents: [agent(1)] });
     core.controllerRelease = release;
     running = runController(deps(), stop.signal);
     await waitFor(() => core.statusReports.length >= 2, 'two status reports');
     expect(core.statusReports.every((report) => report.update === undefined)).toBe(true);
+    stop.abort();
+    expect(await running).toBe('stopped');
+  });
+});
+
+describe('an agent host that outlived the controller on another bundle', () => {
+  const restarts = () =>
+    runtime.launches('agent-1').filter((call) => call.options.restart === true);
+
+  it('is restarted onto this controller’s bundle once none of its sessions is mid-turn, and only once', async () => {
+    core.setAssignment({ revision: 1, agents: [agent(1)] });
+    running = runController(deps(), stop.signal);
+    await waitFor(() => runtime.launches('agent-1').length === 1, 'the agent started');
+    const observation = runtime.observation('agent-1');
+    observation.outdated = true;
+    observation.health!.placements = { 'session-1': 'room-a' };
+    observation.health!.busy = ['session-1'];
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(restarts()).toEqual([]);
+
+    observation.health!.busy = [];
+    await waitFor(() => restarts().length === 1, 'the outdated agent host restarted');
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(restarts()).toHaveLength(1);
+    stop.abort();
+    expect(await running).toBe('stopped');
+  });
+
+  it('is not restarted again while it stays on another bundle, within the retry wait', async () => {
+    core.setAssignment({ revision: 1, agents: [agent(1)] });
+    running = runController(deps(), stop.signal);
+    await waitFor(() => runtime.launches('agent-1').length === 1, 'the agent started');
+    runtime.observation('agent-1').outdated = true;
+    await waitFor(() => restarts().length === 1, 'the outdated agent host restarted');
+    runtime.observation('agent-1').outdated = true;
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(restarts()).toHaveLength(1);
+    stop.abort();
+    expect(await running).toBe('stopped');
+  });
+
+  it('is left alone when it runs this controller’s bundle', async () => {
+    core.setAssignment({ revision: 1, agents: [agent(1)] });
+    running = runController(deps(), stop.signal);
+    await waitFor(() => runtime.launches('agent-1').length === 1, 'the agent started');
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(restarts()).toEqual([]);
     stop.abort();
     expect(await running).toBe('stopped');
   });
