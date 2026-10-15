@@ -4,7 +4,7 @@ Unlike the unit suite (which fakes the transport), these fixtures boot a real
 database and wire up the subset of `switch_core.main:run()` the feature under
 test needs, in-process. Messaging, membership and provisioning all run against
 that database, so a test drives the genuine path RoomService → provisioning →
-AgentConsumer receive loop → EventBuffer.
+AgentConsumer receive loop → EventBuffer (the agent_events tables).
 
 The container mirrors the `postgres` service in
 `deploy/local/docker-compose.yml` (see constants below — keep in sync). It gets
@@ -547,9 +547,16 @@ async def harness(
             config,
         )
 
-        # Per-test in-memory wiring: a fresh EventBuffer / client registry so queued
-        # events and client registrations never leak across tests.
-        event_buffer = EventBuffer(sequence_base=0)
+        # Per-test wiring: a fresh EventBuffer / client registry so the readers'
+        # bookkeeping and client registrations never leak across tests. The
+        # queued events themselves are rows, cleared by the truncation above.
+        # No `AgentEventListener`: it wakes readers for rows another process
+        # wrote, and everything here runs in this one.
+        event_buffer = EventBuffer(
+            session_factory,  # type: ignore[arg-type]
+            sequence_base=0,
+            retention_seconds=config.agent_event_retention_seconds,
+        )
         connections = AgentConnectionRegistry()
         collab_lifecycle: object = _NoBridges()
         real_bridges = (

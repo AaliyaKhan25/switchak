@@ -2354,6 +2354,7 @@ class AgentCore:
             await self.agent_session_store.touch_heartbeat(session, agent_id, None)
             await session.commit()
         return await self.event_buffer.poll(
+            require_tenant_id(),
             agent_id,
             timeout=timeout,
             rooms=await self._rooms_agent_is_in(agent_id),
@@ -2377,6 +2378,7 @@ class AgentCore:
         agent.
         """
         return await self.event_buffer.poll_notifications(
+            require_tenant_id(),
             agent_id,
             timeout=timeout,
             rooms=await self._rooms_agent_is_in(agent_id),
@@ -2406,7 +2408,9 @@ class AgentCore:
         the long-poll cadence so the TTL can stay short.
         """
         await self.require_room_member(agent_id, room_id)
-        return await self.event_buffer.poll_room(agent_id, room_id, timeout=timeout)
+        return await self.event_buffer.poll_room(
+            require_tenant_id(), agent_id, room_id, timeout=timeout
+        )
 
     async def report_events(
         self,

@@ -18,6 +18,11 @@ from switch_core.bridges.agent.commands import (
 )
 from switch_core.bridges.agent.protocol.agent_connections import AgentConnectionRegistry
 from switch_core.bridges.agent.protocol.event_buffer import EventBuffer
+from switch_core.bridges.agent.protocol.message_events import (
+    attachment_ref,
+    message_event,
+    room_join_event,
+)
 from switch_core.bridges.agent.protocol.presence import (
     agents_present_in,
     rooms_occupied,
@@ -26,8 +31,6 @@ from switch_core.bridges.agent.protocol.types import (
     AgentEvent,
     AttachmentRef,
     CommandPayload,
-    MessagePayload,
-    RoomJoinPayload,
     TaskAcceptPayload,
     TaskCancelPayload,
     TaskDelegatePayload,
@@ -117,6 +120,10 @@ class _PendingAttachmentGroup:
     total: int
     parts: dict[int, AttachmentRef] = field(default_factory=dict)
     body: str = ""
+    # The highest `messages.seq` among the parts received so far. The combined
+    # message is written to the agent's own events with this as its `room_seq`,
+    # the row of the part that completed the group.
+    through_seq: int = 0
     # Whether any part of the group addressed this agent. Addressing is read off
     # the message text, and the text rides on part 0 alone — every other part's
     # body is its bare filename. Answering from whichever part completes the
@@ -463,7 +470,7 @@ class AgentConsumer(Consumer[AgentActor]):
         meta = await self._resolve_room_meta(room.room_id)
         if meta is None:
             return
-        self._event_buffer.drop_room(self.agent.id, meta.room_id)
+        await self._event_buffer.drop_room(self.tenant_id, self.agent.id, meta.room_id)
         self._connections.release_room_everywhere(self.agent.id, meta.room_id)
         self._connections.controllers.room_left(self.agent.id, meta.room_id)
 
@@ -510,22 +517,27 @@ class AgentConsumer(Consumer[AgentActor]):
             listening = await self._room_store.get_receives_join_events(
                 session, meta.room_id, self.agent.id
             )
+            if not listening:
+                # The agent does not listen for joins in this room, so the join
+                # is not written to its own events. A reader that wants the
+                # whole conversation still sees it, read from `messages`.
+                return
             member_name = await self._member_name(session, event)
-        self._event_buffer.enqueue(
+        await self._event_buffer.enqueue(
+            self.tenant_id,
             self.agent.id,
             meta.room_id,
-            AgentEvent(
-                type="room_join",
+            room_join_event(
                 room_id=meta.room_id,
                 bridge_id=meta.bridge_id,
                 channel_type=meta.channel_type,
-                payload=RoomJoinPayload(
-                    member=event.state_key,
-                    member_name=member_name,
-                    timestamp=event.timestamp,
-                    listening=listening,
-                ),
+                member=event.state_key,
+                member_name=member_name,
+                timestamp=event.timestamp,
+                listening=listening,
             ),
+            room_seq=event.seq,
+            message_key=event.event_id,
         )
 
     async def on_message(self, room: RoomRef, event: InboundMessage) -> None:
@@ -578,33 +590,15 @@ class AgentConsumer(Consumer[AgentActor]):
                 sender_name,
             )
 
-        sender_kind: str | None = None
-        on_behalf_of: str | None = None
-        if PLATFORM_MARKER in event.content:
-            sender_kind = "platform"
-            person = platform_on_behalf_of(event.content)
-            if person is not None:
-                # The agent answers the person the platform spoke for, not
-                # the admin client that carried the message.
-                on_behalf_of = person.name
-                sender_name = person.name
-
-        agent_event = AgentEvent(
-            type="message",
+        agent_event = message_event(
             room_id=meta.room_id,
             bridge_id=meta.bridge_id,
             channel_type=meta.channel_type,
-            payload=MessagePayload(
-                addressed=is_addressed,
-                sender=event.sender,
-                sender_name=sender_name,
-                sender_kind=sender_kind,
-                on_behalf_of=on_behalf_of,
-                message_id=event.event_id,
-                body=text,
-                timestamp=event.timestamp,
-                thread_id=thread_id,
-            ),
+            event=event,
+            addressed=is_addressed,
+            sender_name=sender_name,
+            body=text,
+            thread_id=thread_id,
         )
 
         if is_addressed:
@@ -636,13 +630,21 @@ class AgentConsumer(Consumer[AgentActor]):
                 else reply_thread_root,
             )
 
+        if not is_addressed:
+            # An unaddressed message is not written to the agent's own events.
+            # A reader that wants the whole conversation reads it from
+            # `messages`.
+            return
         # Serialising runs once per agent per message, so only when it will be seen.
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug("Enqueuing event %s", agent_event.model_dump_json(indent=2))
-        self._event_buffer.enqueue(
+        await self._event_buffer.enqueue(
+            self.tenant_id,
             self.agent.id,
             meta.room_id,
             agent_event,
+            room_seq=event.seq,
+            message_key=event.event_id,
         )
 
     async def on_media(self, room: RoomRef, event: InboundMedia) -> None:
@@ -652,15 +654,7 @@ class AgentConsumer(Consumer[AgentActor]):
         is_addressed = await self._addressed(event, meta)
 
         content = event.content
-        # With a caption, body is the caption text and the real filename lives in
-        # `filename`; without one, body is the filename itself.
-        attachment = AttachmentRef(
-            filename=event.filename or event.body,
-            mimetype=event.mimetype or "",
-            size=event.size or 0,
-            mxc=event.uri,
-            msgtype=event.msgtype,
-        )
+        attachment = attachment_ref(event)
 
         sender_name = event.sender_name
         if not sender_name:
@@ -688,6 +682,8 @@ class AgentConsumer(Consumer[AgentActor]):
                 thread_id,
                 [attachment],
                 event.body,
+                room_seq=event.seq,
+                message_key=event.event_id,
             )
             return
 
@@ -697,6 +693,7 @@ class AgentConsumer(Consumer[AgentActor]):
         )
         pending.parts[index] = attachment
         pending.addressed = pending.addressed or is_addressed
+        pending.through_seq = max(pending.through_seq, event.seq)
         if index == 0:
             pending.body = event.body
             pending.first_event = event
@@ -719,6 +716,8 @@ class AgentConsumer(Consumer[AgentActor]):
             thread_id,
             [pending.parts[i] for i in sorted(pending.parts)],
             pending.body or event.body,
+            room_seq=pending.through_seq,
+            message_key=group_id,
         )
 
     def _schedule_attachment_group_flush(
@@ -796,6 +795,8 @@ class AgentConsumer(Consumer[AgentActor]):
             thread_id,
             [pending.parts[i] for i in sorted(pending.parts)],
             f"{body}\n{notice}" if body else notice,
+            room_seq=pending.through_seq,
+            message_key=group_id,
         )
 
     async def _emit_media(
@@ -808,6 +809,9 @@ class AgentConsumer(Consumer[AgentActor]):
         thread_id: str | None,
         attachments: list[AttachmentRef],
         body: str,
+        *,
+        room_seq: int,
+        message_key: str,
     ) -> None:
         reply_thread_root = thread_id if thread_id is not None else event.event_id
         agent_live = False
@@ -828,34 +832,16 @@ class AgentConsumer(Consumer[AgentActor]):
                 await self._post_auto_reply(
                     room.room_id, event, gate.refusal, reply_thread_root
                 )
-        sender_kind: str | None = None
-        on_behalf_of: str | None = None
-        if PLATFORM_MARKER in event.content:
-            sender_kind = "platform"
-            person = platform_on_behalf_of(event.content)
-            if person is not None:
-                # The agent answers the person the platform spoke for, not
-                # the admin client that carried the message.
-                on_behalf_of = person.name
-                sender_name = person.name
-
-        agent_event = AgentEvent(
-            type="message",
+        agent_event = message_event(
             room_id=meta.room_id,
             bridge_id=meta.bridge_id,
             channel_type=meta.channel_type,
-            payload=MessagePayload(
-                addressed=is_addressed,
-                sender=event.sender,
-                sender_name=sender_name,
-                sender_kind=sender_kind,
-                on_behalf_of=on_behalf_of,
-                message_id=event.event_id,
-                body=body,
-                timestamp=event.timestamp,
-                thread_id=thread_id,
-                attachments=attachments,
-            ),
+            event=event,
+            addressed=is_addressed,
+            sender_name=sender_name,
+            body=body,
+            thread_id=thread_id,
+            attachments=attachments,
         )
 
         if is_addressed:
@@ -863,14 +849,19 @@ class AgentConsumer(Consumer[AgentActor]):
                 meta, event, agent_live=agent_live, has_attachment=True
             )
 
+        if not is_addressed:
+            return
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(
                 "Enqueuing media event %s", agent_event.model_dump_json(indent=2)
             )
-        self._event_buffer.enqueue(
+        await self._event_buffer.enqueue(
+            self.tenant_id,
             self.agent.id,
             meta.room_id,
             agent_event,
+            room_seq=room_seq,
+            message_key=message_key,
         )
 
     async def on_command(self, room: RoomRef, event: CommandEvent) -> None:
@@ -898,7 +889,8 @@ class AgentConsumer(Consumer[AgentActor]):
         if handled:
             return
 
-        self._event_buffer.enqueue(
+        await self._event_buffer.enqueue(
+            self.tenant_id,
             self.agent.id,
             meta.room_id,
             AgentEvent(
@@ -913,6 +905,8 @@ class AgentConsumer(Consumer[AgentActor]):
                     user_name=event.user_name,
                 ),
             ),
+            room_seq=event.room_seq,
+            message_key=event.message_id,
         )
 
     async def _command_targets_me_explicitly(
@@ -1358,7 +1352,14 @@ class AgentConsumer(Consumer[AgentActor]):
         )
         if meta is None or agent_event is None:
             return
-        self._event_buffer.enqueue(self.agent.id, meta.room_id, agent_event)
+        await self._event_buffer.enqueue(
+            self.tenant_id,
+            self.agent.id,
+            meta.room_id,
+            agent_event,
+            room_seq=event.room_seq,
+            message_key=event.source_event_id,
+        )
 
     async def on_task_accept(self, room: RoomRef, event: TaskAccept) -> None:
         if event.requester_agent_id != self.agent.id:
@@ -1366,7 +1367,8 @@ class AgentConsumer(Consumer[AgentActor]):
         meta = await self._resolve_room_meta(room.room_id)
         if meta is None:
             return
-        self._event_buffer.enqueue(
+        await self._event_buffer.enqueue(
+            self.tenant_id,
             self.agent.id,
             meta.room_id,
             AgentEvent(
@@ -1380,6 +1382,8 @@ class AgentConsumer(Consumer[AgentActor]):
                     performer_agent_id=event.performer_agent_id,
                 ),
             ),
+            room_seq=event.room_seq,
+            message_key=event.source_event_id,
         )
 
     async def on_task_update(self, room: RoomRef, event: TaskUpdate) -> None:
@@ -1388,7 +1392,8 @@ class AgentConsumer(Consumer[AgentActor]):
         meta = await self._resolve_room_meta(room.room_id)
         if meta is None:
             return
-        self._event_buffer.enqueue(
+        await self._event_buffer.enqueue(
+            self.tenant_id,
             self.agent.id,
             meta.room_id,
             AgentEvent(
@@ -1403,6 +1408,8 @@ class AgentConsumer(Consumer[AgentActor]):
                     update=event.update,
                 ),
             ),
+            room_seq=event.room_seq,
+            message_key=event.source_event_id,
         )
 
     async def on_task_finalise(self, room: RoomRef, event: TaskFinalise) -> None:
@@ -1411,7 +1418,8 @@ class AgentConsumer(Consumer[AgentActor]):
         meta = await self._resolve_room_meta(room.room_id)
         if meta is None:
             return
-        self._event_buffer.enqueue(
+        await self._event_buffer.enqueue(
+            self.tenant_id,
             self.agent.id,
             meta.room_id,
             AgentEvent(
@@ -1426,6 +1434,8 @@ class AgentConsumer(Consumer[AgentActor]):
                     outcome=event.outcome,
                 ),
             ),
+            room_seq=event.room_seq,
+            message_key=event.source_event_id,
         )
 
     async def on_task_cancel(self, room: RoomRef, event: TaskCancel) -> None:
@@ -1434,7 +1444,8 @@ class AgentConsumer(Consumer[AgentActor]):
         meta = await self._resolve_room_meta(room.room_id)
         if meta is None:
             return
-        self._event_buffer.enqueue(
+        await self._event_buffer.enqueue(
+            self.tenant_id,
             self.agent.id,
             meta.room_id,
             AgentEvent(
@@ -1449,6 +1460,8 @@ class AgentConsumer(Consumer[AgentActor]):
                     reason=event.reason,
                 ),
             ),
+            room_seq=event.room_seq,
+            message_key=event.source_event_id,
         )
 
     # ── Mention detection ─────────────────────────────────────────────────────

@@ -613,11 +613,21 @@ def _addressing_client(
     ns._report_addressed = lambda *_a, **_k: None
     ns._triggered_by_auto_reply = AgentConsumer._triggered_by_auto_reply
     ns.actor = SimpleNamespace(send_message=sent)
-    ns._event_buffer = SimpleNamespace(
-        enqueue=lambda _agent_id, _room_id, event: enqueued.append(
-            event.payload.message_id
-        )
-    )
+
+    async def _enqueue(
+        _tenant_id: str,
+        _agent_id: str,
+        _room_id: str,
+        event: Any,
+        *,
+        room_seq: int,
+        message_key: str | None,
+    ) -> int:
+        enqueued.append(event.payload.message_id)
+        return len(enqueued)
+
+    ns.tenant_id = TENANT_ZERO_ID
+    ns._event_buffer = SimpleNamespace(enqueue=_enqueue)
     ns._sender_handle = AgentConsumer._sender_handle.__get__(ns)
     ns._post_auto_reply = AgentConsumer._post_auto_reply.__get__(ns)
     return ns, sent, enqueued

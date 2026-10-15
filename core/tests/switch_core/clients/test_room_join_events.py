@@ -3,17 +3,34 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
+import pytest
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from switch_core.bridges.agent.protocol.event_buffer import EventBuffer
 from switch_core.bridges.agent.protocol.types import AgentEvent, RoomJoinPayload
 from switch_core.clients.agent_consumer import AgentConsumer, RoomMeta
+from switch_core.db.models import TENANT_ZERO_ID
 from switch_core.transport import InboundMembership, RoomRef
+from tests.db_buffer import seed_agent
+
+AGENT = "agent-1"
 
 
-class _FakeQueue:
-    def __init__(self) -> None:
-        self.enqueued: list[tuple[str, str, AgentEvent]] = []
+@pytest.fixture(autouse=True)
+async def _agent_row(session_factory: async_sessionmaker[AsyncSession]) -> None:
+    """The agent the consumer queues for, so its events have a row to belong to."""
+    await seed_agent(session_factory, AGENT)
 
-    def enqueue(self, agent_id: str, room_id: str, event: AgentEvent) -> None:
-        self.enqueued.append((agent_id, room_id, event))
+
+async def _enqueued(client: SimpleNamespace) -> list[tuple[str, AgentEvent]]:
+    """What the consumer queued for its agent, read back from the db-buffer as
+    (room, event). Reading under the agent's id is what checks which agent it
+    was queued for."""
+    buffer: EventBuffer = client._event_buffer
+    return [
+        (item.room_id, item.event)
+        for item in await buffer.read_from(TENANT_ZERO_ID, AGENT, 0)
+    ]
 
 
 class _FakeClientStore:
@@ -40,6 +57,7 @@ class _FakeRoomStore:
 
 
 def _client(
+    buffer: EventBuffer,
     meta: RoomMeta | None = None,
     *,
     receives: bool = True,
@@ -47,7 +65,7 @@ def _client(
 ) -> SimpleNamespace:
     """A minimal fake `self` for the unbound AgentConsumer.on_member_event.
 
-    Stubs the event queue, agent identity, room-meta resolution, and the room
+    Queues on the db-buffer; stubs agent identity, room-meta resolution, and the room
     store / session factory so the handler can run without a DB or live Matrix
     client. `receives` is what the stubbed store reports for this agent's
     per-room join-event setting.
@@ -67,8 +85,9 @@ def _client(
         yield SimpleNamespace()
 
     stub = SimpleNamespace(
-        _event_buffer=_FakeQueue(),
-        agent=SimpleNamespace(id="agent-1"),
+        _event_buffer=buffer,
+        agent=SimpleNamespace(id=AGENT),
+        tenant_id=TENANT_ZERO_ID,
         _resolve_room_meta=_resolve_room_meta,
         _room_store=_FakeRoomStore(receives),
         client_store=_FakeClientStore(
@@ -112,13 +131,12 @@ async def _run(client: SimpleNamespace, event: InboundMembership) -> None:
 
 
 class TestRoomJoinEnqueue:
-    async def test_join_enqueues_room_join_event(self) -> None:
-        client = _client()
+    async def test_join_enqueues_room_join_event(self, db_buffer: EventBuffer) -> None:
+        client = _client(db_buffer)
         await _run(client, _member_event())
 
-        assert len(client._event_buffer.enqueued) == 1
-        agent_id, room_id, event = client._event_buffer.enqueued[0]
-        assert agent_id == "agent-1"
+        assert len(await _enqueued(client)) == 1
+        room_id, event = (await _enqueued(client))[0]
         assert room_id == "room-1"
         assert event.type == "room_join"
         assert event.bridge_id == "bridge-1"
@@ -130,57 +148,64 @@ class TestRoomJoinEnqueue:
         # Stubbed store opts this agent in → listening is True.
         assert event.payload.listening is True
 
-    async def test_listening_reflects_store_setting(self) -> None:
-        # The event is delivered regardless, but `listening` mirrors the
-        # per-room, per-agent receives_join_events setting (off here).
-        client = _client(receives=False)
+    async def test_listening_reflects_store_setting(
+        self, db_buffer: EventBuffer
+    ) -> None:
+        # The per-room, per-agent receives_join_events setting (off here)
+        # decides whether the arrival is one of the agent's own events. Off, it
+        # is the room's conversation: nothing is queued, and a reader that
+        # wants the conversation reads the arrival from the room's log, with
+        # `listening` False.
+        client = _client(db_buffer, receives=False)
         await _run(client, _member_event())
 
-        assert len(client._event_buffer.enqueued) == 1
-        _, _, event = client._event_buffer.enqueued[0]
-        assert event.payload.listening is False
+        assert await _enqueued(client) == []
 
-    async def test_the_member_is_named_the_way_switch_knows_them(self) -> None:
+    async def test_the_member_is_named_the_way_switch_knows_them(
+        self, db_buffer: EventBuffer
+    ) -> None:
         """A profile carries the source platform's spelling of a name; the log
         records the Switch one. Delivering the profile name would make live
         events and history disagree about the same person."""
-        client = _client(known={"@alice:switch.local": "alice"})
+        client = _client(db_buffer, known={"@alice:switch.local": "alice"})
         await _run(client, _member_event(displayname="Alice \U0001f495"))
 
-        _, _, event = client._event_buffer.enqueued[0]
+        _, event = (await _enqueued(client))[0]
         assert event.payload.member_name == "alice"
 
     async def test_a_member_no_switch_client_owns_falls_back_to_the_event(
-        self,
+        self, db_buffer: EventBuffer
     ) -> None:
-        client = _client(known={})
+        client = _client(db_buffer, known={})
         await _run(
             client, _member_event(displayname=None, state_key="@bob:switch.local")
         )
 
-        assert len(client._event_buffer.enqueued) == 1
-        _, _, event = client._event_buffer.enqueued[0]
+        assert len(await _enqueued(client)) == 1
+        _, event = (await _enqueued(client))[0]
         assert event.payload.member_name == "bob"
 
-    async def test_leave_does_not_enqueue(self) -> None:
-        client = _client()
+    async def test_leave_does_not_enqueue(self, db_buffer: EventBuffer) -> None:
+        client = _client(db_buffer)
         await _run(client, _member_event(membership="leave", prev_membership="join"))
-        assert client._event_buffer.enqueued == []
+        assert await _enqueued(client) == []
 
-    async def test_profile_update_does_not_enqueue(self) -> None:
+    async def test_profile_update_does_not_enqueue(
+        self, db_buffer: EventBuffer
+    ) -> None:
         # membership-preserving update (e.g. display-name change): join -> join.
-        client = _client()
+        client = _client(db_buffer)
         await _run(client, _member_event(membership="join", prev_membership="join"))
-        assert client._event_buffer.enqueued == []
+        assert await _enqueued(client) == []
 
-    async def test_no_room_meta_does_not_enqueue(self) -> None:
+    async def test_no_room_meta_does_not_enqueue(self, db_buffer: EventBuffer) -> None:
         async def _none(_transport_room_id: str) -> RoomMeta | None:
             return None
 
-        client = _client()
+        client = _client(db_buffer)
         client._resolve_room_meta = _none
         await _run(client, _member_event())
-        assert client._event_buffer.enqueued == []
+        assert await _enqueued(client) == []
 
 
 class TestRoomJoinPayloadRegistry:

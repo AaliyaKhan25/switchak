@@ -27,6 +27,11 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, declared_attr, mapped_column
 
+from switch_core.db.agent_event_notify_ddl import (
+    CREATE_AGENT_EVENT_NOTIFY_FUNCTION,
+    CREATE_AGENT_EVENT_NOTIFY_TRIGGER,
+    DROP_AGENT_EVENT_NOTIFY_TRIGGER,
+)
 from switch_core.db.base import Base
 from switch_core.db.encrypted_json import EncryptedJSONB
 from switch_core.db.notify_ddl import (
@@ -44,8 +49,22 @@ from switch_core.db.session_activity_notify_ddl import (
 from switch_core.db.tenant_lookup import attach_tenant_lookups
 from switch_core.tenant_context import current_tenant_id
 
+#: The highest boot number `agent_event_boot` hands out. An agent's own event
+#: numbers start at the boot number shifted left 32 bits, so they stay below
+#: `(AGENT_EVENT_BOOT_MAX + 1) << 32`, the first ticket id (`TICKET_FLOOR`).
+AGENT_EVENT_BOOT_MAX = 2097150
+
+#: The first id of `agent_position_tickets`. Every own event number is below it
+#: (see `AGENT_EVENT_BOOT_MAX`), and every ticket id from here to
+#: `TICKET_CEILING` is an integer a JavaScript client holds exactly.
+TICKET_FLOOR = (AGENT_EVENT_BOOT_MAX + 1) << 32
+TICKET_CEILING = 2**53 - 1
+
 agent_event_boot_sequence = Sequence(
-    "agent_event_boot", metadata=Base.metadata, maxvalue=2097150, cycle=False
+    "agent_event_boot",
+    metadata=Base.metadata,
+    maxvalue=AGENT_EVENT_BOOT_MAX,
+    cycle=False,
 )
 
 
@@ -2336,6 +2355,269 @@ class DeliveryCursor(TenantScoped, Base):
     )
 
 
+class AgentEventRow(TenantScoped, Base):
+    """One of an agent's own events: an event meant for that agent, not one it
+    sent.
+
+    The agent's consumer (`AgentConsumer`) writes a row when a room row it is
+    handed turns out to be for the agent: a message addressed to it, a join it
+    is set to listen for, a task event it is part of, or a command sent to it.
+    Whether a row is for the agent depends on the room's state at the moment
+    it is delivered, so the consumer records the decision here instead of
+    leaving it to be worked out again at read time. The rest of a room's
+    conversation is not copied here; a reader that wants it reads `messages`.
+
+    `seq` numbers the own events of one agent. The numbers are contiguous
+    and never reused (`AgentEventHead` hands them out). `payload` is the event
+    exactly as it is sent to the agent. `notifiable` is false only for
+    commands, and a connection that asked for addressed events only reads the
+    rows where it is true.
+
+    `room_seq` is the `messages.seq` of the room row the event came from. When
+    several files are posted as one message, it is the row of the last part to
+    arrive. `message_key` is the attachment group id for such a message and the
+    row's own event id otherwise. A reader that combines these own events with
+    the room's conversation uses the pair to leave out the rows of `messages`
+    it has already received from here.
+
+    The retention loop in `main.py` deletes rows older than
+    `agent_event_retention_seconds`. It never deletes from `messages`.
+    """
+
+    __tablename__ = "agent_events"
+    __table_args__ = (
+        Index("ix_agent_events_tenant_id", "tenant_id"),
+        Index("ix_agent_events_created_at", "created_at"),
+        Index(
+            "ix_agent_events_agent_room_seq",
+            "tenant_id",
+            "agent_id",
+            "room_id",
+            "room_seq",
+        ),
+        Index("ix_agent_events_agent_message_key", "agent_id", "message_key"),
+        ForeignKeyConstraint(
+            ["tenant_id", "agent_id"],
+            ["agents.tenant_id", "agents.id"],
+            name="fk_agent_events_agent",
+            ondelete="CASCADE",
+        ),
+    )
+
+    agent_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    seq: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    room_id: Mapped[str] = mapped_column(Text, nullable=False)
+    room_seq: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    message_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    type: Mapped[str] = mapped_column(Text, nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    notifiable: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class AgentEventHead(TenantScoped, Base):
+    """The first and the latest `agent_events.seq` given out for one agent.
+
+    `EventBuffer.enqueue` takes the next number from `last_seq` here rather
+    than from the highest row in `agent_events`, because the retention loop
+    deletes old rows. If the newest rows were deleted and their numbers handed
+    out again, a client that had already read up to one of those numbers
+    would treat the new event carrying it as one it had seen, and never
+    receive it.
+
+    `first_seq` is the number of the agent's first event. It is derived from
+    the boot number (`agent_event_boot`, shifted left 32 bits) of the process
+    that first read the agent's head or wrote its first event, whichever came
+    first, which puts it above every number an earlier server process could
+    have given a client. A client resuming from such a number is therefore
+    below everything stored here and is told it has a gap. The row is written
+    on that first read so that every process numbers the agent alike: before
+    it exists, processes of different boots would each answer from their own
+    boot number.
+    """
+
+    __tablename__ = "agent_event_heads"
+    __table_args__ = (
+        Index("ix_agent_event_heads_tenant_id", "tenant_id"),
+        ForeignKeyConstraint(
+            ["tenant_id", "agent_id"],
+            ["agents.tenant_id", "agents.id"],
+            name="fk_agent_event_heads_agent",
+            ondelete="CASCADE",
+        ),
+    )
+
+    agent_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    first_seq: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    last_seq: Mapped[int] = mapped_column(BigInteger, nullable=False)
+
+
+class AgentEventDrop(TenantScoped, Base):
+    """The newest `agent_events.seq` that retention deleted, per agent and room.
+
+    `EventBuffer.expire` writes `dropped_through` when it deletes an agent's
+    rows. A client that resumes from a number below it has missed events in
+    that room. The stream then opens with a gap that names the room, instead
+    of carrying on as if nothing were missing.
+    """
+
+    __tablename__ = "agent_event_drops"
+    __table_args__ = (
+        Index("ix_agent_event_drops_tenant_id", "tenant_id"),
+        ForeignKeyConstraint(
+            ["tenant_id", "agent_id"],
+            ["agents.tenant_id", "agents.id"],
+            name="fk_agent_event_drops_agent",
+            ondelete="CASCADE",
+        ),
+    )
+
+    agent_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    room_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    dropped_through: Mapped[int] = mapped_column(BigInteger, nullable=False)
+
+
+class AgentRoomRead(TenantScoped, Base):
+    """The baseline for an agent's unread count in one room, and who owns it.
+
+    `caught_up_seq` is the `messages.seq` the agent had read through the last
+    time it caught up on the room with `read_context`. The unaddressed
+    messages after it are the `missed_count` the agent is shown.
+
+    `occupant_id` is whoever is in the room for this agent now: a session id
+    when `occupant_is_session` is true, a connection id otherwise. Only a
+    catch-up by that occupant moves `caught_up_seq`, so a session that has
+    left the room cannot clear the count of the one that replaced it.
+
+    The row lives in Postgres so the count survives a restart and every
+    server process reports the same number.
+    """
+
+    __tablename__ = "agent_room_reads"
+    __table_args__ = (
+        Index("ix_agent_room_reads_tenant_id", "tenant_id"),
+        ForeignKeyConstraint(
+            ["tenant_id", "agent_id"],
+            ["agents.tenant_id", "agents.id"],
+            name="fk_agent_room_reads_agent",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "room_id"],
+            ["rooms.tenant_id", "rooms.id"],
+            name="fk_agent_room_reads_room",
+            ondelete="CASCADE",
+        ),
+    )
+
+    agent_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    room_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    caught_up_seq: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    occupant_id: Mapped[str] = mapped_column(Text, nullable=False)
+    occupant_is_session: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
+class AgentPollPosition(TenantScoped, Base):
+    """How far a long-polling client has read, stored on its behalf.
+
+    The long-poll endpoints take no position from the client, so the server
+    remembers one for each kind of poll. `reader_id` names the poll:
+    `legacy:all` for the agent-wide poll, `legacy:notifications` for the
+    notifications poll, and `legacy:room:<room_id>` for a single room's poll.
+    `position` is the state vector the next poll resumes from: `s` for the
+    agent's own events and `r:<room_id>` for each room's conversation.
+    """
+
+    __tablename__ = "agent_poll_positions"
+    __table_args__ = (
+        Index("ix_agent_poll_positions_tenant_id", "tenant_id"),
+        ForeignKeyConstraint(
+            ["tenant_id", "agent_id"],
+            ["agents.tenant_id", "agents.id"],
+            name="fk_agent_poll_positions_agent",
+            ondelete="CASCADE",
+        ),
+    )
+
+    agent_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    reader_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    position: Mapped[dict[str, int]] = mapped_column(JSONB, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
+agent_position_ticket_sequence = Sequence(
+    "agent_position_ticket",
+    metadata=Base.metadata,
+    # Ticket ids run from `TICKET_FLOOR` to `TICKET_CEILING`, above every own
+    # event number (`agent_events.seq`) a client may also hold. The server
+    # tells a ticket id from an own event number by size alone, and a client
+    # that keeps the highest number it has seen never discards a ticket as
+    # older. The range holds about four billion ids. The sequence starts again
+    # at the floor when it runs out, which reuses only ids whose tickets the
+    # retention loop deleted long before, since tickets last a day.
+    start=TICKET_FLOOR,
+    minvalue=TICKET_FLOOR,
+    maxvalue=TICKET_CEILING,
+    cycle=True,
+)
+
+
+class AgentPositionTicket(TenantScoped, Base):
+    """A stored position, identified by a single number, for older clients.
+
+    A reader's position is a state vector: `s` for how far it has read the
+    agent's own events (`agent_events`) and `r:<room_id>` for how far it has
+    read each room's conversation (`messages`). Clients on agent-protocol
+    revision 8 or older can hold only one integer. When such a client reads the
+    whole conversation, the server stores the position after each event it
+    sends as a row here and sends the row's `id` as the event id. When the
+    client resumes or beats with that id, the server looks the position up
+    here.
+
+    Clients on revision 9 send the position itself and never cause a row to
+    be written. The retention loop deletes tickets older than
+    `agent_event_retention_seconds`, the same window as the events they
+    point into.
+    """
+
+    __tablename__ = "agent_position_tickets"
+    __table_args__ = (
+        Index("ix_agent_position_tickets_tenant_id", "tenant_id"),
+        Index("ix_agent_position_tickets_created_at", "created_at"),
+        ForeignKeyConstraint(
+            ["tenant_id", "agent_id"],
+            ["agents.tenant_id", "agents.id"],
+            name="fk_agent_position_tickets_agent",
+            ondelete="CASCADE",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(
+        BigInteger,
+        agent_position_ticket_sequence,
+        primary_key=True,
+        server_default=agent_position_ticket_sequence.next_value(),
+    )
+    agent_id: Mapped[str] = mapped_column(Text, nullable=False)
+    position: Mapped[dict[str, int]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
 class MediaBlob(TenantScoped, Base):
     """The bytes behind an attachment.
 
@@ -2398,6 +2680,27 @@ event.listen(
     DDL(DROP_NOTIFY_TRIGGER).execute_if(dialect="postgresql"),
 )
 
+# These attach the trigger that sends a Postgres `NOTIFY` on channel
+# `switch_agent_event` for every new `agent_events` row, so the server process
+# waiting to deliver that agent's events wakes up. They run only when
+# `metadata.create_all` builds the schema, which the tests do. Real databases
+# get the same trigger from migration a7e3c1d9f204. The SQL lives in
+# `db/agent_event_notify_ddl.py`.
+event.listen(
+    AgentEventRow.__table__,
+    "after_create",
+    DDL(CREATE_AGENT_EVENT_NOTIFY_FUNCTION).execute_if(dialect="postgresql"),
+)
+event.listen(
+    AgentEventRow.__table__,
+    "after_create",
+    DDL(CREATE_AGENT_EVENT_NOTIFY_TRIGGER).execute_if(dialect="postgresql"),
+)
+event.listen(
+    AgentEventRow.__table__,
+    "before_drop",
+    DDL(DROP_AGENT_EVENT_NOTIFY_TRIGGER).execute_if(dialect="postgresql"),
+)
 
 # ── Session activity ──────────────────────────────────────────────────────────
 #

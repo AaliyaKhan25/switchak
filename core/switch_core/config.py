@@ -663,6 +663,11 @@ class SwitchConfig(BaseSettings):
     # controller access token's reads (its controller row, and the agent row
     # it acts as), which a revocation or binding change also drops at once.
     agent_auth_cache_ttl_seconds: float = 5.0
+    # How long a row in `agent_events` (one of an agent's own events) is kept
+    # before the retention loop deletes it. An agent that reconnects within
+    # this window resumes without a gap; one away for longer is told it missed
+    # events.
+    agent_event_retention_seconds: float = Field(default=24 * 60 * 60, gt=0)
     # Bound on the memo. One entry per distinct live token; the oldest is
     # evicted past this, so a flood of tokens cannot grow the process.
     agent_auth_cache_max_entries: int = 4096

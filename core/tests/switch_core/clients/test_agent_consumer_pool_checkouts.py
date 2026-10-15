@@ -7,9 +7,13 @@ turned one Slack message into twenty concurrent checkouts out of forty, and the
 addressed client alone took up to nine more. That is the burst that pushed the
 pool to its ceiling and started failing heartbeats.
 
-The contract is one checkout per client per message, and none at all for a
-message that needs no lookup — plus, as with the room service, no session held
-open while the client posts to Matrix.
+The contract is one lookup checkout per client per message, and none at all
+for a message that needs no lookup — plus, as with the room service, no session
+held open while the client posts to Matrix. Queuing a message for the agent it
+addresses is one more, its own short transaction on the db-buffer, taken after
+the lookup has returned its connection rather than alongside it. Nothing else
+is queued: the rest of the room is read from the room's log by whoever wants
+it, so a client that is not addressed writes nothing.
 """
 
 from __future__ import annotations
@@ -34,8 +38,14 @@ from switch_core.db.stores.room_role_store import RoomRoleStore
 from switch_core.db.stores.room_store import RoomStore
 from switch_core.delivery.addressing import AddressingResolver
 from switch_core.transport import InboundMessage, RoomRef
+from tests.db_buffer import db_buffer_on
 
 TRANSPORT_ROOM_ID = "!r:test"
+
+# The db-buffer's write, in a transaction of its own: made only by the client
+# whose agent the message addresses. Chatter, a message for somebody else and a
+# refused one stay in the room's log and cost the client no write.
+ENQUEUE = 1
 
 
 class _CountingSessionFactory:
@@ -46,6 +56,7 @@ class _CountingSessionFactory:
         self._inner = inner
         self.opened = 0
         self.live = 0
+        self.peak = 0
 
     def __call__(self) -> Any:
         self.opened += 1
@@ -59,6 +70,7 @@ class _Tracked:
 
     async def __aenter__(self) -> AsyncSession:
         self._tracker.live += 1
+        self._tracker.peak = max(self._tracker.peak, self._tracker.live)
         return await self._inner.__aenter__()  # type: ignore[no-any-return]
 
     async def __aexit__(self, *exc: object) -> bool:
@@ -163,9 +175,7 @@ def _client(
         return "$sent"
 
     actor.send_message = _send_message  # type: ignore[assignment, method-assign]
-    client._event_buffer = SimpleNamespace(  # type: ignore[assignment]
-        enqueue=lambda *_a, **_k: None
-    )
+    client._event_buffer = db_buffer_on(counting)  # type: ignore[arg-type]
     return client
 
 
@@ -191,7 +201,8 @@ class TestInboundMessageCheckouts:
     ) -> None:
         # The common case in a busy room, and the one multiplied by every agent
         # in it: no `@`, so there is nothing an alias or a role lease could
-        # match and no reason to touch the database at all.
+        # match and no lookup to make. Nor is it queued: it addresses nobody,
+        # so it is the room's conversation, read from the room's log.
         room_id, agents = await _seed(session_factory, names=["member"])
         counting = _CountingSessionFactory(session_factory)
         client = _client(counting, agents["member"], room_id)
@@ -200,10 +211,11 @@ class TestInboundMessageCheckouts:
 
         assert counting.opened == 0
 
-    async def test_an_at_message_for_somebody_else_costs_one(
+    async def test_an_at_message_for_somebody_else_costs_one_lookup(
         self, session_factory: async_sessionmaker[AsyncSession]
     ) -> None:
-        # Was two: the room alias and the role lease each took a session.
+        # Was two: the room alias and the role lease each took a session. The
+        # lookup finds the message is not for this agent, so nothing is queued.
         room_id, agents = await _seed(session_factory, names=["member", "other"])
         counting = _CountingSessionFactory(session_factory)
         client = _client(counting, agents["member"], room_id)
@@ -212,7 +224,7 @@ class TestInboundMessageCheckouts:
 
         assert counting.opened == 1
 
-    async def test_being_addressed_and_offline_still_costs_one(
+    async def test_being_addressed_and_offline_still_costs_one_lookup(
         self, session_factory: async_sessionmaker[AsyncSession]
     ) -> None:
         # The expensive path: addressing policy, liveness, and the whole
@@ -223,7 +235,7 @@ class TestInboundMessageCheckouts:
 
         await client.on_message(_room(), _message("@member can you look at this"))
 
-        assert counting.opened == 1
+        assert counting.opened == 1 + ENQUEUE
         assert len(client.sent) == 1  # type: ignore[attr-defined]
 
     async def test_no_session_is_open_while_the_auto_reply_is_posted(
@@ -240,7 +252,7 @@ class TestInboundMessageCheckouts:
 
         assert [live for _body, live in client.sent] == [0]  # type: ignore[attr-defined]
 
-    async def test_a_restricted_agent_refusing_a_sender_costs_one(
+    async def test_a_restricted_agent_refusing_a_sender_costs_one_lookup(
         self, session_factory: async_sessionmaker[AsyncSession]
     ) -> None:
         room_id, agents = await _seed(session_factory, names=["member"])
@@ -256,10 +268,11 @@ class TestInboundMessageCheckouts:
 
         await client.on_message(_room(), _message("@member you there?"))
 
+        # The refusal leaves the message as chatter, so nothing is queued.
         assert counting.opened == 1
         assert [live for _body, live in client.sent] == [0]  # type: ignore[attr-defined]
 
-    async def test_an_alias_tag_costs_one(
+    async def test_an_alias_tag_costs_one_lookup(
         self, session_factory: async_sessionmaker[AsyncSession]
     ) -> None:
         # Reached only after the alias lookup misses on name, so this is the
@@ -273,15 +286,17 @@ class TestInboundMessageCheckouts:
 
         await client.on_message(_room(), _message("@fixer please look"))
 
-        assert counting.opened == 1
+        assert counting.opened == 1 + ENQUEUE
         assert len(client.sent) == 1  # type: ignore[attr-defined]
 
-    async def test_a_ten_agent_room_costs_ten(
+    async def test_a_ten_agent_room_costs_ten_lookups(
         self, session_factory: async_sessionmaker[AsyncSession]
     ) -> None:
         # The burst, end to end. One message, every client in the room handling
-        # it at once: ten slots out of forty, where it used to be twenty plus
-        # the addressed client's own handful.
+        # it at once: ten lookups, where it used to be twenty plus the addressed
+        # client's own handful. Only the client the message addresses queues
+        # it for its agent, after its lookup has let go, so it never holds two
+        # slots; the other nine leave it in the room's log.
         names = [f"a{i}" for i in range(10)]
         room_id, agents = await _seed(session_factory, names=names)
         counting = _CountingSessionFactory(session_factory)
@@ -290,4 +305,5 @@ class TestInboundMessageCheckouts:
         for client in clients:
             await client.on_message(_room(), _message("@a3 can you take this"))
 
-        assert counting.opened == 10
+        assert counting.opened == 10 + ENQUEUE
+        assert counting.peak == 1

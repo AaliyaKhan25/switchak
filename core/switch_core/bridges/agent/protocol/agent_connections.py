@@ -45,6 +45,7 @@ from switch_core.bridges.agent.protocol.liveness import (
 from switch_core.bridges.agent.protocol.liveness import TAKEN_OVER as TAKEN_OVER
 from switch_core.bridges.agent.protocol.liveness import CloseCode as CloseCode
 from switch_core.bridges.agent.protocol.liveness import Closure as Closure
+from switch_core.bridges.agent.protocol.positions import OWN_EVENTS, Position
 from switch_core.logging_context import log_context
 from switch_core.observability.catalogue import (
     AGENT_CONNECTIONS_EXPIRED,
@@ -93,6 +94,12 @@ SESSION_COMMAND_PROTOCOL_REVISION = 5
 # or session placement on its connection was taken over by another connection.
 ROOM_RELEASED_PROTOCOL_REVISION = 6
 
+# From this agent-protocol revision a client tracks a position (one number per
+# source, see `positions.py`) instead of a single number. It opens with
+# `start_at` and reads `position` from each event. A client on an older
+# revision is sent a single number.
+POSITIONS_PROTOCOL_REVISION = 9
+
 # Upper bound on simultaneous connections per agent. Runaway growth becomes a
 # visible error instead of quiet resource creep.
 MAX_CONNECTIONS_PER_AGENT = 32
@@ -114,7 +121,7 @@ class UnknownConnectionError(ConnectionError_):
     def __init__(self, connection_id: str) -> None:
         super().__init__(
             f"connection {connection_id} is not open; reconnect and resume from "
-            "your cursor"
+            "where you got to"
         )
         self.connection_id = connection_id
 
@@ -156,7 +163,7 @@ class SupersededConnectionError(ConnectionError_):
         super().__init__(
             f"connection {connection_id} was reopened since incarnation "
             f"{presented} and is now at {current}; another client holds it, so "
-            "this heartbeat was refused and its cursor was not applied"
+            "this heartbeat was refused"
         )
         self.connection_id = connection_id
         self.presented = presented
@@ -391,7 +398,10 @@ class AgentConnection:
     scope: Scope
     delivery_filter: DeliveryFilter
     spawn_capable: bool
-    cursor: int
+    # How far the server has sent events to this connection, as a position
+    # (`positions.py`). It holds the agent's own events (`agent_events`) and,
+    # for a connection that receives every room message, each room it covers.
+    position: Position
     last_beat: float
     opened_at: float
     # Rooms this connection has subscribed to. A `single` connection holds at
@@ -423,9 +433,47 @@ class AgentConnection:
     # Rooms another connection took off this one, not yet written to its
     # stream, with the session of this connection that was placed there.
     released_rooms: dict[str, str | None] = field(default_factory=dict)
+    # The ticket last sent to this connection's client. Only a client that
+    # receives every room message but holds a single number is sent tickets. A
+    # ticket is the id of a row in `agent_position_tickets` that stores a full
+    # position, so the client can resume from it by sending back one number.
+    ticket: int = 0
+    # True when the client asked to resume from a ticket the server does not
+    # have, because it expired or never existed. The stream then opens with a
+    # gap frame, and `resume_requested` holds the number the client sent so the
+    # gap can report it.
+    resume_lost: bool = False
+    resume_requested: int = 0
 
     def is_alive(self, now: float) -> bool:
         return self.closure is None and (now - self.last_beat) < HEARTBEAT_TTL_SECONDS
+
+    @property
+    def reads_conversation(self) -> bool:
+        """Whether this connection asked for every room message (`filter=all`),
+        read from `messages`, as well as the agent's own events."""
+        return self.delivery_filter == "all"
+
+    @property
+    def speaks_positions(self) -> bool:
+        """Whether the client is on agent-protocol revision 9 or later, and so
+        sends and receives positions instead of a single number."""
+        speaks = self.declaration.speaks
+        return speaks is not None and speaks >= POSITIONS_PROTOCOL_REVISION
+
+    @property
+    def cursor(self) -> int:
+        """The single number sent in `cursor` fields, for clients that predate
+        positions.
+
+        A client that receives every room message and does not speak positions
+        is given the ticket last sent to it, because one number cannot hold its
+        place in several rooms. Every other client is given its place in the
+        agent's own events, the `s` entry of its position.
+        """
+        if self.reads_conversation and not self.speaks_positions:
+            return self.ticket
+        return self.position.get(OWN_EVENTS, 0)
 
 
 # The `(transport, client)` an agent run by an agents controller counts under:
@@ -503,7 +551,7 @@ class AgentConnectionRegistry:
         scope: Scope,
         delivery_filter: DeliveryFilter,
         spawn_capable: bool,
-        cursor: int,
+        position: Position,
         declaration: ClientDeclaration,
         expected_generation: int | None,
         transport: Transport = "websocket",
@@ -561,7 +609,8 @@ class AgentConnectionRegistry:
             existing.scope = scope
             existing.delivery_filter = delivery_filter
             existing.spawn_capable = spawn_capable
-            existing.cursor = cursor
+            existing.position = dict(position)
+            existing.ticket = 0
             existing.last_beat = time.monotonic()
             existing.closure = None
             existing.stream_attached = True
@@ -597,7 +646,7 @@ class AgentConnectionRegistry:
             scope=scope,
             delivery_filter=delivery_filter,
             spawn_capable=spawn_capable,
-            cursor=cursor,
+            position=dict(position),
             last_beat=now,
             opened_at=now,
             stream_attached=True,
@@ -752,10 +801,13 @@ class AgentConnectionRegistry:
         self,
         agent_id: str,
         connection_id: str,
-        cursor: int,
         generation: int | None,
     ) -> AgentConnection:
-        """Record a client tick and its cursor.
+        """Record a client tick: the client is still there.
+
+        A tick says nothing about how far the client has read. The connection's
+        position is moved only by the stream, as it sends, and a client that
+        drops resumes from the position it sends when it reopens.
 
         Rejects a tick for a connection with no stream: the client is alive but
         receiving nothing, and must be told to reopen rather than left believing
@@ -765,9 +817,9 @@ class AgentConnectionRegistry:
         actually attached to. Sharing an id is what makes takeover work, and it
         is also what makes a displaced client's tick indistinguishable from the
         winner's — same id, same token. Unfenced, the loser keeps the
-        connection alive on the winner's behalf and, because a higher cursor is
-        adopted, drags the winner past events it was never sent. Nothing is
-        mutated before the check, so a refused tick costs the winner nothing.
+        connection alive on the winner's behalf, so the winner is never told it
+        was dropped. Nothing is mutated before the check, so a refused tick
+        costs the winner nothing.
 
         `None` is a tick that cannot be fenced, and it is accepted only from a
         connection whose holder is a client built before the fence existed.
@@ -793,8 +845,6 @@ class AgentConnectionRegistry:
             raise NoStreamAttachedError(connection_id)
         conn.last_beat = time.monotonic()
         conn.beats += 1
-        if cursor > conn.cursor:
-            conn.cursor = cursor
         return conn
 
     def require(self, agent_id: str, connection_id: str) -> AgentConnection:

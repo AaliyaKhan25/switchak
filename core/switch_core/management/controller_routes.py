@@ -430,7 +430,7 @@ async def attach_stream(
     )
 
 
-def record_beat(
+async def record_beat(
     *,
     principal: ControllerPrincipal,
     protocol: AgentCore,
@@ -454,11 +454,16 @@ def record_beat(
         binding = presence.binding(agent_id)
         if agent_id not in agents or binding is None:
             continue
-        # Clamped to the head, as an agent's own beat is: a higher number
-        # belongs to a previous life of this process.
-        confirmed = min(cursor, protocol.event_buffer.head(agent_id))
-        protocol.event_buffer.confirm(agent_id, presence.holder_id(binding), confirmed)
-        presence.resume_from(conn, agent_id, confirmed)
+        sent = conn.sent_cursors.get(agent_id)
+        if sent is None:
+            continue
+        # The controller reports how far it has read each agent's own events.
+        # It cannot have read further than this connection has sent it. A
+        # larger number comes from another history, a database restored from a
+        # backup or another server, and keeping it would make the next stream
+        # on this connection resume past events the agent never received. The
+        # bound is kept in memory, so a beat costs no database query.
+        presence.resume_from(conn, agent_id, min(cursor, sent))
     return sorted(agents)
 
 
@@ -627,7 +632,7 @@ async def _receive_pongs(
         if not isinstance(message, dict) or message.get("type") != "pong":
             continue
         try:
-            record_beat(
+            await record_beat(
                 principal=principal,
                 protocol=protocol,
                 connection_id=connection_id,

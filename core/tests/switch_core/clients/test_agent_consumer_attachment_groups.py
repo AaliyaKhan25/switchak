@@ -6,11 +6,26 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 import switch_core.clients.agent_consumer as ac
+from switch_core.bridges.agent.protocol.event_buffer import EventBuffer
+from switch_core.bridges.agent.protocol.types import AgentEvent
 from switch_core.clients.agent_consumer import AgentConsumer, _GateOutcome
 from switch_core.clients.room_meta import RoomMeta
+from switch_core.db.models import TENANT_ZERO_ID, AgentEventRow
+from switch_core.db.session_scope import tenant_session
 from switch_core.transport import InboundMedia, RoomRef
+from tests.db_buffer import seed_agent
+
+AGENT = "agent-1"
+
+
+@pytest.fixture(autouse=True)
+async def _agent_row(session_factory: async_sessionmaker[AsyncSession]) -> None:
+    """The agent the consumer queues for, so its events have a row to belong to."""
+    await seed_agent(session_factory, AGENT)
 
 
 def _media_event(
@@ -21,6 +36,7 @@ def _media_event(
     msgtype: str = "m.image",
     group: dict[str, Any] | None = None,
     event_id: str = "$evt",
+    seq: int = 0,
 ) -> InboundMedia:
     content: dict[str, Any] = {
         "msgtype": msgtype,
@@ -47,6 +63,7 @@ def _media_event(
         mimetype=mimetype,
         size=5,
         group=group,
+        seq=seq,
     )
 
 
@@ -64,16 +81,18 @@ class _FakeMessageTelemetry:
         self.addressed.append(kwargs)
 
 
-class _FakeQueue:
-    def __init__(self) -> None:
-        self.events: list[Any] = []
+async def _events(client: SimpleNamespace) -> list[AgentEvent]:
+    """What the consumer queued for its agent, read back from the db-buffer.
 
-    def enqueue(self, _agent_id: str, _room_id: str, event: Any) -> None:
-        self.events.append(event)
+    Only what is for the agent is queued; the rest of the room is read from
+    the room's log by whoever wants it. So a test about what a post becomes
+    addresses the post to the agent, in its caption (part 0's body).
+    """
+    buffer: EventBuffer = client._event_buffer
+    return [item.event for item in await buffer.read_from(TENANT_ZERO_ID, AGENT, 0)]
 
 
-def _fake_client() -> SimpleNamespace:
-    queue = _FakeQueue()
+def _fake_client(buffer: EventBuffer) -> SimpleNamespace:
     meta = RoomMeta(room_id="room-1", name="Room", bridge_id="bridge-1")
 
     async def _resolve_room_meta(_transport_room_id: str) -> RoomMeta:
@@ -99,10 +118,10 @@ def _fake_client() -> SimpleNamespace:
         return True
 
     ns = SimpleNamespace(
-        agent=SimpleNamespace(id="agent-1", name="agent-a", metadata_=None),
-        tenant_id="tenant-1",
+        agent=SimpleNamespace(id=AGENT, name="agent-a", metadata_=None),
+        tenant_id=TENANT_ZERO_ID,
         session_factory=_session_factory,
-        _event_buffer=queue,
+        _event_buffer=buffer,
         _message_telemetry=_FakeMessageTelemetry(),
         _triggered_by_auto_reply=AgentConsumer._triggered_by_auto_reply,
         _attachment_groups={},
@@ -113,7 +132,6 @@ def _fake_client() -> SimpleNamespace:
         _gate_addressed=_gate_addressed,
         _is_available=_is_available,
         availability_checks=0,
-        queue=queue,
     )
     ns._emit_media = AgentConsumer._emit_media.__get__(ns)
     ns._report_addressed = AgentConsumer._report_addressed.__get__(ns)
@@ -133,8 +151,8 @@ def _room() -> RoomRef:
     return RoomRef(room_id="!room:s")
 
 
-async def test_grouped_media_coalesces_into_one_event() -> None:
-    client = _fake_client()
+async def test_grouped_media_coalesces_into_one_event(db_buffer: EventBuffer) -> None:
+    client = _fake_client(db_buffer)
     parts = [
         ("cat.png", "image/png", "m.image"),
         ("notes.md", "text/markdown", "m.file"),
@@ -146,7 +164,7 @@ async def test_grouped_media_coalesces_into_one_event() -> None:
             client,
             _room(),
             _media_event(
-                body="three files" if index == 0 else name,
+                body="@agent-a three files" if index == 0 else name,
                 filename=name if index == 0 else None,
                 mimetype=mimetype,
                 msgtype=msgtype,
@@ -155,22 +173,22 @@ async def test_grouped_media_coalesces_into_one_event() -> None:
             ),
         )
         if index < 2:
-            assert client.queue.events == []
+            assert await _events(client) == []
 
-    assert len(client.queue.events) == 1
-    payload = client.queue.events[0].payload
+    assert len(await _events(client)) == 1
+    payload = (await _events(client))[0].payload
     assert [a.filename for a in payload.attachments] == [
         "cat.png",
         "notes.md",
         "data.csv",
     ]
-    assert payload.body == "three files"
+    assert payload.body == "@agent-a three files"
     assert client._attachment_groups == {}
     assert client._attachment_group_timers == {}
 
 
-async def test_grouped_media_coalesces_out_of_order() -> None:
-    client = _fake_client()
+async def test_grouped_media_coalesces_out_of_order(db_buffer: EventBuffer) -> None:
+    client = _fake_client(db_buffer)
     order = [1, 0, 2]
     names = {0: "a.png", 1: "b.png", 2: "c.png"}
 
@@ -179,61 +197,100 @@ async def test_grouped_media_coalesces_out_of_order() -> None:
             client,
             _room(),
             _media_event(
-                body="captioned" if index == 0 else names[index],
+                body="@agent-a captioned" if index == 0 else names[index],
                 filename=names[index] if index == 0 else None,
                 event_id=f"$part-{index}",
                 group={"id": "grp-2", "index": index, "total": 3},
             ),
         )
 
-    assert len(client.queue.events) == 1
-    payload = client.queue.events[0].payload
+    assert len(await _events(client)) == 1
+    payload = (await _events(client))[0].payload
     # Sorted by group index, not arrival order.
     assert [a.filename for a in payload.attachments] == ["a.png", "b.png", "c.png"]
-    assert payload.body == "captioned"
+    assert payload.body == "@agent-a captioned"
     assert client._attachment_groups == {}
     assert client._attachment_group_timers == {}
 
 
-async def test_ungrouped_media_emits_immediately() -> None:
-    client = _fake_client()
+async def test_a_group_is_kept_as_the_one_message_it_was_posted_as(
+    session_factory: async_sessionmaker[AsyncSession], db_buffer: EventBuffer
+) -> None:
+    """Each part is a row of its own in the room's log, and the conversation
+    read from there leaves out a row whose message the agent already has, by
+    the id the message is known by: for a part, its group's. So the group is
+    kept under the group's id, at the part furthest on in the room. Kept under
+    one part's id, the other parts would reach the agent again as
+    conversation."""
+    client = _fake_client(db_buffer)
+    # The part that completes the group is not the furthest on.
+    for index, seq in [(0, 11), (2, 13), (1, 12)]:
+        await AgentConsumer.on_media(
+            client,
+            _room(),
+            _media_event(
+                body="@agent-a three" if index == 0 else f"f{index}.png",
+                filename="f0.png" if index == 0 else None,
+                event_id=f"$part-{index}",
+                group={"id": "grp-key", "index": index, "total": 3},
+                seq=seq,
+            ),
+        )
+
+    async with tenant_session(session_factory, TENANT_ZERO_ID) as session:
+        kept = (
+            await session.execute(
+                select(AgentEventRow.room_seq, AgentEventRow.message_key).where(
+                    AgentEventRow.agent_id == AGENT
+                )
+            )
+        ).all()
+    assert [tuple(row) for row in kept] == [(13, "grp-key")]
+
+
+async def test_ungrouped_media_emits_immediately(db_buffer: EventBuffer) -> None:
+    client = _fake_client(db_buffer)
 
     await AgentConsumer.on_media(
-        client, _room(), _media_event(body="cat.png", mimetype="image/png")
+        client,
+        _room(),
+        _media_event(body="@agent-a a cat", filename="cat.png", mimetype="image/png"),
     )
 
-    assert len(client.queue.events) == 1
-    payload = client.queue.events[0].payload
+    assert len(await _events(client)) == 1
+    payload = (await _events(client))[0].payload
     assert [a.filename for a in payload.attachments] == ["cat.png"]
-    assert payload.body == "cat.png"
+    assert payload.body == "@agent-a a cat"
     assert client._attachment_groups == {}
     assert client._attachment_group_timers == {}
 
 
-async def test_incomplete_group_flushes_with_disclosed_notice() -> None:
+async def test_incomplete_group_flushes_with_disclosed_notice(
+    db_buffer: EventBuffer,
+) -> None:
     original = ac.ATTACHMENT_GROUP_TIMEOUT_SECONDS
     ac.ATTACHMENT_GROUP_TIMEOUT_SECONDS = 0.01
     try:
-        client = _fake_client()
+        client = _fake_client(db_buffer)
         for index, name in [(0, "cat.png"), (1, "notes.md")]:
             await AgentConsumer.on_media(
                 client,
                 _room(),
                 _media_event(
-                    body="two of three" if index == 0 else name,
+                    body="@agent-a two of three" if index == 0 else name,
                     filename=name if index == 0 else None,
                     event_id=f"$part-{index}",
                     group={"id": "grp-3", "index": index, "total": 3},
                 ),
             )
-        assert client.queue.events == []
+        assert await _events(client) == []
 
         await asyncio.sleep(0.15)
     finally:
         ac.ATTACHMENT_GROUP_TIMEOUT_SECONDS = original
 
-    assert len(client.queue.events) == 1
-    payload = client.queue.events[0].payload
+    assert len(await _events(client)) == 1
+    payload = (await _events(client))[0].payload
     assert [a.filename for a in payload.attachments] == ["cat.png", "notes.md"]
     assert "two of three" in payload.body
     assert "incomplete attachment group: 2 of 3" in payload.body
@@ -242,10 +299,12 @@ async def test_incomplete_group_flushes_with_disclosed_notice() -> None:
     assert client._attachment_group_timers == {}
 
 
-async def test_group_is_anchored_on_part_zero_not_the_completing_part() -> None:
+async def test_group_is_anchored_on_part_zero_not_the_completing_part(
+    db_buffer: EventBuffer,
+) -> None:
     """The coalesced message must carry part 0's event id, so a reply threads
     off the canonical first event rather than whichever part landed last."""
-    client = _fake_client()
+    client = _fake_client(db_buffer)
     # Part 0 arrives FIRST, so a later part completes the group — otherwise the
     # completing event happens to be part 0 and the assertion proves nothing.
     for index, name in [(0, "a.png"), (1, "b.md"), (2, "c.csv")]:
@@ -253,29 +312,31 @@ async def test_group_is_anchored_on_part_zero_not_the_completing_part() -> None:
             client,
             _room(),
             _media_event(
-                body="three" if index == 0 else name,
+                body="@agent-a three" if index == 0 else name,
                 filename=name if index == 0 else None,
                 event_id=f"$part-{index}",
                 group={"id": "grp-anchor", "index": index, "total": 3},
             ),
         )
 
-    assert len(client.queue.events) == 1
+    assert len(await _events(client)) == 1
     # Part 2 completed the group, but part 0 anchors the payload.
-    assert client.queue.events[0].payload.message_id == "$part-0"
+    assert (await _events(client))[0].payload.message_id == "$part-0"
 
 
-async def test_incomplete_group_is_anchored_on_part_zero() -> None:
+async def test_incomplete_group_is_anchored_on_part_zero(
+    db_buffer: EventBuffer,
+) -> None:
     original = ac.ATTACHMENT_GROUP_TIMEOUT_SECONDS
     ac.ATTACHMENT_GROUP_TIMEOUT_SECONDS = 0.01
     try:
-        client = _fake_client()
+        client = _fake_client(db_buffer)
         for index, name in [(0, "a.png"), (2, "c.csv")]:
             await AgentConsumer.on_media(
                 client,
                 _room(),
                 _media_event(
-                    body="anchored" if index == 0 else name,
+                    body="@agent-a anchored" if index == 0 else name,
                     filename=name if index == 0 else None,
                     event_id=f"$part-{index}",
                     group={"id": "grp-anchor-2", "index": index, "total": 3},
@@ -285,12 +346,12 @@ async def test_incomplete_group_is_anchored_on_part_zero() -> None:
     finally:
         ac.ATTACHMENT_GROUP_TIMEOUT_SECONDS = original
 
-    assert len(client.queue.events) == 1
-    assert client.queue.events[0].payload.message_id == "$part-0"
+    assert len(await _events(client)) == 1
+    assert (await _events(client))[0].payload.message_id == "$part-0"
 
 
 async def test_group_timeout_bounds_the_group_not_the_gap_between_parts(
-    monkeypatch: Any,
+    monkeypatch: Any, db_buffer: EventBuffer
 ) -> None:
     """The safety-net timer is armed once per group. A batch dribbling in just
     under the timeout must not be able to hold the buffer open indefinitely.
@@ -310,12 +371,12 @@ async def test_group_timeout_bounds_the_group_not_the_gap_between_parts(
         return SimpleNamespace(cancel=lambda: None)
 
     monkeypatch.setattr(asyncio.get_running_loop(), "call_later", call_later)
-    client = _fake_client()
+    client = _fake_client(db_buffer)
     await AgentConsumer.on_media(
         client,
         _room(),
         _media_event(
-            body="slow batch",
+            body="@agent-a slow batch",
             filename="a.png",
             event_id="$part-0",
             group={"id": "grp-slow", "index": 0, "total": 4},
@@ -344,8 +405,8 @@ async def test_group_timeout_bounds_the_group_not_the_gap_between_parts(
     await asyncio.gather(*(asyncio.all_tasks() - running))
 
     # Fired on the group's own deadline rather than being extended forever.
-    assert len(client.queue.events) == 1
-    payload = client.queue.events[0].payload
+    assert len(await _events(client)) == 1
+    payload = (await _events(client))[0].payload
     assert "incomplete attachment group: 3 of 4" in payload.body
     assert client._attachment_groups == {}
     assert client._attachment_group_timers == {}
@@ -361,8 +422,10 @@ class TestAddressingSurvivesCoalescing:
     consumer, correctly, ignored it.
     """
 
-    async def test_a_mention_on_part_zero_addresses_the_whole_group(self) -> None:
-        client = _fake_client()
+    async def test_a_mention_on_part_zero_addresses_the_whole_group(
+        self, db_buffer: EventBuffer
+    ) -> None:
+        client = _fake_client(db_buffer)
         for index, name in [(0, "one.png"), (1, "two.png")]:
             await AgentConsumer.on_media(
                 client,
@@ -375,16 +438,18 @@ class TestAddressingSurvivesCoalescing:
                 ),
             )
 
-        assert len(client.queue.events) == 1
-        payload = client.queue.events[0].payload
+        assert len(await _events(client)) == 1
+        payload = (await _events(client))[0].payload
         assert payload.addressed is True
         # The text travels with the images rather than being left on the part
         # it arrived on.
         assert payload.body == "@agent-a look at these"
         assert [a.filename for a in payload.attachments] == ["one.png", "two.png"]
 
-    async def test_it_holds_when_the_captioned_part_arrives_last(self) -> None:
-        client = _fake_client()
+    async def test_it_holds_when_the_captioned_part_arrives_last(
+        self, db_buffer: EventBuffer
+    ) -> None:
+        client = _fake_client(db_buffer)
         for index, name in [(1, "two.png"), (0, "one.png")]:
             await AgentConsumer.on_media(
                 client,
@@ -397,11 +462,15 @@ class TestAddressingSurvivesCoalescing:
                 ),
             )
 
-        assert client.queue.events[0].payload.addressed is True
+        assert (await _events(client))[0].payload.addressed is True
 
-    async def test_a_group_that_mentions_nobody_stays_unaddressed(self) -> None:
-        # The fix must carry addressing across the group, not assert it.
-        client = _fake_client()
+    async def test_a_group_that_mentions_nobody_stays_unaddressed(
+        self, db_buffer: EventBuffer
+    ) -> None:
+        # The fix must carry addressing across the group, not assert it. A
+        # group for nobody is the room's conversation, so nothing is queued for
+        # the agent: it is read from the room's log by a reader that wants it.
+        client = _fake_client(db_buffer)
         for index, name in [(0, "one.png"), (1, "two.png")]:
             await AgentConsumer.on_media(
                 client,
@@ -414,15 +483,18 @@ class TestAddressingSurvivesCoalescing:
                 ),
             )
 
-        assert client.queue.events[0].payload.addressed is False
+        assert await _events(client) == []
+        assert client._attachment_groups == {}
 
-    async def test_an_incomplete_group_is_still_addressed(self) -> None:
+    async def test_an_incomplete_group_is_still_addressed(
+        self, db_buffer: EventBuffer
+    ) -> None:
         # A batch that never completes is delivered by the safety net, and
         # losing a file is no reason to also lose who it was for.
         original = ac.ATTACHMENT_GROUP_TIMEOUT_SECONDS
         ac.ATTACHMENT_GROUP_TIMEOUT_SECONDS = 0.01
         try:
-            client = _fake_client()
+            client = _fake_client(db_buffer)
             await AgentConsumer.on_media(
                 client,
                 _room(),
@@ -446,25 +518,29 @@ class TestAddressingSurvivesCoalescing:
         finally:
             ac.ATTACHMENT_GROUP_TIMEOUT_SECONDS = original
 
-        assert len(client.queue.events) == 1
-        payload = client.queue.events[0].payload
+        assert len(await _events(client)) == 1
+        payload = (await _events(client))[0].payload
         assert payload.addressed is True
         assert "@agent-a two of three" in payload.body
 
-    async def test_a_single_attachment_is_unaffected(self) -> None:
+    async def test_a_single_attachment_is_unaffected(
+        self, db_buffer: EventBuffer
+    ) -> None:
         # One screenshot always worked; it takes no group and no buffering.
-        client = _fake_client()
+        client = _fake_client(db_buffer)
         await AgentConsumer.on_media(
             client, _room(), _media_event(body="@agent-a one picture")
         )
 
-        assert client.queue.events[0].payload.addressed is True
+        assert (await _events(client))[0].payload.addressed is True
 
 
-async def test_a_grouped_post_addressed_to_the_agent_is_reported_once() -> None:
+async def test_a_grouped_post_addressed_to_the_agent_is_reported_once(
+    db_buffer: EventBuffer,
+) -> None:
     """Three files in one post are one message asked of the agent, not three:
     the report follows the coalesced payload, not the parts."""
-    client = _fake_client()
+    client = _fake_client(db_buffer)
     for index in range(3):
         await AgentConsumer.on_media(
             client,
@@ -478,7 +554,7 @@ async def test_a_grouped_post_addressed_to_the_agent_is_reported_once() -> None:
 
     assert client._message_telemetry.addressed == [
         {
-            "tenant_id": "tenant-1",
+            "tenant_id": TENANT_ZERO_ID,
             "room_id": "room-1",
             "sender_transport_user_id": "@alice:s",
             "from_platform": False,
@@ -490,14 +566,16 @@ async def test_a_grouped_post_addressed_to_the_agent_is_reported_once() -> None:
 
 
 @pytest.mark.parametrize("late_index", [0, 2])
-async def test_a_post_split_by_the_timeout_is_reported_once(late_index: int) -> None:
+async def test_a_post_split_by_the_timeout_is_reported_once(
+    late_index: int, db_buffer: EventBuffer
+) -> None:
     """A group that times out incomplete is delivered again when the rest
     arrives. In a direct room both pieces address the agent, but it is one
     post: counted with its first part, as the transport counts it."""
     original = ac.ATTACHMENT_GROUP_TIMEOUT_SECONDS
     ac.ATTACHMENT_GROUP_TIMEOUT_SECONDS = 0.01
     try:
-        client = _fake_client()
+        client = _fake_client(db_buffer)
 
         async def _direct_room(_event: Any, _meta: RoomMeta) -> bool:
             return True
@@ -519,24 +597,28 @@ async def test_a_post_split_by_the_timeout_is_reported_once(late_index: int) -> 
     finally:
         ac.ATTACHMENT_GROUP_TIMEOUT_SECONDS = original
 
-    assert len(client.queue.events) == 2
+    assert len(await _events(client)) == 2
     assert len(client._message_telemetry.addressed) == 1
 
 
-async def test_media_skips_the_availability_check_while_telemetry_is_off() -> None:
+async def test_media_skips_the_availability_check_while_telemetry_is_off(
+    db_buffer: EventBuffer,
+) -> None:
     """The media path reads it only to report it, so off means no query."""
-    client = _fake_client()
+    client = _fake_client(db_buffer)
     client._message_telemetry.enabled = False
     await AgentConsumer.on_media(
         client, _room(), _media_event(body="@agent-a look", event_id="$solo")
     )
 
     assert client.availability_checks == 0
-    assert len(client.queue.events) == 1
+    assert len(await _events(client)) == 1
 
 
-async def test_media_that_does_not_address_the_agent_is_not_reported() -> None:
-    client = _fake_client()
+async def test_media_that_does_not_address_the_agent_is_not_reported(
+    db_buffer: EventBuffer,
+) -> None:
+    client = _fake_client(db_buffer)
     await AgentConsumer.on_media(
         client, _room(), _media_event(body="just a picture", event_id="$solo")
     )

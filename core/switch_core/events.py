@@ -6,6 +6,15 @@ from pydantic import BaseModel, ConfigDict
 class SwitchEvent(BaseModel):
     model_config = ConfigDict(extra="allow")
 
+    # The `messages` row this event was parsed from: its `seq` in the room and
+    # its event id. `Consumer` fills both when it dispatches the event, and
+    # `AgentConsumer` stores them on the row in the agent's own events so a
+    # reader can match that row to the room row. They are not part of the
+    # event's content, and stay 0 and None for an event that did not come from
+    # a `messages` row.
+    room_seq: int = 0
+    source_event_id: str | None = None
+
 
 # ── Command ───────────────────────────────────────────────────────────────────
 

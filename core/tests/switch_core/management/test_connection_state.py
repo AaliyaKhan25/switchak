@@ -256,7 +256,7 @@ class TestTheMachineState:
             presence.attach_stream(conn)
             await ledger.flush_all()
             for _ in range(20):
-                answer = beat(
+                answer = await beat(
                     harness,
                     controller,
                     connection_id=opened["connection_id"],

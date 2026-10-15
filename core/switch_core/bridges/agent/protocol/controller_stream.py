@@ -97,6 +97,11 @@ class _Attached:
     outcomes: dict[tuple[str, str], Outcome] = field(default_factory=dict)
     resync: bool = False
     unsubscribe: Callable[[], None] | None = None
+    # Rooms this stream has already passed to `EventBuffer.ensure_counting`,
+    # which gives the agent an unread-count baseline for the room in
+    # `agent_room_reads`. Each delivery pass calls it only for rooms not in
+    # this set, so it does not write to the database for every room each time.
+    counted: set[str] = field(default_factory=set)
 
 
 def _eviction(closure: Closure) -> dict[str, Any]:
@@ -151,6 +156,11 @@ class _ControllerStream:
         self._rooms_of = rooms_of
         self._idle = idle_seconds
         self._tenant_id = current_tenant_id()
+        if self._tenant_id is None:
+            raise RuntimeError(
+                "A controller stream runs inside its controller's tenant"
+            )
+        self._tenant: str = self._tenant_id
         self._attached: dict[str, _Attached] = {}
 
     async def run(self, opening: dict[str, Any]) -> AsyncGenerator[ControllerFrame]:
@@ -202,7 +212,7 @@ class _ControllerStream:
 
                 delivered = False
                 for attached in list(self._attached.values()):
-                    for raw in self._deliver(attached):
+                    for raw in await self._deliver(attached):
                         delivered = True
                         yield raw
                 if delivered:
@@ -247,6 +257,7 @@ class _ControllerStream:
             # Bound here again later, it starts at its head: what it missed in
             # between was never this controller's.
             conn.resume_cursors.pop(agent_id, None)
+            conn.sent_cursors.pop(agent_id, None)
             if attached.unsubscribe is not None:
                 attached.unsubscribe()
             frames.append(
@@ -271,7 +282,7 @@ class _ControllerStream:
                 continue
             rooms = await self._rooms_of(agent_id)
             self._presence.set_rooms(agent_id, rooms)
-            head = self._buffer.head(agent_id)
+            head = await self._buffer.head(self._tenant, agent_id)
             requested = conn.resume_cursors.get(agent_id)
             cursor = head if requested is None else requested
             gaps: list[dict[str, Any]] = []
@@ -285,7 +296,6 @@ class _ControllerStream:
                     head,
                 )
                 cursor = head
-                self._buffer.mark_restarted(agent_id)
                 gaps.append(
                     {
                         "agent_id": agent_id,
@@ -298,22 +308,23 @@ class _ControllerStream:
                         "the restart are gone in every room — re-read room context",
                     }
                 )
-            lost = self._buffer.rooms_dropped_after(agent_id, cursor)
-            if lost:
-                resumed_at = max(self._buffer.oldest_retained(agent_id) - 1, 0)
+            try:
+                await self._buffer.check_cursor(self._tenant, agent_id, cursor)
+            except CursorExpiredError as exc:
                 gaps.append(
                     {
                         "agent_id": agent_id,
                         "from_sequence": cursor,
-                        "resumed_at": resumed_at,
-                        "rooms": list(lost),
+                        "resumed_at": exc.resume_after,
+                        "rooms": list(exc.rooms),
                         "all_rooms": False,
                         "reason": "events older than the retention window were "
                         "dropped; re-read room context",
                     }
                 )
-                cursor = resumed_at
+                cursor = exc.resume_after
             conn.resume_cursors[agent_id] = cursor
+            conn.sent_cursors[agent_id] = cursor
             attached = _Attached(
                 agent_id=agent_id,
                 reader_id=self._presence.holder_id(binding),
@@ -321,12 +332,13 @@ class _ControllerStream:
             )
             self._subscribe_outcomes(attached)
             self._attached[agent_id] = attached
-            # The conversation this reader has not seen starts where its
-            # delivery does, which is what the per-agent stream counts from.
-            for room_id in rooms:
-                self._buffer.ensure_counting(
-                    agent_id, attached.reader_id, room_id, cursor
+            # Give each of the agent's rooms that has no unread-count baseline
+            # yet a baseline at the room's newest message.
+            for room_id in rooms - attached.counted:
+                await self._buffer.ensure_counting(
+                    self._tenant, agent_id, attached.reader_id, room_id
                 )
+                attached.counted.add(room_id)
             frames.append(
                 frame(
                     "agent.attached",
@@ -373,19 +385,31 @@ class _ControllerStream:
             )
         return frames
 
-    def _deliver(self, attached: _Attached) -> list[ControllerFrame]:
+    async def _deliver(self, attached: _Attached) -> list[ControllerFrame]:
         agent_id = attached.agent_id
-        for room_id in self._presence.rooms(agent_id):
-            self._buffer.ensure_counting(
-                agent_id, attached.reader_id, room_id, attached.cursor
+        for room_id in self._presence.rooms(agent_id) - attached.counted:
+            await self._buffer.ensure_counting(
+                self._tenant, agent_id, attached.reader_id, room_id
             )
+            attached.counted.add(room_id)
+        # Take the number of the newest of the agent's own events before
+        # reading, and read no further than it. A read that finds nothing moves
+        # the cursor up to this number. An event added to `agent_events` while
+        # the read runs is numbered above it, so the cursor does not skip that
+        # event.
+        bound = await self._buffer.head(self._tenant, agent_id)
         try:
-            pending = self._buffer.read_from(
-                agent_id, attached.cursor, limit=CATCH_UP_BATCH
+            pending = await self._buffer.read_from(
+                self._tenant,
+                agent_id,
+                attached.cursor,
+                limit=CATCH_UP_BATCH,
+                through_seq=bound,
             )
         except CursorExpiredError as exc:
-            resumed_at = max(exc.oldest - 1, 0)
+            resumed_at = exc.resume_after
             attached.cursor = resumed_at
+            self._conn.sent_cursors[agent_id] = resumed_at
             return [
                 frame(
                     "agent.gap",
@@ -403,16 +427,20 @@ class _ControllerStream:
             # Events above the cursor that are no longer held — a room the
             # agent left takes its events with it — are passed, or every pass
             # would find work it can never read and spin.
-            attached.cursor = max(attached.cursor, self._buffer.head(agent_id))
+            attached.cursor = max(attached.cursor, bound)
+            self._conn.sent_cursors[agent_id] = attached.cursor
             return []
         frames: list[ControllerFrame] = []
         for item in pending:
             data = item.event.model_dump(mode="json")
             data["sequence"] = item.seq
             if item.notifiable:
-                unread = self._buffer.unread(agent_id, item.room_id, item.seq)
+                unread = await self._buffer.unread(
+                    self._tenant, agent_id, item.room_id, item.room_seq
+                )
                 data["missed"] = {"count": unread.count, "reason": unread.reason}
             attached.cursor = item.seq
+            self._conn.sent_cursors[agent_id] = item.seq
             frames.append(
                 frame(
                     "agent.event",
@@ -421,19 +449,20 @@ class _ControllerStream:
             )
         return frames
 
-    def _has_work(self) -> bool:
+    async def _has_work(self) -> bool:
         conn = self._conn
-        return (
+        if (
             conn.closure is not None
             or conn.stream_token != self._token
             or bool(conn.detached or conn.rooms_changed or conn.session_commands)
             or self._presence.agents_of(conn.controller_id) != set(self._attached)
             or any(a.outcomes or a.resync for a in self._attached.values())
-            or any(
-                self._buffer.head(a.agent_id) > a.cursor
-                for a in self._attached.values()
-            )
-        )
+        ):
+            return True
+        if not self._attached:
+            return False
+        heads = await self._buffer.heads(self._tenant, set(self._attached))
+        return any(heads.get(a.agent_id, 0) > a.cursor for a in self._attached.values())
 
     async def _wait(self) -> bool:
         """Wait for an event, a nudge or a change to the connection. False when
@@ -444,7 +473,7 @@ class _ControllerStream:
         self._conn.wake.clear()
         # Re-checked after clearing: anything that arrived between the last
         # read and the clear would otherwise wait for the idle timeout.
-        if self._has_work() or self._nudges.wake.is_set():
+        if await self._has_work() or self._nudges.wake.is_set():
             return True
         waiters = [
             asyncio.ensure_future(event.wait())

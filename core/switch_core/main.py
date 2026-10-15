@@ -32,6 +32,7 @@ from switch_core.bridges.agent.protocol.agent_connections import (
     AgentConnectionRegistry,
 )
 from switch_core.bridges.agent.protocol.agent_core import AgentCore
+from switch_core.bridges.agent.protocol.agent_event_listener import AgentEventListener
 from switch_core.bridges.agent.protocol.controller_presence import ControllerPresence
 from switch_core.bridges.agent.protocol.event_buffer import EventBuffer
 from switch_core.bridges.agent.registration_bootstrap import (
@@ -199,6 +200,9 @@ logger = logging.getLogger(__name__)
 # seconds keeps a stuck "working"/"awaiting-input" surface from lingering long
 # after a session crashes, while staying well above the per-pass DB cost.
 _RUNTIME_STATE_SWEEP_INTERVAL = 5.0
+# How often the retention loop deletes expired agent events. The retention
+# window is measured in hours, so running once a minute is precise enough.
+_AGENT_EVENT_RETENTION_INTERVAL = 60.0
 
 # How often to close connections whose heartbeat has lapsed. Kept well under
 # the heartbeat TTL so a dead connection's room slot and role lease are freed
@@ -209,6 +213,21 @@ _CONNECTION_SWEEP_INTERVAL = 2.0
 # regardless. Anything with a deadline of its own must fit inside it — see
 # `observability.logs.SHUTDOWN_FLUSH_SECONDS`.
 _FORCED_EXIT_GRACE_SECONDS = 3.0
+
+
+async def _agent_event_retention_loop(
+    session_factory: async_sessionmaker[AsyncSession], buffer: EventBuffer
+) -> None:
+    """Once a minute, delete agent events and position tickets older than the
+    retention window, one tenant at a time."""
+    with no_tenant():
+        while True:
+            await asyncio.sleep(_AGENT_EVENT_RETENTION_INTERVAL)
+            try:
+                for tenant_id in await all_tenant_ids(session_factory):
+                    await buffer.expire(tenant_id)
+            except Exception:
+                logger.exception("Agent event retention pass failed")
 
 
 async def _runtime_state_sweep_loop(protocol: AgentCore) -> None:
@@ -541,7 +560,16 @@ async def run(config: SwitchConfig) -> None:
         )
 
     # ── Event queue + request trackers ───────────────────────────────────────
-    event_buffer = EventBuffer(sequence_base=event_boot << 32)
+    event_buffer = EventBuffer(
+        session_factory,
+        sequence_base=event_boot << 32,
+        retention_seconds=config.agent_event_retention_seconds,
+    )
+    # Listens for the `NOTIFY` that each insert into `agent_events` sends, and
+    # wakes this process's streams for that agent, whichever process wrote it.
+    agent_event_listener = AgentEventListener(
+        lambda: create_unpooled_engine(config), event_buffer
+    )
     connector_store = ServerConnectorStore()
 
     # ── Product telemetry ────────────────────────────────────────────────────
@@ -1009,6 +1037,9 @@ async def run(config: SwitchConfig) -> None:
             )
             asyncio.create_task(connector_lifecycle.start_all())
             sweep_task = asyncio.create_task(_runtime_state_sweep_loop(protocol))
+            retention_task = asyncio.create_task(
+                _agent_event_retention_loop(session_factory, event_buffer)
+            )
             session_activity_task = asyncio.create_task(
                 session_activity_maintenance_loop(session_factory)
             )
@@ -1032,10 +1063,12 @@ async def run(config: SwitchConfig) -> None:
             )
             await message_listener.start()
             await session_activity_listener.start()
+            await agent_event_listener.start()
             try:
                 yield
             finally:
                 sweep_task.cancel()
+                retention_task.cancel()
                 session_activity_task.cancel()
                 connection_sweep_task.cancel()
                 service_token_task.cancel()
@@ -1047,6 +1080,7 @@ async def run(config: SwitchConfig) -> None:
                     await _stop_management(management)
                 await message_listener.stop()
                 await session_activity_listener.stop()
+                await agent_event_listener.stop()
                 # Before the operational flush, and bounded: the whole
                 # teardown runs inside `_FORCED_EXIT_GRACE_SECONDS` and a
                 # product event is the least valuable thing in it.

@@ -45,12 +45,12 @@ class _DeletingClientLifecycle(FakeClientLifecycle):
 
 class TestDeleteAgentInARoom:
     async def test_the_agent_its_client_and_both_memberships_go(
-        self, session_factory: async_sessionmaker[AsyncSession]
+        self, session_factory: async_sessionmaker[AsyncSession], db_buffer: EventBuffer
     ) -> None:
         svc = make_service(session_factory)
         lifecycle = _DeletingClientLifecycle(session_factory)
         svc.client_lifecycle = lifecycle  # type: ignore[assignment]
-        svc.event_buffer = EventBuffer(sequence_base=0)
+        svc.event_buffer = db_buffer
 
         owner = await make_owner(session_factory)
         agent_id = await register(svc, "in-a-room", owner)

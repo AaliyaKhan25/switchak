@@ -161,6 +161,10 @@ class ControllerConnection:
     stream_token: int = 0
     closure: Closure | None = None
     wake: asyncio.Event = field(default_factory=asyncio.Event)
+    # How far the stream on this connection has sent each attached agent's own
+    # events. A beat's confirmed cursor is lowered to it, in memory, so a beat
+    # costs no database query.
+    sent_cursors: dict[str, int] = field(default_factory=dict)
     # Frames owed to the stream, written on its next pass.
     session_commands: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
     detached: dict[str, str] = field(default_factory=dict)

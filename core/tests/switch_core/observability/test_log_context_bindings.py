@@ -22,8 +22,7 @@ from switch_core.bridges.agent.protocol.agent_connections import (
     AgentConnectionRegistry,
     ClientDeclaration,
 )
-from switch_core.bridges.agent.protocol.event_buffer import EventBuffer
-from switch_core.bridges.agent.protocol.types import AgentEvent, MessagePayload
+from switch_core.bridges.agent.protocol.positions import OWN_EVENTS
 from switch_core.bridges.collaboration.collaboration_core import CollaborationCore
 from switch_core.logging_context import LogContextFilter, current_log_context
 from switch_core.transport.postgres import PostgresTransport
@@ -115,10 +114,14 @@ class TestTheDeliveryLoopBindsItsRoom:
 
 
 class TestTheProtocolBindsItsAgent:
-    """Both of these are swept by the registry's own bookkeeping rather than
-    called by an agent, so there is no request context to inherit — and both
-    are exactly the line somebody goes looking for when one agent will not stay
-    connected or keeps missing events."""
+    """A close is swept by the registry's own bookkeeping rather than called
+    by an agent, so there is no request context to inherit — and it is exactly
+    the line somebody goes looking for when one agent will not stay connected.
+
+    The buffer's overflow warning used to be tested here too. The db-buffer has
+    no per-agent cap, so that warning is gone; what replaced it, retention, is
+    a per-tenant sweep that counts what it deletes rather than logging it per
+    agent (see test_agent_protocol_metrics)."""
 
     def test_a_closing_connection_carries_the_agent(self, captured: _Capture) -> None:
         registry = AgentConnectionRegistry()
@@ -128,7 +131,7 @@ class TestTheProtocolBindsItsAgent:
             scope="single",  # type: ignore[arg-type]
             delivery_filter="all",  # type: ignore[arg-type]
             spawn_capable=False,
-            cursor=0,
+            position={OWN_EVENTS: 0},
             declaration=ClientDeclaration(speaks=PROTOCOL_VERSION),
             expected_generation=None,
         )
@@ -138,32 +141,6 @@ class TestTheProtocolBindsItsAgent:
         closed = [r for r in captured.records if "[CONN] closed" in r.getMessage()]
         assert closed, "the registry did not report the close at all"
         assert all(getattr(r, "agent_id", None) == "agent-42" for r in closed)
-
-    def test_an_overflowing_buffer_carries_the_agent(self, captured: _Capture) -> None:
-        buffer = EventBuffer(
-            max_events_per_agent=2, retention_seconds=3600, sequence_base=0
-        )
-        for index in range(5):
-            buffer.enqueue(
-                "agent-99",
-                "room-1",
-                AgentEvent(
-                    type="message",
-                    room_id="room-1",
-                    payload=MessagePayload(
-                        addressed=True,
-                        sender="@u:s",
-                        sender_name="u",
-                        message_id=f"$m{index}",
-                        body="hi",
-                        timestamp=0,
-                    ),
-                ),
-            )
-
-        overflow = [r for r in captured.records if "exceeded" in r.getMessage()]
-        assert overflow, "the buffer did not report an overflow at all"
-        assert all(getattr(r, "agent_id", None) == "agent-99" for r in overflow)
 
 
 class TestTheBridgeInboundPathBindsItsRoom:

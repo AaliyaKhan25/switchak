@@ -13,7 +13,9 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from switch_core.bridges.agent.protocol.event_buffer import EventBuffer
 from switch_core.clients import agent_consumer as agent_consumer_module
 from switch_core.clients.admin_messages import PLATFORM_MARKER
 from switch_core.clients.agent_consumer import (
@@ -22,9 +24,19 @@ from switch_core.clients.agent_consumer import (
     _GateOutcome,
 )
 from switch_core.clients.room_meta import RoomMeta
+from switch_core.db.models import TENANT_ZERO_ID
 from switch_core.observability.metrics import MetricsRegistry, install, uninstall
 from switch_core.observability.throttle import WarningThrottle
 from switch_core.transport import InboundMessage, RoomRef
+from tests.db_buffer import seed_agent
+
+AGENT = "agent-1"
+
+
+@pytest.fixture(autouse=True)
+async def _agent_row(session_factory: async_sessionmaker[AsyncSession]) -> None:
+    """The agent the consumer queues for, so its events have a row to belong to."""
+    await seed_agent(session_factory, AGENT)
 
 
 @asynccontextmanager
@@ -46,6 +58,7 @@ class _BrokenMessageTelemetry:
 
 
 def _consumer(
+    buffer: EventBuffer,
     *,
     addressed: bool,
     allowed: bool = True,
@@ -81,9 +94,9 @@ def _consumer(
 
     ns = SimpleNamespace(
         agent=SimpleNamespace(
-            id="agent-1", name="agent-a", metadata_={"known_agent_type": "codex"}
+            id=AGENT, name="agent-a", metadata_={"known_agent_type": "codex"}
         ),
-        tenant_id="tenant-1",
+        tenant_id=TENANT_ZERO_ID,
         session_factory=_session_factory,
         _resolve_room_meta=_resolve_room_meta,
         _addressed_without_lookup=lambda _e, _m: None,
@@ -95,8 +108,7 @@ def _consumer(
         _post_auto_reply=_ignore_post,
         _sender_handle=lambda _e: "@alice",
         _triggered_by_auto_reply=AgentConsumer._triggered_by_auto_reply,
-        _event_buffer=SimpleNamespace(enqueue=lambda *a, **k: ns.enqueued.append(a)),
-        enqueued=[],
+        _event_buffer=buffer,
         _message_telemetry=_FakeMessageTelemetry(),
     )
     ns._report_addressed = AgentConsumer._report_addressed.__get__(ns)
@@ -123,14 +135,14 @@ async def _deliver(consumer: SimpleNamespace, event: InboundMessage) -> None:
     await AgentConsumer.on_message(consumer, RoomRef(room_id="!room:s"), event)  # type: ignore[arg-type]
 
 
-async def test_an_addressed_message_is_reported_once() -> None:
-    consumer = _consumer(addressed=True)
+async def test_an_addressed_message_is_reported_once(db_buffer: EventBuffer) -> None:
+    consumer = _consumer(db_buffer, addressed=True)
 
     await _deliver(consumer, _message())
 
     assert consumer._message_telemetry.addressed == [
         {
-            "tenant_id": "tenant-1",
+            "tenant_id": TENANT_ZERO_ID,
             "room_id": "room-1",
             "sender_transport_user_id": "@alice:s",
             "from_platform": False,
@@ -141,32 +153,36 @@ async def test_an_addressed_message_is_reported_once() -> None:
     ]
 
 
-async def test_room_chatter_is_not_reported() -> None:
-    consumer = _consumer(addressed=False)
+async def test_room_chatter_is_not_reported(db_buffer: EventBuffer) -> None:
+    consumer = _consumer(db_buffer, addressed=False)
 
     await _deliver(consumer, _message())
 
     assert consumer._message_telemetry.addressed == []
 
 
-async def test_a_message_the_policy_turned_away_is_not_reported() -> None:
-    consumer = _consumer(addressed=True, allowed=False)
+async def test_a_message_the_policy_turned_away_is_not_reported(
+    db_buffer: EventBuffer,
+) -> None:
+    consumer = _consumer(db_buffer, addressed=True, allowed=False)
 
     await _deliver(consumer, _message())
 
     assert consumer._message_telemetry.addressed == []
 
 
-async def test_an_auto_reply_is_not_reported() -> None:
-    consumer = _consumer(addressed=True)
+async def test_an_auto_reply_is_not_reported(db_buffer: EventBuffer) -> None:
+    consumer = _consumer(db_buffer, addressed=True)
 
     await _deliver(consumer, _message(**{AUTO_REPLY_FLAG: True}))
 
     assert consumer._message_telemetry.addressed == []
 
 
-async def test_a_platform_message_says_it_came_from_the_platform() -> None:
-    consumer = _consumer(addressed=True)
+async def test_a_platform_message_says_it_came_from_the_platform(
+    db_buffer: EventBuffer,
+) -> None:
+    consumer = _consumer(db_buffer, addressed=True)
 
     await _deliver(consumer, _message(**{PLATFORM_MARKER: {}}))
 
@@ -174,8 +190,10 @@ async def test_a_platform_message_says_it_came_from_the_platform() -> None:
     assert report["from_platform"] is True
 
 
-async def test_a_message_to_an_offline_agent_is_reported_as_not_live() -> None:
-    consumer = _consumer(addressed=True, live=False)
+async def test_a_message_to_an_offline_agent_is_reported_as_not_live(
+    db_buffer: EventBuffer,
+) -> None:
+    consumer = _consumer(db_buffer, addressed=True, live=False)
 
     await _deliver(consumer, _message())
 
@@ -184,11 +202,13 @@ async def test_a_message_to_an_offline_agent_is_reported_as_not_live() -> None:
 
 
 async def test_a_telemetry_failure_does_not_cost_the_agent_the_message(
-    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    db_buffer: EventBuffer,
 ) -> None:
     """Caught, so it is counted, and logged once rather than once per
     message."""
-    consumer = _consumer(addressed=True)
+    consumer = _consumer(db_buffer, addressed=True)
     consumer._message_telemetry = _BrokenMessageTelemetry()
     registry = MetricsRegistry()
     install(registry)
@@ -208,7 +228,7 @@ async def test_a_telemetry_failure_does_not_cost_the_agent_the_message(
     finally:
         uninstall()
 
-    assert len(consumer.enqueued) == 2
+    assert len(await db_buffer.read_from(TENANT_ZERO_ID, AGENT, 0)) == 2
     assert failures.numbers[0].value == 2.0
     assert dict(failures.numbers[0].attributes) == {"actor": "agent"}
     assert (

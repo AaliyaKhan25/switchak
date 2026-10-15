@@ -12,12 +12,18 @@ from switch_core.clients.agent_consumer import (
     AgentConsumer,
     _GateOutcome,
 )
+from switch_core.db.models import TENANT_ZERO_ID
 from switch_core.transport import InboundMessage, RoomRef
 
 
 @asynccontextmanager
 async def _session_factory():  # type: ignore[no-untyped-def]
     yield object()
+
+
+async def _ignore_enqueue(*_args: object, **_kwargs: object) -> int:
+    # What the agent is sent is not under test here, only where the reply goes.
+    return 0
 
 
 class _Recorder:
@@ -76,6 +82,7 @@ def _fake_self(
 
     ns = SimpleNamespace(
         agent=SimpleNamespace(id="agent-1", name="cc-bug-fixing"),
+        tenant_id=TENANT_ZERO_ID,
         session_factory=_session_factory,
         _resolve_room_meta=_resolve_room_meta,
         _addressed_without_lookup=_addressed_without_lookup,
@@ -86,7 +93,7 @@ def _fake_self(
         _reply_when_unavailable_here=_reply_when_unavailable_here,
         _triggered_by_auto_reply=AgentConsumer._triggered_by_auto_reply,
         actor=SimpleNamespace(send_message=send_message),
-        _event_buffer=SimpleNamespace(enqueue=lambda *a, **k: None),
+        _event_buffer=SimpleNamespace(enqueue=_ignore_enqueue),
         _report_addressed=lambda *a, **k: None,
     )
     # Exercise the real sender-tagging and auto-reply helpers.

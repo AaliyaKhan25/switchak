@@ -308,6 +308,8 @@ class Consumer[ActorT: Actor[Any]]:
         if isinstance(typed_event, CommandEvent):
             typed_event.message_id = event.event_id
             typed_event.thread_id = event.thread_root_id or event.event_id
+        typed_event.room_seq = event.seq
+        typed_event.source_event_id = event.event_id
 
         try:
             await getattr(self, method_name)(room, typed_event)

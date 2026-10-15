@@ -35,6 +35,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from switch_core.bridges.agent.app import create_agent_bridge_app
 from switch_core.bridges.agent.protocol.agent_connections import AgentConnectionRegistry
 from switch_core.bridges.agent.protocol.agent_core import AgentCore
+from switch_core.bridges.agent.protocol.agent_event_listener import AgentEventListener
 from switch_core.bridges.agent.protocol.event_buffer import EventBuffer
 from switch_core.bridges.agent.protocol.types import (
     IntegrationProfile,
@@ -52,10 +53,13 @@ from switch_core.db.models import (
     ApprovalRequest,
     Message,
     User,
+    agent_event_boot_sequence,
 )
 from switch_core.db.session_scope import tenant_session
 from switch_core.db.stores.tenant_store import TenantStore
+from switch_core.db.stores.usage_store import UsageStore
 from switch_core.main import (
+    _agent_event_retention_loop,
     _connection_sweep_loop,
     _runtime_state_sweep_loop,
     _seed_agent_registration_bootstrap_key,
@@ -447,12 +451,26 @@ async def _serve(
     # and left from different asyncio contexts, where resetting the token
     # raises instead of unbinding.
     bind_tenant_id(TENANT_ZERO_ID)
-    event_buffer = EventBuffer(sequence_base=0)
+    # Numbered from this boot's base as `main` numbers it, so a Core that
+    # replaces another starts above every number the last one handed out and
+    # a host's cursor from before the restart reads as older, as it would in
+    # production. The events themselves are rows and outlive the restart.
+    async with session_env.engine.begin() as connection:
+        event_boot = await connection.scalar(agent_event_boot_sequence.next_value())
+    event_buffer = EventBuffer(
+        session_factory,
+        sequence_base=event_boot << 32,
+        retention_seconds=config.agent_event_retention_seconds,
+    )
+    agent_event_listener = AgentEventListener(
+        lambda: create_unpooled_engine(config), event_buffer
+    )
     connections = AgentConnectionRegistry()
     collab_lifecycle = _NoBridges()
 
     message_listener = MessageListener(lambda: create_unpooled_engine(config))
     await message_listener.start()
+    await agent_event_listener.start()
     activity_listener = AgentSessionActivityListener(
         lambda: create_unpooled_engine(config)
     )
@@ -509,6 +527,7 @@ async def _serve(
         config=config,
         room_store=session_env.room_store,
         message_store=session_env.message_store,
+        usage_store=UsageStore(),
         media_store=session_env.media_store,
         listener=message_listener,
         invites=invites,
@@ -618,6 +637,7 @@ async def _serve(
     sweeps = [
         asyncio.create_task(_connection_sweep_loop(protocol, EventLoopLag())),
         asyncio.create_task(_runtime_state_sweep_loop(protocol)),
+        asyncio.create_task(_agent_event_retention_loop(session_factory, event_buffer)),
     ]
 
     bench = BenchServer(
@@ -648,6 +668,7 @@ async def _serve(
         detach_statements()
         await client_lifecycle.stop_all()
         await activity_listener.stop()
+        await agent_event_listener.stop()
         await message_listener.stop()
         await provisioning.close()
 

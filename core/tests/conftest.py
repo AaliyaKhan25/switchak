@@ -23,6 +23,7 @@ from testcontainers.postgres import PostgresContainer
 # create_all provisions the full schema (rooms, room_groups, FKs, …).
 import switch_core.db.models  # noqa: F401
 from switch_core import messaging_platforms
+from switch_core.bridges.agent.protocol.event_buffer import EventBuffer
 from switch_core.bridges.collaboration.platforms import PLATFORMS
 from switch_core.db import encrypted_json
 from switch_core.db.base import Base
@@ -31,6 +32,7 @@ from switch_core.db.models import TENANT_ZERO_ID, Tenant
 from switch_core.db.runtime_role import grant_runtime_role
 from switch_core.keys import Keyring
 from switch_core.tenant_context import tenant_scope
+from tests.db_buffer import db_buffer_on
 from tests.switch_core.pool_checkouts import PoolCheckouts
 from tests.switch_core.statement_counts import StatementCounts
 
@@ -372,3 +374,10 @@ async def rls_harness(postgres_schema: str) -> AsyncIterator[RLSHarness]:
                 text("GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO PUBLIC")
             )
         await owner_engine.dispose()
+
+
+@pytest.fixture
+def db_buffer(session_factory: async_sessionmaker[AsyncSession]) -> EventBuffer:
+    """The db-buffer on this test's database. Seed the agents it queues for
+    with `tests.db_buffer.seed_agent`."""
+    return db_buffer_on(session_factory)

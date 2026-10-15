@@ -83,6 +83,7 @@ from switch_core.bridges.agent.dependencies import (
     get_protocol,
     get_session,
 )
+from switch_core.bridges.agent.protocol import positions
 from switch_core.bridges.agent.protocol.agent_connections import (
     HEARTBEAT_INTERVAL_SECONDS,
     AgentConnection,
@@ -104,7 +105,8 @@ from switch_core.bridges.agent.protocol.agent_connections import (
     evicted_session_warning,
 )
 from switch_core.bridges.agent.protocol.agent_core import AgentCore, AgentExistsError
-from switch_core.bridges.agent.protocol.event_buffer import Reader
+from switch_core.bridges.agent.protocol.event_buffer import TICKET_FLOOR, Reader
+from switch_core.bridges.agent.protocol.positions import OWN_EVENTS, Position
 from switch_core.bridges.agent.protocol.stream import (
     KEEPALIVE,
     Frame,
@@ -735,6 +737,7 @@ async def poll_events(
     scope: Annotated[str, Query()] = "single",
     event_filter: Annotated[str, Query(alias="filter")] = "all",
     start_from: Annotated[str, Query()] = "head",
+    start_at: Annotated[str | None, Query()] = None,
     spawn_capable: Annotated[bool, Query()] = False,
     protocol_version: Annotated[int | None, Query(alias="protocol")] = None,
     protocol_accepts: Annotated[int | None, Query()] = None,
@@ -766,6 +769,7 @@ async def poll_events(
             scope=scope,
             event_filter=event_filter,
             start_from=start_from,
+            start_at=start_at,
             spawn_capable=spawn_capable,
             declaration=ClientDeclaration(
                 speaks=protocol_version,
@@ -784,27 +788,66 @@ async def poll_events(
     return EventResponse(events=events)
 
 
-def _resolve_start_cursor(
+async def _resolve_start_position(
     protocol: AgentCore,
-    agent_id: str,
+    agent: Agent,
+    *,
+    start_at: str | None,
     start_from: str,
-    last_event_id: str | None = None,
-) -> int:
-    """Where a connection's events begin: the head, or a sequence number.
+    last_event_id: str | None,
+    reads_conversation: bool,
+) -> tuple[Position, int | None]:
+    """Work out the position a new connection starts sending events from.
 
-    `Last-Event-ID` wins when present: an event-stream client that reconnects
-    sends it, and it is the most accurate statement of what it processed.
+    Returns the position and, when the client sent a ticket id the server no
+    longer has, that id, so the stream can open with a gap that names it.
+    Otherwise the second value is None.
+
+    A client on agent-protocol revision 9 sends `start_at`: either "head" or
+    a position such as `{"s": 12, "r:<room_id>": 40}`. When the position has
+    no `s` entry, the connection starts at the current end of the agent's
+    own events.
+
+    An older client holds one integer and sends it as `start_from`, or as
+    `Last-Event-ID` when an event stream reconnects. `Last-Event-ID` wins
+    because it is the id of the last event the client processed. When the
+    connection reads only the agent's own events, the integer is their `seq`.
+    When it also reads the room conversation (`reads_conversation`), the
+    integer is a ticket id from `agent_position_tickets` and the position is
+    looked up there. A ticket that has expired or never existed starts the
+    connection at the end of the agent's own events, and the stream reports
+    the gap.
     """
+    buffer = protocol.event_buffer
+    if start_at:
+        if start_at == "head":
+            return {OWN_EVENTS: await buffer.head(agent.tenant_id, agent.id)}, None
+        try:
+            position = positions.parse(start_at)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"start_at must be 'head' or a position: {exc}",
+            ) from exc
+        if OWN_EVENTS not in position:
+            position[OWN_EVENTS] = await buffer.head(agent.tenant_id, agent.id)
+        return position, None
     raw = last_event_id or start_from
     if raw in ("", "head"):
-        return protocol.event_buffer.head(agent_id)
+        return {OWN_EVENTS: await buffer.head(agent.tenant_id, agent.id)}, None
     try:
-        return max(int(raw), 0)
+        number = max(int(raw), 0)
     except ValueError as exc:
         raise HTTPException(
             status_code=400,
             detail=f"start_from must be 'head' or a sequence number, got {raw!r}",
         ) from exc
+    if reads_conversation and number >= TICKET_FLOOR:
+        held = await buffer.ticket(agent.tenant_id, agent.id, number)
+        if held is None:
+            return {OWN_EVENTS: await buffer.head(agent.tenant_id, agent.id)}, number
+        return held, None
+    return {OWN_EVENTS: number}, None
 
 
 def _register_connection(
@@ -815,7 +858,7 @@ def _register_connection(
     scope: str,
     event_filter: str,
     spawn_capable: bool,
-    cursor: int,
+    position: Position,
     declaration: ClientDeclaration,
     expected_generation: int | None,
     transport: Transport,
@@ -827,7 +870,7 @@ def _register_connection(
             scope=cast(Scope, scope),
             delivery_filter=cast(DeliveryFilter, event_filter),
             spawn_capable=spawn_capable,
-            cursor=cursor,
+            position=position,
             declaration=declaration,
             expected_generation=expected_generation,
             transport=transport,
@@ -874,6 +917,7 @@ async def _open_connection(
     event_filter: str,
     start_from: str,
     spawn_capable: bool,
+    start_at: str | None = None,
     declaration: ClientDeclaration,
     rooms: str | None,
     expected_generation: int | None,
@@ -903,7 +947,14 @@ async def _open_connection(
             detail=f"filter must be 'all' or 'addressed', got {event_filter!r}",
         )
 
-    cursor = _resolve_start_cursor(protocol, agent.id, start_from, last_event_id)
+    position, lost = await _resolve_start_position(
+        protocol,
+        agent,
+        start_at=start_at,
+        start_from=start_from,
+        last_event_id=last_event_id,
+        reads_conversation=event_filter == "all",
+    )
 
     conn = _register_connection(
         protocol=protocol,
@@ -912,11 +963,14 @@ async def _open_connection(
         scope=scope,
         event_filter=event_filter,
         spawn_capable=spawn_capable,
-        cursor=cursor,
+        position=position,
         declaration=declaration,
         expected_generation=expected_generation,
         transport=transport,
     )
+    if lost is not None:
+        conn.resume_lost = True
+        conn.resume_requested = lost
 
     # Built before anything below can yield, so it holds the generation this
     # open produced; a reconnect during the bookkeeping supersedes it rather
@@ -955,7 +1009,9 @@ async def _open_connection(
                 protocol.connections.claim_room(conn, room_id, takeover=True)
             # The room's unread count follows the slot: whoever is told how far
             # behind the room is has to be the one whose reading clears it.
-            protocol.event_buffer.take_counting(agent.id, conn.id, room_id, conn.cursor)
+            await protocol.event_buffer.take_counting(
+                agent.tenant_id, agent.id, conn.id, room_id
+            )
         except (ValueError, PermissionError) as exc:
             protocol.connections.close(
                 conn.id,
@@ -1001,6 +1057,7 @@ async def _open_event_stream(
     event_filter: str,
     start_from: str,
     spawn_capable: bool,
+    start_at: str | None = None,
     declaration: ClientDeclaration,
     rooms: str | None,
     last_event_id: str | None,
@@ -1021,6 +1078,7 @@ async def _open_event_stream(
             scope=scope,
             event_filter=event_filter,
             start_from=start_from,
+            start_at=start_at,
             spawn_capable=spawn_capable,
             declaration=declaration,
             rooms=rooms,
@@ -1047,26 +1105,22 @@ def _record_beat(
     protocol: AgentCore,
     agent_id: str,
     connection_id: str,
-    cursor: int,
     generation: int | None,
 ) -> AgentConnection:
-    """Count a client's beat, and adopt its cursor: a pong on the socket, or a
-    `POST /connection/beat` from an event-stream client.
+    """Count a client's beat: the client is still there.
 
-    The cursor is clamped to the buffer head first. The buffer is in memory,
-    so a restart resets the sequence while a client keeps reporting the
-    number it had reached, and neither `beat()` nor `confirm()` will move a
-    cursor backwards: adopting the stale number would skip every event up to
-    it, silently, and mark them consumed on the way past.
+    A beat is a pong on the WebSocket, or a `POST /connection/beat` from an
+    event-stream client. Clients also report how far they have read; it is not
+    read here. The connection's position is moved only by the stream, as it
+    sends, and a client that drops resumes from the position it sends when it
+    reopens, which is checked against the database then. So a beat costs no
+    database query.
 
     Raises the registry's refusal when the connection is no longer this
     client's to beat for: another socket took it over (`taken_over`), or it
     has no stream attached (`no_stream`), or it is gone.
     """
-    cursor = min(cursor, protocol.event_buffer.head(agent_id))
-    conn = protocol.connections.beat(agent_id, connection_id, cursor, generation)
-    protocol.event_buffer.confirm(agent_id, conn.id, cursor)
-    return conn
+    return protocol.connections.beat(agent_id, connection_id, generation)
 
 
 @router.post("/{agent_id}/connection/beat")
@@ -1080,16 +1134,14 @@ async def connection_beat(
 
     The socket carries its own heartbeat; this is for a client built before it,
     kept with the event stream for the same compatibility window. Proves the
-    client is alive and reports its cursor. Rejected when the connection is
+    client is alive. Rejected when the connection is
     unknown, dead, has no stream attached, or belongs to another incarnation.
     A refusal carries a code beside its prose, because the remedies differ:
     `taken_over` is terminal for the client that receives it, and the rest are
     recovered by reopening.
     """
     try:
-        conn = _record_beat(
-            protocol, agent.id, req.connection_id, req.cursor, req.generation
-        )
+        conn = _record_beat(protocol, agent.id, req.connection_id, req.generation)
     except (
         NoStreamAttachedError,
         SupersededConnectionError,
@@ -1100,7 +1152,12 @@ async def connection_beat(
         ) from exc
     except UnknownConnectionError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return {"ok": True, "rooms": sorted(conn.rooms), "cursor": conn.cursor}
+    return {
+        "ok": True,
+        "rooms": sorted(conn.rooms),
+        "cursor": conn.cursor,
+        "position": dict(conn.position),
+    }
 
 
 # A WebSocket close code for each refusal that would otherwise be an HTTP
@@ -1120,6 +1177,7 @@ async def connection_socket(
     scope: Annotated[str, Query()] = "single",
     event_filter: Annotated[str, Query(alias="filter")] = "all",
     start_from: Annotated[str, Query()] = "head",
+    start_at: Annotated[str | None, Query()] = None,
     spawn_capable: Annotated[bool, Query()] = False,
     protocol_version: Annotated[int | None, Query(alias="protocol")] = None,
     protocol_accepts: Annotated[int | None, Query()] = None,
@@ -1154,6 +1212,7 @@ async def connection_socket(
             scope=scope,
             event_filter=event_filter,
             start_from=start_from,
+            start_at=start_at,
             spawn_capable=spawn_capable,
             declaration=ClientDeclaration(
                 speaks=protocol_version,
@@ -1225,6 +1284,11 @@ async def connection_socket(
         pump.cancel()
         pongs.cancel()
         failure = pump.exception() if pump.done() and not pump.cancelled() else None
+        # Cancelling the tasks only requests that they stop. The pump's cleanup
+        # may be in the middle of a database read, so this waits for both to
+        # finish before returning, which guarantees the stream has detached
+        # from the connection by then.
+        await asyncio.gather(pump, pongs, return_exceptions=True)
         if failure is not None:
             logger.error(
                 "[STREAM] agent=%s connection=%s delivery failed, closing its socket",
@@ -1276,10 +1340,8 @@ async def _receive_pongs(
             return None
         if not isinstance(message, dict) or message.get("type") != "pong":
             continue
-        raw = message.get("cursor", 0)
-        cursor = raw if isinstance(raw, int) and raw >= 0 else 0
         try:
-            _record_beat(protocol, agent_id, connection_id, cursor, generation)
+            _record_beat(protocol, agent_id, connection_id, generation)
         except ConnectionError_ as refusal:
             return refusal
 
@@ -1359,7 +1421,9 @@ async def connection_subscribe(
     # A room slot changes hands here as much as it does on the stream URL or in
     # connect_to_room, and the room's unread count follows it: the holder being
     # told how far behind the room is has to be the one whose reading clears it.
-    protocol.event_buffer.take_counting(agent.id, conn.id, req.room_id, conn.cursor)
+    await protocol.event_buffer.take_counting(
+        agent.tenant_id, agent.id, conn.id, req.room_id
+    )
 
     if evicted is not None:
         logger.warning(
@@ -1439,8 +1503,11 @@ async def connection_placements(
 
     for session_id, room_id in req.placements.items():
         if before.get(session_id) != room_id:
-            protocol.event_buffer.hand_counting_to(
-                agent.id, Reader(id=session_id, is_session=True), room_id
+            await protocol.event_buffer.hand_counting_to(
+                agent.tenant_id,
+                agent.id,
+                Reader(id=session_id, is_session=True),
+                room_id,
             )
     for lost in released:
         logger.warning(
