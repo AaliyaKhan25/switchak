@@ -3,9 +3,10 @@ import { observer } from 'mobx-react-lite';
 import { useState } from 'react';
 import { ManagedAgentList } from '@renderer/features/managed-agents/managed-agent-list';
 import { useManagedAgents } from '@renderer/features/managed-agents/use-managed-agents';
-import { switchRoomsStore } from '@renderer/features/switch-servers/switch-rooms-store';
 import { switchServersStore } from '@renderer/features/switch-servers/switch-servers-store';
+import { useListedRoomsInActiveScope } from '@renderer/features/switch-servers/use-listed-rooms';
 import { BridgeIcon, hasBridgeIcon } from '@renderer/lib/components/bridge-icon';
+import { useFeatureFlags } from '@renderer/lib/hooks/useFeatureFlags';
 import { SegmentedControl } from '@renderer/lib/ui/segmented-control';
 import type { RemoteRoomSummary } from '@shared/core/switch-servers/switch-servers';
 import { SidebarMenuRow } from './sidebar-primitives';
@@ -36,7 +37,8 @@ function storedTab(): MainTab {
 export const SidebarMainSection = observer(function SidebarMainSection() {
   const [tab, setTab] = useState<MainTab>(storedTab);
   const agents = useManagedAgents(switchServersStore.activeServerId);
-  const rooms = switchRoomsStore.listedRoomsInActiveScope;
+  const flags = useFeatureFlags(switchServersStore.activeServerId);
+  const rooms = useListedRoomsInActiveScope();
   const count = tab === 'agents' ? (agents.data?.length ?? 0) : rooms.length;
 
   return (
@@ -60,7 +62,7 @@ export const SidebarMainSection = observer(function SidebarMainSection() {
           {agents.data?.length === 0 && (
             <p className="px-[9px] py-2 text-xs text-foreground-muted">No agents yet.</p>
           )}
-          <ChatsTeaser />
+          {!flags.agent_chats && <ChatsTeaser />}
         </>
       ) : (
         <RoomList rooms={rooms} />
@@ -77,25 +79,43 @@ const RoomList = observer(function RoomList({ rooms }: { rooms: RemoteRoomSummar
   return (
     <div className="flex flex-col gap-[2px]" aria-label="Rooms">
       {rooms.map((room) => (
-        <SidebarMenuRow
+        <RoomListRow
           key={room.id}
+          room={room}
           isActive={isRoomViewActive(room.id)}
-          title={room.bridgeDisplayName ? `${room.name} · ${room.bridgeDisplayName}` : room.name}
-          onMouseDown={(event) => event.preventDefault()}
-          onClick={() => openRoomView(room.id)}
-          className="h-[30px] py-0 text-[13px]"
-        >
-          {hasBridgeIcon(room.bridgeType) ? (
-            <BridgeIcon bridgeType={room.bridgeType} size={17} className="shrink-0" />
-          ) : (
-            <DoorOpen className="size-[17px] shrink-0 text-[var(--fg-icon)]" />
-          )}
-          <span className="min-w-0 flex-1 truncate">{room.name}</span>
-        </SidebarMenuRow>
+          onOpen={() => openRoomView(room.id)}
+        />
       ))}
     </div>
   );
 });
+
+export function RoomListRow({
+  room,
+  isActive,
+  onOpen,
+}: {
+  room: Pick<RemoteRoomSummary, 'name' | 'bridgeType' | 'bridgeDisplayName'>;
+  isActive: boolean;
+  onOpen: () => void;
+}) {
+  return (
+    <SidebarMenuRow
+      isActive={isActive}
+      title={room.bridgeDisplayName ? `${room.name} · ${room.bridgeDisplayName}` : room.name}
+      onMouseDown={(event) => event.preventDefault()}
+      onClick={onOpen}
+      className="h-[30px] py-0 text-[13px]"
+    >
+      {hasBridgeIcon(room.bridgeType) ? (
+        <BridgeIcon bridgeType={room.bridgeType} size={17} className="shrink-0" />
+      ) : (
+        <DoorOpen className="size-[17px] shrink-0 text-[var(--fg-icon)]" />
+      )}
+      <span className="min-w-0 flex-1 truncate">{room.name}</span>
+    </SidebarMenuRow>
+  );
+}
 
 /**
  * One sentence about what is coming for these agents, under them, closed for

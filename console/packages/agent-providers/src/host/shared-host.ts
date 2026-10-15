@@ -11,7 +11,11 @@ import { cliToolsBase, pinnedBinary } from './cli-binaries';
 import { HostWaker } from './handoff';
 import { agentHasOwnUser } from './host-permissions';
 import { Redactions } from './redaction';
-import { followupCommandId, roomControlFollowup } from './room-control-followup';
+import {
+  followupCommandId,
+  roomControlFollowup,
+  roomControlRefusal,
+} from './room-control-followup';
 import { SharedRoomInbox, type roomConnectionSchema } from './room-inbox';
 import {
   planAttachments,
@@ -670,6 +674,9 @@ export async function runSharedHost(
       const owed = followupFor(command, requesterName);
       if (owed && !followups().some((record) => record.commandId === command.commandId))
         await state.journal.append(owed);
+      const repeated = host!
+        .snapshot()
+        .commandStatuses.some((entry) => entry.commandId === command.commandId);
       try {
         await host!.command(command);
       } catch (error) {
@@ -679,6 +686,26 @@ export async function runSharedHost(
         .snapshot()
         .commandStatuses.find((entry) => entry.commandId === command.commandId);
       if (owed && status?.status === 'applied') await sendFollowup(owed);
+      // Switch already told the room the control is under way; a refusal is answered there too.
+      if (
+        owed &&
+        status?.status === 'rejected' &&
+        !repeated &&
+        parentChannel &&
+        options.roomConnection
+      )
+        void parentChannel
+          .ask({
+            type: 'room-reply',
+            roomId: owed.roomId,
+            threadId: owed.threadId,
+            body: roomControlRefusal(owed.action, status.message),
+          })
+          .catch((error: unknown) =>
+            console.warn(
+              `Could not tell room ${owed.roomId} that its ${owed.action} was refused: ${String(error)}`
+            )
+          );
       // A fresh conversation starts with the instructions this host was given.
       if (command.body.type === 'session.reset' && status?.status === 'applied')
         await instructionsTold();
@@ -792,6 +819,7 @@ export async function runSharedHost(
         return { accepted: true };
       },
       snapshot: async () => host!.snapshot(),
+      reasoning: async ({ turnIds }) => host!.reasoning(turnIds),
       approvals: async () => {
         active();
         waker.approvalsWaiting();

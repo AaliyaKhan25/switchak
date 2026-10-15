@@ -5,6 +5,7 @@ import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import {
   AGENT_ENV_VARS,
+  CONTROL_FILE,
   clearTakenOver,
   type ProviderReadiness,
   type SharedHostConfig,
@@ -15,6 +16,7 @@ import {
   watcherHealthFileSchema,
   watchFlagsSchema,
 } from '@switch-console/agent-providers';
+import { warmOverControlPort } from './control-port';
 import { ReasonedError } from './errors';
 import type { Logger } from './log';
 import {
@@ -239,6 +241,15 @@ export class SystemdRuntime implements AgentRuntime {
       HOME: probeHome,
       ...given,
     });
+  }
+
+  async warm(agentId: string, roomId: string): Promise<void> {
+    const slot = this.deps.store.agentUser(agentId);
+    if (slot === null) throw new Error(`Agent ${agentId} has no user on this machine.`);
+    await warmOverControlPort(
+      join(agentRoot(this.deps.config, slot), 'watcher', CONTROL_FILE),
+      roomId
+    );
   }
 
   agentStateRoot(_agentId: string): string {

@@ -469,6 +469,28 @@ describe('runController', () => {
     expect(await running).toBe('stopped');
   });
 
+  it('warms the agent host for a room when Switch says someone is typing, and only warns when it cannot', async () => {
+    const warnings: string[] = [];
+    core.setAssignment({ revision: 1, agents: [agent(1)] });
+    running = runController(
+      { ...deps(), log: { ...silentLogger, warn: (message) => void warnings.push(message) } },
+      stop.signal
+    );
+    await waitFor(() => runtime.launches('agent-1').length === 1, 'the agent started');
+    await waitFor(() => core.streamCount === 1, 'the stream attached');
+
+    runtime.warmFailure = new Error('not running here');
+    core.push('agent.warm', { agent_id: 'agent-1', room_id: 'room-a' });
+    await waitFor(() => warnings.some((w) => w.includes('warm')), 'the warning');
+
+    runtime.warmFailure = null;
+    core.push('agent.warm', { agent_id: 'agent-1', room_id: 'room-a' });
+    await waitFor(() => runtime.warms.length === 1, 'the warm');
+    expect(runtime.warms).toEqual([{ agentId: 'agent-1', roomId: 'room-a' }]);
+    stop.abort();
+    expect(await running).toBe('stopped');
+  });
+
   it('takes up a login given to the machine on demand, and moves its agent onto it', async () => {
     runtime.readiness = { status: 'unauthenticated', message: 'Not signed in.', models: [] };
     core.setAssignment({ revision: 1, agents: [agent(1)] });

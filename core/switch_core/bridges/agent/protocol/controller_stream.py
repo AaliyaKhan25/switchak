@@ -21,6 +21,8 @@ of its agents' watchers exactly the stream it would have had from Switch:
 - `agent.session_command {agent_id, room_id, command}`: an in-room command
   (`!reset`, `!compact`, `!interrupt`, a Stop press) for the session working in
   `room_id`, which the controller routes. `command` is today's frame.
+- `agent.warm {agent_id, room_id}`: someone is typing to the agent in
+  `room_id`; start the session a message there would start. A hint only.
 - `agent.approval_outcome {agent_id, outcome}`.
 - `agent.rooms {agent_id, rooms}`: its room membership changed.
 - `agent.detached {agent_id, reason}`: `unassigned` or `deleted`.
@@ -205,6 +207,11 @@ class _ControllerStream:
                     yield frame(
                         "agent.session_command",
                         {"agent_id": agent_id, "room_id": room_id, "command": command},
+                    )
+
+                for agent_id, room_id in self._presence.take_warms(conn):
+                    yield frame(
+                        "agent.warm", {"agent_id": agent_id, "room_id": room_id}
                     )
 
                 for raw in await self._owed_outcomes():
@@ -454,7 +461,12 @@ class _ControllerStream:
         if (
             conn.closure is not None
             or conn.stream_token != self._token
-            or bool(conn.detached or conn.rooms_changed or conn.session_commands)
+            or bool(
+                conn.detached
+                or conn.rooms_changed
+                or conn.session_commands
+                or conn.warms
+            )
             or self._presence.agents_of(conn.controller_id) != set(self._attached)
             or any(a.outcomes or a.resync for a in self._attached.values())
         ):

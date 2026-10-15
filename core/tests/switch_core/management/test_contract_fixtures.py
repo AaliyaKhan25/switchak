@@ -411,6 +411,9 @@ class TestStreamFrames:
             )
             provoked += await take(stream, 1)
 
+            assert presence.relay_warm(agent_id, room_id)
+            provoked += await take(stream, 1)
+
             other_room = await add_room(harness.session_factory, agent_id, name="new")
             presence.room_joined(agent_id, other_room)
             provoked += await take(stream, 1)

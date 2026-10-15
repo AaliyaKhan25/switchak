@@ -389,7 +389,7 @@ switchCore:
   # ["ecosystem.show_owners"]. Every other flag is off, and no one can change
   # them while the server runs. An unknown flag stops switch-core at startup.
   # Known flags: ecosystem.show_owners, agent_management, switch_cloud,
-  # hosted_agents, service_connections.
+  # hosted_agents, service_connections, agent_chats.
   featureFlags:
     enabled: []
   # Invitation e-mails. When enabled, an invitation addressed to an e-mail is

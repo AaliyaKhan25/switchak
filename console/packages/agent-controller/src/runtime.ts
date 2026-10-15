@@ -120,7 +120,7 @@ export interface AgentRunner {
  * `InProcessRuntime` and a runner for isolated agents); tests substitute a
  * fake.
  */
-export interface AgentRuntime extends AgentRunner {
+export interface AgentRuntime extends AgentRunner, WarmsRooms {
   credentialsPath(agentId: string): string;
   /** The credentials file as written, or null when there is none or it cannot be read. */
   readCredentials(agentId: string): Promise<RelayCredentials | null>;
@@ -144,6 +144,12 @@ export interface AgentRuntime extends AgentRunner {
   ): Promise<ProviderReadiness>;
   /** The agent host's state root as the agent host sees it: where a given login's files go. */
   agentStateRoot(agentId: string): string;
+}
+
+/** An agent host this controller runs, asked to start a room's session early. */
+export interface WarmsRooms {
+  /** Start the session a message to `roomId` would start; throws when the agent host is not running here. */
+  warm(agentId: string, roomId: string): Promise<void>;
 }
 
 /**
@@ -651,6 +657,19 @@ export class InProcessRuntime implements AgentRuntime {
 
   agentStateRoot(agentId: string): string {
     return this.deps.layout.watcherRoot(agentId);
+  }
+
+  /** False when the agent host does not run in this process. */
+  async warmHere(agentId: string, roomId: string): Promise<boolean> {
+    const host = this.hosts.get(agentId);
+    if (!host) return false;
+    await host.control.warm(roomId);
+    return true;
+  }
+
+  async warm(agentId: string, roomId: string): Promise<void> {
+    if (!(await this.warmHere(agentId, roomId)))
+      throw new Error(`The agent host of agent ${agentId} is not running in this controller.`);
   }
 
   private async writeFlags(root: string, flags: WatchFlags): Promise<void> {

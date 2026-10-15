@@ -133,6 +133,14 @@ export class FakeRuntime implements AgentRuntime {
     return `/data/watchers/${agentId}`;
   }
 
+  readonly warms: { agentId: string; roomId: string }[] = [];
+  warmFailure: Error | null = null;
+
+  async warm(agentId: string, roomId: string): Promise<void> {
+    if (this.warmFailure) throw this.warmFailure;
+    this.warms.push({ agentId, roomId });
+  }
+
   async probe(
     _provider: Provider,
     _binaryPath: string,

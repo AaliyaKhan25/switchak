@@ -332,6 +332,7 @@ export type WatcherHealth = z.infer<typeof watcherHealthSchema>;
 export type WatcherHandlers = {
   place: (sessionId: string, roomId: string) => Promise<PlaceOutcome>;
   forget: (sessionId: string) => Promise<void>;
+  warm: (roomId: string) => Promise<string | null>;
 };
 
 /**
@@ -385,6 +386,18 @@ export class WatcherControl {
         )
       );
     return this.handlers.place(sessionId, roomId);
+  }
+
+  /**
+   * Start the session a message to this room would start, or confirm the one
+   * placed there, without a message: Console warming a chat while its user
+   * types. Resolves to that session, or null when the agent may not start one.
+   * Refused when no watcher is running.
+   */
+  warm(roomId: string): Promise<string | null> {
+    if (!this.handlers)
+      return Promise.reject(new Error("The agent's room watcher is not running."));
+    return this.handlers.warm(roomId);
   }
 
   health(): WatcherHealth {

@@ -9,6 +9,7 @@ import { switchRoomsStore as roomConnectionsStore } from '@renderer/features/swi
 import { isFrozenServer } from '@renderer/features/switch-servers/managed-server-state';
 import { switchRoomsStore } from '@renderer/features/switch-servers/switch-rooms-store';
 import { switchServersStore } from '@renderer/features/switch-servers/switch-servers-store';
+import { useListedRoomsInActiveScope } from '@renderer/features/switch-servers/use-listed-rooms';
 import { workspacesStore } from '@renderer/features/workspaces/workspaces-store';
 import { useFeatureFlags } from '@renderer/lib/hooks/useFeatureFlags';
 import { useNavigate } from '@renderer/lib/layout/navigation-provider';
@@ -97,6 +98,7 @@ export const SidebarGroupedList = observer(function SidebarGroupedList() {
   const managedAgents = useManagedAgents(switchServersStore.activeServerId);
   const activeServerId = switchServersStore.activeServerId;
   const managementMode = useAgentManagementMode();
+  const listedRooms = useListedRoomsInActiveScope();
   const managedAgentCount = activeServerId && managedAgents.data ? managedAgents.data.length : 0;
   const emptyState = sidebarEmptyState({
     grouping: sidebarStore.grouping,
@@ -104,7 +106,7 @@ export const SidebarGroupedList = observer(function SidebarGroupedList() {
     filteredLocationCount: sidebarStore.filteredLocations.length,
     activeServerId: switchServersStore.activeServerId,
     locationCount: sidebarStore.orderedLocations.length,
-    roomCount: switchRoomsStore.listedRoomsInActiveScope.length,
+    roomCount: listedRooms.length,
     serverListedAgentCount: managedAgentCount,
   });
 

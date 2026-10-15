@@ -22,6 +22,7 @@ def _app(**overrides: object) -> object:
         room_store=MagicMock(),
         room_group_store=MagicMock(),
         room_service=MagicMock(),
+        chat_service=MagicMock(),
         bridge_store=MagicMock(),
         client_lifecycle=MagicMock(),
         collab_lifecycle=MagicMock(),

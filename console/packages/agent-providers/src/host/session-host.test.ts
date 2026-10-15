@@ -690,6 +690,29 @@ it('waits for native compaction and keeps history without sending a summarizatio
   expect(fixture.adapter.interruptTurn).not.toHaveBeenCalled();
 });
 
+it('publishes context usage when a turn ends and clears it on reset', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'sdk-context-test-'));
+  roots.push(root);
+  const fixture = setup('claude');
+  fixture.adapter.contextUsage = vi.fn(async () => ({ usedTokens: 134000, windowTokens: 0 }));
+  const host = await HostedSession.start(root, fixture.config, fixture.adapter);
+  hosts.push(host);
+  await waitFor(() => expect(host.snapshot().session.status).toBe('ready'));
+  expect(host.snapshot().session.context).toBeUndefined();
+  await host.command(message('turn'));
+  await waitFor(() => expect(fixture.adapter.sendTurn).toHaveBeenCalledTimes(1));
+  fixture.emit({ type: 'turn.completed', turnId: 'turn', outcome: 'completed', usage: [] });
+  await waitFor(() =>
+    expect(host.snapshot().session.context).toMatchObject({
+      usedTokens: 134000,
+      windowTokens: null,
+    })
+  );
+  await host.command({ ...message('reset'), body: { type: 'session.reset' } });
+  await waitFor(() => expect(host.snapshot().session.status).toBe('ready'));
+  expect(host.snapshot().session.context).toBeNull();
+});
+
 it('stages attachments before dispatch and never executes after shutdown during transfer', async () => {
   const { adapter, config } = setup('codex');
   let resolve!: (files: Array<{ path: string; mimeType: string }>) => void;
@@ -1468,4 +1491,124 @@ it('caps what a room reply quotes and adds the failure the text does not already
     'I finished without posting a reply. My last words were:\n\nHalfway there\n\n(The turn was interrupted: Stopped by a person)'
   );
   expect(unpostedReply('', 'error', null)).toBe('I finished without replying. The turn failed.');
+});
+
+/**
+ * One turn, as the provider reports it, with or without its reasoning; what
+ * the host records and publishes for it, with the per-event noise removed.
+ */
+async function runTurn(provider: 'codex' | 'claude', withReasoning: boolean) {
+  const { host, emit, root } = await start(provider);
+  const published: unknown[] = [];
+  host.onPublished((event) => published.push(event.body));
+  await host.command(message('turn'));
+  await vi.waitFor(() => expect(host.snapshot().turns[0]?.status).toBe('running'));
+  const secret = 'PRIVATE REASONING TEXT';
+  if (withReasoning) {
+    if (provider === 'codex') {
+      emit({
+        type: 'item.started',
+        turnId: 'turn',
+        item: { id: 'r1', type: 'reasoning', status: 'in_progress', title: 'Reasoning' },
+      });
+      emit({ type: 'item.delta', turnId: 'turn', itemId: 'r1', delta: secret });
+      emit({ type: 'content.delta', turnId: 'turn', itemId: 'r1', delta: ' more' });
+    }
+    emit({
+      type: 'item.completed',
+      turnId: 'turn',
+      item: {
+        id: 'r1',
+        type: 'reasoning',
+        status: 'completed',
+        title: secret,
+        text: `${secret} more`,
+      },
+    });
+  }
+  emit({
+    type: 'item.completed',
+    turnId: 'turn',
+    item: { id: 'a1', type: 'assistant_message', status: 'completed', title: 'Done', text: 'Done' },
+  });
+  emit({ type: 'turn.completed', turnId: 'turn', outcome: 'completed', usage: [] });
+  await vi.waitFor(() => expect(host.snapshot().turns[0]?.status).toBe('completed'));
+  await host.barrier();
+  const journal = await readFile(join(root, 'events.jsonl'), 'utf8');
+  const snapshot = host.snapshot();
+  const strip = (value: unknown) =>
+    JSON.parse(
+      JSON.stringify(value, (key, field) =>
+        ['eventId', 'occurredAt', 'revision', 'createdAt', 'updatedAt'].includes(key)
+          ? undefined
+          : field
+      )
+    );
+  return {
+    host,
+    secret,
+    journal,
+    published: strip(published),
+    snapshot: strip({ ...snapshot, session: { ...snapshot.session, epoch: null } }),
+  };
+}
+
+it.each(['codex', 'claude'] as const)(
+  'keeps %s reasoning off the event stream, the journal and the snapshot',
+  async (provider) => {
+    const withReasoning = await runTurn(provider, true);
+    expect(withReasoning.journal).not.toContain(withReasoning.secret);
+    expect(JSON.stringify(withReasoning.published)).not.toContain(withReasoning.secret);
+    expect(JSON.stringify(withReasoning.snapshot)).not.toContain(withReasoning.secret);
+    expect(withReasoning.host.reasoning(['turn']).turns[0]?.text).toBe(
+      `${withReasoning.secret} more`
+    );
+    // What an older client or server sees is exactly what it saw before reasoning was kept.
+    const without = await runTurn(provider, false);
+    expect(withReasoning.published).toEqual(without.published);
+    expect(withReasoning.snapshot).toEqual(without.snapshot);
+    expect(without.host.reasoning(null).turns).toEqual([]);
+  }
+);
+
+it('times reasoning only from a real start: Codex has one, Claude does not', async () => {
+  const codex = await runTurn('codex', true);
+  const [timed] = codex.host.reasoning(null).turns;
+  expect(timed?.startedAt).toEqual(expect.any(String));
+  expect(timed?.completedAt).toEqual(expect.any(String));
+  expect(codex.host.reasoning(null).epoch).toBe(codex.host.snapshot().session.epoch);
+  const claude = await runTurn('claude', true);
+  const [untimed] = claude.host.reasoning(['turn', 'other']).turns;
+  expect(untimed?.startedAt).toBeNull();
+  expect(untimed?.completedAt).toEqual(expect.any(String));
+});
+
+it('keeps tool input and output off the event stream, the journal and the snapshot', async () => {
+  const { host, emit, root } = await start('claude');
+  const published: unknown[] = [];
+  host.onPublished((event) => published.push(event.body));
+  await host.command(message('turn'));
+  await vi.waitFor(() => expect(host.snapshot().turns[0]?.status).toBe('running'));
+  const input = { file_path: '/repo/PRIVATE-INPUT.ts' };
+  const tool = { id: 't1', type: 'tool_call', title: 'Read', toolName: 'Read', payload: input };
+  emit({ type: 'item.started', turnId: 'turn', item: { ...tool, status: 'in_progress' } });
+  emit({
+    type: 'item.completed',
+    turnId: 'turn',
+    item: { ...tool, status: 'completed', text: 'PRIVATE OUTPUT' },
+  });
+  emit({ type: 'turn.completed', turnId: 'turn', outcome: 'completed', usage: [] });
+  await vi.waitFor(() => expect(host.snapshot().turns[0]?.status).toBe('completed'));
+  await host.barrier();
+  const journal = await readFile(join(root, 'events.jsonl'), 'utf8');
+  for (const text of [journal, JSON.stringify(published), JSON.stringify(host.snapshot())]) {
+    expect(text).not.toContain('PRIVATE-INPUT');
+    expect(text).not.toContain('PRIVATE OUTPUT');
+  }
+  expect(host.reasoning(['turn']).tools).toEqual([
+    {
+      turnId: 'turn',
+      tools: [expect.objectContaining({ input, output: 'PRIVATE OUTPUT', toolName: 'Read' })],
+    },
+  ]);
 });

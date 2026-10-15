@@ -615,6 +615,19 @@ export async function runController(
     });
   };
 
+  /** A hint from someone typing to the agent: a failure costs only the head start. */
+  const warmAgent = async (agentId: string, roomId: string): Promise<void> => {
+    try {
+      await runtime.warm(agentId, roomId);
+    } catch (error) {
+      log.warn('Could not warm an agent’s session for a room; its first message starts it', {
+        agentId,
+        roomId,
+        error: errorMessage(error),
+      });
+    }
+  };
+
   const onFrame = async (frame: ControllerFrame): Promise<void> => {
     switch (frame.type) {
       case 'connection_state':
@@ -636,6 +649,9 @@ export async function runController(
         return;
       case 'agent.session_command':
         hub.sessionCommand(frame.data);
+        return;
+      case 'agent.warm':
+        void warmAgent(frame.data.agent_id, frame.data.room_id);
         return;
       case 'agent.approval_outcome':
         hub.approvalOutcome(frame.data);

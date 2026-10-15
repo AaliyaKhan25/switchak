@@ -416,6 +416,9 @@ export const agentSessionCommandFrameSchema = z.object({
 });
 export type AgentSessionCommandFrame = z.infer<typeof agentSessionCommandFrameSchema>;
 
+export const agentWarmFrameSchema = z.object({ agent_id: id, room_id: id });
+export type AgentWarmFrame = z.infer<typeof agentWarmFrameSchema>;
+
 export const agentApprovalOutcomeFrameSchema = z.object({
   agent_id: id,
   outcome: z.looseObject({

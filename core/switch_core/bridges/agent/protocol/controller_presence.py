@@ -167,6 +167,7 @@ class ControllerConnection:
     sent_cursors: dict[str, int] = field(default_factory=dict)
     # Frames owed to the stream, written on its next pass.
     session_commands: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
+    warms: set[tuple[str, str]] = field(default_factory=set)
     detached: dict[str, str] = field(default_factory=dict)
     rooms_changed: set[str] = field(default_factory=set)
 
@@ -416,6 +417,20 @@ class ControllerPresence:
         conn.wake.set()
         return True
 
+    def relay_warm(self, agent_id: str, room_id: str) -> bool:
+        """Ask the agent's controller to start the session a message to
+        `room_id` would start. False when its controller is not live or the
+        agent is stopped. A warm already owed for the room is not repeated."""
+        binding = self._bindings.get(agent_id)
+        if binding is None or not binding.running:
+            return False
+        conn = self._live_connection(binding.controller_id)
+        if conn is None:
+            return False
+        conn.warms.add((agent_id, room_id))
+        conn.wake.set()
+        return True
+
     def room_joined(self, agent_id: str, room_id: str) -> None:
         self._rooms_changed(agent_id, room_id, joined=True)
 
@@ -586,6 +601,11 @@ class ControllerPresence:
     ) -> list[tuple[str, dict[str, Any]]]:
         owed = list(conn.session_commands)
         conn.session_commands.clear()
+        return owed
+
+    def take_warms(self, conn: ControllerConnection) -> list[tuple[str, str]]:
+        owed = sorted(conn.warms)
+        conn.warms.clear()
         return owed
 
     def _close(self, conn: ControllerConnection, closure: Closure) -> None:

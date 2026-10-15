@@ -96,6 +96,7 @@ if TYPE_CHECKING:
     )
     from switch_core.clients.client_lifecycle_service import ClientLifecycleService
     from switch_core.clients.workspace_consumer import WorkspaceConsumer
+    from switch_core.events import CommandEvent
     from switch_core.room_service import RoomService
 
 
@@ -2013,6 +2014,38 @@ class CollaborationCore:
         with tenant_scope(await self._room_tenant(room_id)):
             with self._counted_outbound("message"):
                 await self._relay_outbound_message(channel_id, event)
+
+    async def handle_outbound_command(self, room: RoomRef, event: CommandEvent) -> None:
+        """Post a room command as the text that types it, so the reply threaded
+        under the command has a platform post to sit under.
+
+        A command typed on the platform names its human actor as `user_id`, so
+        `handle_outbound_message` drops it like any other message from there.
+        """
+        assert event.message_id is not None and event.thread_id is not None
+        threaded = event.thread_id != event.message_id
+        await self.handle_outbound_message(
+            room,
+            TransportMessage(
+                room_id=room.room_id,
+                event_id=event.message_id,
+                sender=event.user_id,
+                timestamp=0,
+                content=(
+                    {
+                        "m.relates_to": {
+                            "rel_type": "m.thread",
+                            "event_id": event.thread_id,
+                        }
+                    }
+                    if threaded
+                    else {}
+                ),
+                body=f"!{event.command} {event.args}".strip(),
+                sender_name=event.user_name,
+                thread_root_id=event.thread_id if threaded else None,
+            ),
+        )
 
     async def _relay_outbound_message(
         self, channel_id: str, event: TransportMessage

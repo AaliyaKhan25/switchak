@@ -1,4 +1,4 @@
-import type { ModelChoice } from '@switch-console/shared/session-v1';
+import type { ModelChoice, SessionContext } from '@switch-console/shared/session-v1';
 import type {
   ApprovalDecision,
   ProviderKind,
@@ -145,6 +145,11 @@ export interface ProviderAdapter {
   canCompact?(sessionId: string): Promise<boolean>;
   listModels?(sessionId: string): Promise<ModelChoice[]>;
   setModel?(sessionId: string, model: ModelSelection): Promise<void>;
+  /**
+   * How full the conversation's context window is now, as the provider
+   * measures it; null when it has not said. Absent means it never reports one.
+   */
+  contextUsage?(sessionId: string): Promise<Omit<SessionContext, 'updatedAt'> | null>;
   /**
    * Adds a developer message to the conversation, read by the model before
    * the next turn with a developer message's weight. Absent means the provider

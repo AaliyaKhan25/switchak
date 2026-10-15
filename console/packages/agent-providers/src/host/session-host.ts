@@ -27,7 +27,9 @@ import { ChatProjector } from '../session-v1/chat-projector';
 import { ATTACHMENT_MIME_TYPES } from './attachments';
 import { Journal } from './journal';
 import { fitModelCatalog } from './model-catalog';
+import { ReasoningBuffer, type HostReasoningList } from './reasoning-buffer';
 import type { Redactions } from './redaction';
+import { ToolDetailBuffer } from './tool-detail-buffer';
 
 export const hostInboxRecordSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('accepted'), command: commandSchema }),
@@ -105,6 +107,10 @@ export class HostedSession {
   private readonly queue: Command[] = [];
   private readonly questions = new Map<string, PendingQuestion>();
   private readonly listeners = new Set<(event: ServerEvent) => void>();
+  /** Recent reasoning, in memory only: never published, journaled or replayed. */
+  private readonly reasoningBuffer = new ReasoningBuffer();
+  /** Recent tool input and output, in memory only, under the same rules as reasoning. */
+  private readonly toolDetails = new ToolDetailBuffer();
   private activeTurn: string | null = null;
   private serial: Promise<unknown> = Promise.resolve();
   private eventSerial: Promise<unknown> = Promise.resolve();
@@ -178,6 +184,8 @@ export class HostedSession {
     this.projector = new ChatProjector(config.session, config.redactions ?? null);
     this.unsubscribe = adapter.subscribe((event) => {
       if (event.sessionId !== config.session.sessionId) return;
+      this.reasoningBuffer.ingest(event, this.config.session.epoch, Date.now());
+      this.toolDetails.ingest(event, this.config.session.epoch);
       // Process cleanup leaves this conversation available for recovery.
       // An explicit session.stop is handled before shutdown and remains terminal.
       if (
@@ -279,6 +287,7 @@ export class HostedSession {
         if (config.epochAuthority !== 'server') config.session.epoch = randomUUID();
         const next = host.replica.snapshot();
         config.session.models = next.session.models;
+        config.session.context = next.session.context;
         next.session = structuredClone(config.session);
         host.replica = new SessionReplica(next);
       }
@@ -397,6 +406,28 @@ export class HostedSession {
     await this.publish({ type: 'notice', level: 'error', code, message });
   }
 
+  /** Reads how full the context window is and publishes it; unknown when the read fails. */
+  private async refreshContext(): Promise<void> {
+    if (!this.adapter.contextUsage) return;
+    const { sessionId, epoch } = this.config.session;
+    let usage: Awaited<ReturnType<NonNullable<ProviderAdapter['contextUsage']>>> = null;
+    try {
+      usage = await this.adapter.contextUsage(sessionId);
+    } catch (error) {
+      console.warn(`Could not read context usage for session ${sessionId}: ${String(error)}`);
+    }
+    if (this.shuttingDown || this.resetting || epoch !== this.config.session.epoch) return;
+    this.config.session.context = usage
+      ? {
+          usedTokens: Math.max(0, Math.round(usage.usedTokens)),
+          windowTokens:
+            usage.windowTokens && usage.windowTokens > 0 ? Math.round(usage.windowTokens) : null,
+          updatedAt: new Date().toISOString(),
+        }
+      : null;
+    await this.publish({ type: 'session.upsert', session: structuredClone(this.config.session) });
+  }
+
   private async refreshModels(): Promise<void> {
     const generation = ++this.modelGeneration;
     const compact =
@@ -504,6 +535,17 @@ export class HostedSession {
 
   snapshot(): Snapshot {
     return this.replica.snapshot();
+  }
+  /**
+   * The reasoning and tool details still held for `turnIds` (all buffered
+   * turns when null), for this epoch.
+   */
+  reasoning(turnIds: string[] | null): HostReasoningList {
+    const epoch = this.config.session.epoch;
+    return {
+      ...this.reasoningBuffer.list(epoch, turnIds),
+      tools: this.toolDetails.list(epoch, turnIds),
+    };
   }
   replay(after: number): { events: ServerEvent[]; throughSequence: number } {
     return {
@@ -803,6 +845,7 @@ export class HostedSession {
             type: 'session.upsert',
             session: structuredClone(this.config.session),
           });
+          void this.refreshContext().catch((error: unknown) => this.fail(error));
         } catch (error) {
           await this.fail(error);
           throw error;
@@ -845,6 +888,7 @@ export class HostedSession {
           const epoch = this.config.resetEpoch ? await this.config.resetEpoch() : randomUUID();
           this.config.session.epoch = epoch;
           this.config.session.status = 'starting';
+          this.config.session.context = null;
           const snapshot = this.snapshot();
           snapshot.session = structuredClone(this.config.session);
           this.replica = new SessionReplica(snapshot);
@@ -1161,6 +1205,7 @@ export class HostedSession {
       await this.replyIfUnposted(event.turnId, event.outcome, event.message ?? null);
       this.activeTurn = null;
       void this.runNext().catch((error: unknown) => this.fail(error));
+      void this.refreshContext().catch((error: unknown) => this.fail(error));
     }
   }
 

@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 
 from switch_core.clients.actor import Actor, ClientConfig
 from switch_core.clients.consumer import Consumer
+from switch_core.events import CommandEvent
 from switch_core.logging_context import log_context
 from switch_core.transport import InboundMedia, InboundMessage, RoomRef
 
@@ -58,3 +59,9 @@ class WorkspaceConsumer(Consumer[Actor[WorkspaceConsumerConfig]]):
             bridge="collaboration", platform=self._collaboration_core.bridge_type
         ):
             await self._collaboration_core.handle_outbound_media(room, event, self)
+
+    async def on_command(self, room: RoomRef, event: CommandEvent) -> None:
+        with log_context(
+            bridge="collaboration", platform=self._collaboration_core.bridge_type
+        ):
+            await self._collaboration_core.handle_outbound_command(room, event)

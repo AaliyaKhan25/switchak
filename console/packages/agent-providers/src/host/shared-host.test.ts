@@ -945,6 +945,50 @@ it('tells the session to rejoin its room once a reset asked for there has applie
   }
 }, 20000);
 
+it('tells the room at once when it refuses a compaction asked for there mid-turn', async () => {
+  const host = await start({ rooms: true });
+  const asks = () =>
+    host.parent.sent.filter(
+      (message): message is typeof message & { id: number; ask: Record<string, unknown> } =>
+        message.kind === 'ask'
+    );
+  try {
+    expect(
+      await host.parent.ask({ type: 'room', handoff: roomMessage(1, 'work on it') })
+    ).toMatchObject({ ok: true });
+    await vi.waitFor(() => expect(host.turns).toHaveLength(1), { timeout: 5000 });
+    const compact: Command = {
+      ...relayed('current', 'room-compact', { type: 'session.compact' }),
+      origin: {
+        actorId: '@person:test',
+        surface: 'switch-web',
+        roomId: 'room',
+        threadId: 'thread',
+        messageId: 'message-9',
+      },
+    };
+    const answer = await host.parent.ask({
+      type: 'command',
+      command: compact,
+      requesterName: null,
+    });
+    expect(answer).toMatchObject({ ok: true, value: { status: 'rejected' } });
+    await vi.waitFor(() => expect(asks()).toHaveLength(1), { timeout: 5000 });
+    expect(asks()[0]!.ask).toEqual({
+      type: 'room-reply',
+      roomId: 'room',
+      threadId: 'thread',
+      body: "I can't compact my session while I'm working on a turn. Ask again once I've finished, or stop the turn first.",
+    });
+    // Asked again (a relay retried), the room is not told twice.
+    await host.parent.ask({ type: 'command', command: compact, requesterName: null });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(asks()).toHaveLength(1);
+  } finally {
+    await host.stop();
+  }
+}, 20000);
+
 it('keeps running through a reset whose provider reports the old conversation stopped', async () => {
   const host = await start({ resettable: true, stopReports: true });
   try {

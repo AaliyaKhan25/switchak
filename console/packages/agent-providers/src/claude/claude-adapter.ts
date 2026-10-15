@@ -654,6 +654,11 @@ export class ClaudeAdapter implements ProviderAdapter {
     });
   }
 
+  async contextUsage(sessionId: string): Promise<{ usedTokens: number; windowTokens: number }> {
+    const usage = await this.requireSession(sessionId).query.getContextUsage({ detail: 'summary' });
+    return { usedTokens: usage.totalTokens, windowTokens: usage.maxTokens };
+  }
+
   async setModel(sessionId: string, model: ModelSelection): Promise<void> {
     const session = this.requireSession(sessionId);
     await this.applyModel(session, model);

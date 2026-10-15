@@ -777,6 +777,80 @@ it('routes to the session Console moved the room to, and tells Switch where ever
   });
 });
 
+it('warms a room once: starts its session unasked, and the first message goes to it', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'shared-watch-warm-'));
+  roots.push(root);
+  paths.root = root;
+  const config = await spawning(root);
+  const hosts = sessionHosts();
+  const control = new WatcherControl();
+
+  const abort = new AbortController();
+  const run = runAgentHost(
+    root,
+    config,
+    abort.signal,
+    hosts.supervision,
+    control,
+    openSwitchStream
+  );
+  let warmed: string | null = null;
+  try {
+    await eventually(() => streams.length === 1);
+    warmed = await control.warm('room');
+    expect(warmed).not.toBeNull();
+    expect(published.at(-1)).toEqual({ [warmed!]: 'room' });
+    expect(await control.warm('room')).toBe(warmed);
+    await streams[0]!.onEvent!(addressed(1, 'room'));
+    await eventually(() => settled(root));
+  } finally {
+    abort.abort();
+    await run;
+  }
+
+  expect(
+    new Set(
+      vi.mocked(ensureSharedProcess).mock.calls.map((call) => call[0].config.session.sessionId)
+    )
+  ).toEqual(new Set([warmed]));
+  expect(hosts.to(join(root, warmed!))).toMatchObject([
+    { type: 'room', handoff: { sequence: 1, roomId: 'room', messageId: 'message-1' } },
+  ]);
+  const journal = await AgentHostAssignments.open(root);
+  expect(journal.sessions().map((each) => each.session.sessionId)).toEqual([warmed]);
+  expect(journal.cursor).toBe(1);
+  await expect(control.warm('room')).rejects.toThrow('not running');
+});
+
+it('warms nothing while the agent may not start sessions', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'shared-watch-warm-off-'));
+  roots.push(root);
+  paths.root = root;
+  const config = await spawning(root);
+  await stopSpawning(root);
+  const hosts = sessionHosts();
+  const control = new WatcherControl();
+
+  const abort = new AbortController();
+  const run = runAgentHost(
+    root,
+    config,
+    abort.signal,
+    hosts.supervision,
+    control,
+    openSwitchStream
+  );
+  try {
+    await eventually(() => streams.length === 1);
+    expect(await control.warm('room')).toBeNull();
+  } finally {
+    abort.abort();
+    await run;
+  }
+  expect(vi.mocked(ensureSharedProcess)).not.toHaveBeenCalled();
+  expect((await AgentHostAssignments.open(root)).sessions()).toEqual([]);
+});
+
 it('puts a move Console asked for back when Switch refuses it', async () => {
   const root = await mkdtemp(join(tmpdir(), 'shared-watch-place-refused-'));
   roots.push(root);

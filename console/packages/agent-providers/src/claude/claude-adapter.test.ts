@@ -1090,6 +1090,16 @@ describe('ClaudeAdapter user input', () => {
   });
 });
 
+describe('ClaudeAdapter context usage', () => {
+  it("reads the live query's context usage and window", async () => {
+    const { adapter } = await startSession();
+    await expect(adapter.contextUsage(SESSION)).resolves.toEqual({
+      usedTokens: 134000,
+      windowTokens: 1000000,
+    });
+  });
+});
+
 describe('ClaudeAdapter model switching', () => {
   it('clears an explicit effort when the user selects the provider default', async () => {
     const { sdk, adapter } = await startSession();

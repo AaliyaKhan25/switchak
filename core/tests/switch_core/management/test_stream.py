@@ -379,6 +379,27 @@ class TestLiveChanges:
             {"agent_id": agent_id, "room_id": room_id, "command": command},
         )
 
+    async def test_a_warm_reaches_the_stream_once_per_room(
+        self, harness: Harness
+    ) -> None:
+        owner = await add_member(harness.session_factory, "ada")
+        async with harness.client() as client:
+            controller = await enroll_console(harness, client, owner)
+            agent_id = await place_agent(client, controller, name="reviewer")
+            room_id = await add_room(harness.session_factory, agent_id)
+            opened = await open_connection(client, controller)
+        stream = await open_stream(harness, controller, opened)
+        await take(stream, 2)
+
+        presence = harness.protocol.connections.controllers
+        assert presence.relay_warm(agent_id, room_id)
+        assert presence.relay_warm(agent_id, room_id)
+        (frame,) = await take(stream, 1)
+        assert not presence.relay_warm("not-bound", room_id)
+        await stream.aclose()
+
+        assert frame == ("agent.warm", {"agent_id": agent_id, "room_id": room_id})
+
     async def test_the_nudges_are_merged_and_revocation_ends_the_stream(
         self, harness: Harness
     ) -> None:

@@ -87,6 +87,7 @@ from switch_core.db.models import (
     Tool,
     User,
     require_tenant_id,
+    room_agents,
 )
 from switch_core.db.session_scope import tenant_session
 from switch_core.db.stores.agent_runtime_state_store import (
@@ -289,6 +290,9 @@ class AgentCore:
     # The credential broker, set by the process wiring when service
     # connections are on; None means they are off, and nothing can be granted.
     service_broker: ServiceBroker | None = None
+    # Told (tenant_id, room_id) for each room a deleted agent was in, after it
+    # is gone, so whatever follows rooms' agents can catch up at once.
+    _room_agents_listener: Callable[[str, str], Awaitable[None]] | None = None
 
     def __init__(
         self,
@@ -813,6 +817,11 @@ class AgentCore:
     ) -> None:
         self._agent_removal_listener = listener
 
+    def set_room_agents_listener(
+        self, listener: Callable[[str, str], Awaitable[None]]
+    ) -> None:
+        self._room_agents_listener = listener
+
     async def _create_bridge_identities(
         self, tenant_id: str, agent_name: str, description: str
     ) -> None:
@@ -1003,6 +1012,18 @@ class AgentCore:
             "had_parent": agent.parent_agent_id is not None,
         }
         removed["room_count"] = await self._room_count_for(resolved_id)
+        room_ids: list[str] = []
+        if self._room_agents_listener is not None:
+            async with self.session_factory() as session:
+                room_ids = list(
+                    (
+                        await session.execute(
+                            select(room_agents.c.room_id).where(
+                                room_agents.c.agent_id == resolved_id
+                            )
+                        )
+                    ).scalars()
+                )
         if self._agent_removal_listener is not None:
             await self._agent_removal_listener(tenant_id, resolved_id)
         await self.client_lifecycle.stop(client_id)
@@ -1017,6 +1038,9 @@ class AgentCore:
             await self.client_lifecycle.delete_record(session, client_id)
             await session.commit()
         self.api_key_cache.invalidate_agent(resolved_id)
+        if self._room_agents_listener is not None:
+            for room_id in room_ids:
+                await self._room_agents_listener(tenant_id, room_id)
 
         emit_safely(self.telemetry, "agent_deleted", removed)
 

@@ -1,5 +1,6 @@
 import type { ComponentType, ReactNode } from 'react';
 import { homeView } from '@renderer/app/home-view';
+import { chatView } from '@renderer/features/chats/chat-view';
 import { locationView } from '@renderer/features/locations/view';
 import { managedAgentView } from '@renderer/features/managed-agents/managed-agent-view';
 import { remoteHostView } from '@renderer/features/remote-hosts/views/remote-host-view';
@@ -27,6 +28,7 @@ export const views = {
   home: homeView,
   location: locationView,
   session: sessionView,
+  chat: chatView,
   managedAgent: managedAgentView,
   room: roomView,
   settings: settingsView,

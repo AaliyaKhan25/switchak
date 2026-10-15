@@ -120,6 +120,8 @@ interface CodexSessionState {
    */
   usage: CumulativeUsage;
   unreportedUsage: TokenUsage[];
+  /** The last model call's size against the window, cleared when a compaction makes it stale. */
+  context?: { usedTokens: number; windowTokens: number | null };
 }
 
 interface ThreadModeConfig {
@@ -483,6 +485,12 @@ export class CodexAdapter implements ProviderAdapter {
     });
   }
 
+  async contextUsage(
+    sessionId: string
+  ): Promise<{ usedTokens: number; windowTokens: number | null } | null> {
+    return this.requireSession(sessionId).context ?? null;
+  }
+
   async compactSession(sessionId: string): Promise<void> {
     const state = this.requireSession(sessionId);
     if (state.activeNativeTurnId || state.compaction) throw new Error('SESSION_BUSY');
@@ -495,6 +503,7 @@ export class CodexAdapter implements ProviderAdapter {
     void promise.catch(() => {});
     const pending = { promise, resolve, reject };
     state.compaction = pending;
+    state.context = undefined;
     try {
       await state.client.request('thread/compact/start', { threadId: state.threadId });
       await pending.promise;
@@ -618,6 +627,12 @@ export class CodexAdapter implements ProviderAdapter {
       const payload = params as CodexThreadTokenUsageUpdatedNotification;
       if (!this.isOwnThread(state, payload.threadId)) return;
       const { total, last } = payload.tokenUsage;
+      // The compaction call's own report measures the history it replaced.
+      if (!state.compaction)
+        state.context = {
+          usedTokens: last.totalTokens,
+          windowTokens: payload.tokenUsage.modelContextWindow,
+        };
       if (!state.usage.started) {
         state.usage.startFrom(
           new Map([['', subtractCodexUsage(codexCounts(total), codexCounts(last))]])

@@ -303,6 +303,10 @@ describe('CodexAdapter', () => {
         },
       ],
     ]);
+    await expect(adapter.contextUsage('session-1')).resolves.toEqual({
+      usedTokens: 164,
+      windowTokens: null,
+    });
   });
 
   it("counts a resumed thread from its first report, not from the thread's history", async () => {

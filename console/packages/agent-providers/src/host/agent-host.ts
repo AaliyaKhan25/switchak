@@ -52,6 +52,16 @@ const assignmentSchema = z.strictObject({
   config: sharedConfigSchema,
 });
 
+/**
+ * A session started for a room before any message reached it (Console warming
+ * a chat while its user types). It has no sequence: nothing was delivered.
+ */
+const warmedSchema = z.strictObject({
+  warmed: z.literal(true),
+  roomId: z.string().min(1),
+  config: sharedConfigSchema,
+});
+
 /** Marks where the server's sequence numbering restarted. */
 const restartSchema = z.strictObject({ restarted: z.literal(true), at: z.string().min(1) });
 
@@ -97,9 +107,11 @@ export const assignmentRecordSchema = z.union([
   handledSchema,
   parkedSchema,
   releasedSchema,
+  warmedSchema,
 ]);
 
 type Assignment = z.infer<typeof assignmentSchema>;
+type Assigned = Assignment | z.infer<typeof warmedSchema>;
 type Held = Handoff & { spawning: boolean };
 type WatchRecord = z.infer<typeof assignmentRecordSchema>;
 
@@ -125,6 +137,11 @@ function isReset(command: Record<string, unknown>): boolean {
 }
 
 function isAssignment(record: WatchRecord): record is Assignment {
+  return 'sequence' in record;
+}
+
+/** An assignment or a warmed session: a session this watcher started for a room. */
+function isAssigned(record: WatchRecord): record is Assigned {
   return 'config' in record;
 }
 
@@ -421,8 +438,8 @@ export class AgentHostAssignments {
     return records.slice(index + 1);
   }
 
-  private get every(): Assignment[] {
-    return this.journal.records.filter(isAssignment);
+  private get every(): Assigned[] {
+    return this.journal.records.filter(isAssigned);
   }
 
   /** Held deliveries this journal has finished with, by room and message. */
@@ -587,6 +604,17 @@ export class AgentHostAssignments {
       messageId: event.messageId,
       config,
     });
+    return config;
+  }
+
+  /** A new session for a room no message has reached yet. */
+  async warm(template: SharedHostConfig, roomId: string): Promise<SharedHostConfig> {
+    if (!template.roomConnection?.connectionId)
+      throw new Error('A watcher assignment needs the connection its agent is reached over.');
+    const sessionId = randomUUID();
+    const config = sessionFrom(template, sessionId);
+    await mkdir(sharedSessionRoot(sessionId), { recursive: true });
+    await this.journal.append({ warmed: true, roomId, config });
     return config;
   }
 
@@ -1391,6 +1419,32 @@ export async function runAgentHost(
               `Room ${roomId} moved from session ${moved.displaced} to session ${sessionId}.`
             );
           return { sessionId, roomId, ...moved };
+        },
+        // Queued with the events, so a message arriving meanwhile finds the
+        // session this placed rather than starting a second one.
+        warm: (roomId) => {
+          const run = async (): Promise<string | null> => {
+            const placed = placements.sessionIn(roomId);
+            if (placed) {
+              const owner = await sessionConfig(placed);
+              if (owner && !(await stopped(placed))) {
+                if (!links.ready(sharedSessionRoot(placed))) await launch(owner);
+                return placed;
+              }
+            }
+            if (!spawn) return null;
+            const config = await assignments.warm(await currentTemplate(), roomId);
+            await placements.place(config.session.sessionId, roomId);
+            publishQuietly();
+            await launch(config);
+            return config.session.sessionId;
+          };
+          const warmed = pending.then(run);
+          pending = warmed.then(
+            () => {},
+            () => {}
+          );
+          return warmed;
         },
       })
     );
