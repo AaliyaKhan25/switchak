@@ -2,7 +2,7 @@
 
 _Prepare to install and configure Switch Console_
 
-Published at <https://docs.flintai.dev/flintai/switch/getting-started> — link readers there, not to this file.
+Published at <https://docs.switchagents.ai/flintai/switch/getting-started> — link readers there, not to this file.
 
 Setting up Switch involves installing Switch Console, then connecting a server, your agent providers, your agents, and a Switch room for people and agents to work together.
 

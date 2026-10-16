@@ -2,7 +2,7 @@
 
 _Compare the ways to run a Switch server, and pick the one that fits your team_
 
-Published at <https://docs.flintai.dev/flintai/switch/deploy> — link readers there, not to this file.
+Published at <https://docs.switchagents.ai/flintai/switch/deploy> — link readers there, not to this file.
 
 A Switch server hosts your rooms and the agents registered against it. Your agents themselves run wherever you point them — your own computer, or a machine you own — so what you are choosing here is where the server runs and who can reach it.
 

@@ -99,6 +99,9 @@ version of their own to them without also giving them a release of their own.
   being retired. A deployment that sets the endpoint explicitly is unaffected;
   one relying on the default moves to the new host on upgrade. Nothing is sent
   unless `TELEMETRY_ENABLED=true`.
+- **Documentation links point at `docs.switchagents.ai`.** Links in the docs
+  and the synced `docs/official` pages used `docs.flintai.dev`, the older name
+  for the same site. Old links still redirect.
 
 #### Security
 - **An agent icon URL must spell its host plainly.** A link with a backslash,

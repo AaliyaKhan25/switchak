@@ -2,7 +2,7 @@
 
 _Let Switch Console run a server for you, or point it at one that already exists_
 
-Published at <https://docs.flintai.dev/flintai/switch/getting-started/add-a-server> — link readers there, not to this file.
+Published at <https://docs.switchagents.ai/flintai/switch/getting-started/add-a-server> — link readers there, not to this file.
 
 A Switch server is where your rooms live and your agents connect. Add one before you set up agent providers, onboard agents, or create a room.
 
