@@ -17,6 +17,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from switch_core.feature_flags import (
     AGENT_CHATS,
     AGENT_MANAGEMENT,
+    FOLLOW_THE_CONVERSATION,
     HOSTED_AGENTS,
     KNOWN_FEATURE_FLAGS,
     SERVICE_CONNECTIONS,
@@ -191,6 +192,11 @@ class SwitchConfig(BaseSettings):
     # the life of the process; an unknown key is a startup error rather than a
     # silently ignored typo.
     feature_flags_enabled: str = ""
+
+    # Follow the conversation (feature flag `follow_the_conversation`).
+    # How long after an agent's answer a person's next channel message still
+    # counts as a follow-up to it.
+    follow_the_conversation_window_seconds: int = Field(default=300, ge=1, le=3600)
 
     # Gateway admin seed
     gateway_admin_email: str
@@ -1173,6 +1179,10 @@ class SwitchConfig(BaseSettings):
     @property
     def service_connections_enabled(self) -> bool:
         return self.feature_flags[SERVICE_CONNECTIONS]
+
+    @property
+    def follow_the_conversation_enabled(self) -> bool:
+        return self.feature_flags[FOLLOW_THE_CONVERSATION]
 
     @property
     def agent_chats_enabled(self) -> bool:

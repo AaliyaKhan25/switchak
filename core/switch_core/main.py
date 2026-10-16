@@ -170,6 +170,7 @@ from switch_core.db.stores.tenant_store import TenantStore
 from switch_core.db.stores.usage_store import UsageStore
 from switch_core.db.stores.user_store import UserStore
 from switch_core.db.tenant_lookup import all_tenant_ids
+from switch_core.delivery.conversation import ConversationRules, ConversationSettings
 from switch_core.delivery.recipient import RecipientServices
 from switch_core.delivery.router import GROUP_SWEEP_SECONDS, MessageRouter
 from switch_core.gateway.app import create_gateway_app
@@ -818,6 +819,13 @@ async def run(config: SwitchConfig, process_id: str) -> None:
         message_store=message_store,
         client_store=client_store,
         budget_store=budget_store,
+        conversation=ConversationRules(
+            settings=ConversationSettings.from_config(config),
+            message_store=message_store,
+            room_store=room_store,
+            agent_store=agent_store,
+            room_role_store=room_role_store,
+        ),
     )
 
     MembershipSignals(invites=invites, bus=signal_bus, router=router)
@@ -937,12 +945,14 @@ async def run(config: SwitchConfig, process_id: str) -> None:
         agent_store=agent_store,
         room_store=room_store,
         room_role_store=room_role_store,
+        external_user_store=external_user_store,
         document_store=document_store,
         reference_store=reference_store,
         agent_session_store=agent_session_store,
         room_service=room_service,
         connections=connections,
         frontend_base_url=config.frontend_base_url,
+        follow_the_conversation_enabled=config.follow_the_conversation_enabled,
     )
 
     # ── Agent management (off unless the agent_management flag is on) ─────────

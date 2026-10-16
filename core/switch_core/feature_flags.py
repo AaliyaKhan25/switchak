@@ -43,6 +43,13 @@ AGENT_MANAGEMENT = "agent_management"
 # connect routes stay.
 SERVICE_CONNECTIONS = "service_connections"
 
+# Follow the conversation: a person's message that mentions nobody reaches an
+# agent when it is a reply in a thread the agent is taking part in, the next
+# message in an exchange the agent has just answered, or a message in a room
+# whose main agent it is (`delivery/conversation.py`). With it off such
+# messages reach nobody, as before.
+FOLLOW_THE_CONVERSATION = "follow_the_conversation"
+
 # Agent chats in Switch Console: an agent's page opens on its chats (its
 # direct chats and the rooms it is in) beside the conversation. Core puts an
 # agent's owner back in each chat they started that holds the agent; with it
@@ -57,6 +64,7 @@ KNOWN_FEATURE_FLAGS: frozenset[str] = frozenset(
         HOSTED_AGENTS,
         AGENT_MANAGEMENT,
         SERVICE_CONNECTIONS,
+        FOLLOW_THE_CONVERSATION,
         AGENT_CHATS,
     }
 )

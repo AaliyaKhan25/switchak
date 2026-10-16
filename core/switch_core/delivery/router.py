@@ -90,7 +90,13 @@ from switch_core.db.models import (
     room_agents,
 )
 from switch_core.db.session_scope import tenant_session
+from switch_core.db.stores.room_store import follow_ups_enabled_in, main_agent_in
 from switch_core.delivery.addressing import AddressingResolver, SenderPrincipal
+from switch_core.delivery.conversation import (
+    ConversationMessage,
+    ConversationRules,
+    may_follow,
+)
 from switch_core.delivery.recipient import (
     NOTHING,
     AgentRecipient,
@@ -296,6 +302,8 @@ class RoomReads:
                 bridge_id=room.bridge_id,
                 agent_greetings_enabled=True if greetings is None else greetings,
                 channel_type=room.channel_type,
+                follow_ups_enabled=follow_ups_enabled_in(room.metadata_),
+                main_agent_id=main_agent_in(room.metadata_),
             ),
             group_id=room.group_id,
             members=sorted(members, key=lambda member: member.agent.id),
@@ -734,9 +742,11 @@ class MessageRouter:
         message_store: MessageStore,
         client_store: ClientStore,
         budget_store: BudgetStore,
+        conversation: ConversationRules,
     ) -> None:
         self.services = services
         self._messages = message_store
+        self._conversation = conversation
         self._client_store = client_store
         self._budget_store = budget_store
         self._transports: Callable[[Actor[ClientConfig]], MessageTransport] | None = (
@@ -1043,11 +1053,12 @@ class MessageRouter:
         if isinstance(event, InboundCustomEvent):
             return await self._decide_custom(recipients, event)
         assert isinstance(event, InboundMessage)
-        return await self._decide_message(session, recipients, event)
+        return await self._decide_message(session, reads, recipients, event)
 
     async def _decide_message(
         self,
         session: AsyncSession,
+        reads: RoomReads,
         recipients: list[AgentRecipient],
         event: InboundMessage,
     ) -> _Plan:
@@ -1063,10 +1074,60 @@ class MessageRouter:
         if not any(delivery.named for _, delivery in deliveries):
             # No rule named any agent in the room (no name, alias, held role
             # or direct room), so the message is the room's conversation:
-            # every agent that reads the room reads it from `messages`, and
-            # none is woken for it. This is the one place a message is found
-            # to address no agent by any explicit rule.
+            # every agent that reads the room reads it from `messages`. This
+            # is the one place a message is found to address no agent by any
+            # explicit rule, and so where following the conversation may
+            # still hand it to one.
+            return await self._follow_the_conversation(
+                session, reads, recipients, event
+            )
+        return _Plan(deliveries=deliveries)
+
+    async def _follow_the_conversation(
+        self,
+        session: AsyncSession,
+        reads: RoomReads,
+        recipients: list[AgentRecipient],
+        event: InboundMessage,
+    ) -> _Plan:
+        """The agents a message that names nobody reaches anyway, by the rules
+        in `delivery/conversation.py`. Most chatter is settled by `may_follow`
+        without a read; past it, what the rules read is read once for the
+        room and shared by every agent's decision."""
+        rules = self._conversation
+        meta = reads.meta
+        message = ConversationMessage(
+            event_id=event.event_id,
+            sender=event.sender,
+            body=event.body or "",
+            content=event.content,
+            thread_root_id=event.thread_root_id,
+            # Not stamped until written (`_Unwritten`); the database stamps it
+            # with its own clock a moment from now.
+            sent_at=datetime.now(UTC),
+        )
+        if not recipients or not may_follow(
+            rules.settings, channel_type=meta.channel_type, message=message
+        ):
             return _Plan()
+        conversation = rules.for_message(
+            addressing=reads.addressing,
+            room_id=reads.room_id,
+            channel_type=meta.channel_type,
+            follow_ups_enabled=meta.follow_ups_enabled,
+            main_agent_id=meta.main_agent_id,
+            message=message,
+        )
+        deliveries: list[tuple[AgentRecipient, Delivery]] = []
+        for recipient in recipients:
+            decision = await conversation.decide(
+                session,
+                agent=recipient.agent,
+                agent_user_id=recipient.transport_user_id,
+            )
+            delivery = await recipient.decide_follow_up(session, event, decision)
+            if delivery.own_event is not None:
+                deliveries.append((recipient, delivery))
         return _Plan(deliveries=deliveries)
 
     async def _decide_file(

@@ -53,6 +53,7 @@ from switch_core.db.stores.reference_store import ReferenceStore
 from switch_core.db.stores.room_role_store import RoomRoleStore
 from switch_core.db.stores.room_store import RoomStore
 from switch_core.db.stores.usage_store import UsageStore
+from switch_core.delivery.conversation import ConversationRules, ConversationSettings
 from switch_core.delivery.recipient import RecipientServices
 from switch_core.delivery.router import MessageRouter
 from switch_core.messages.notify import MessageListener
@@ -194,9 +195,11 @@ def router_on(
     buffer: EventBuffer | None = None,
     connections: AgentConnectionRegistry | None = None,
     telemetry: RecordedTelemetry | None = None,
+    conversation: ConversationSettings | None = None,
 ) -> MessageRouter:
     """A router on the test database with real stores. A test that has no
-    agent in its rooms can write through it with nothing else set up."""
+    agent in its rooms can write through it with nothing else set up.
+    Following the conversation is off unless `conversation` turns it on."""
     return MessageRouter(
         services=RecipientServices(
             session_factory=session_factory,
@@ -221,6 +224,15 @@ def router_on(
         message_store=MessageStore(),
         client_store=ClientStore(),
         budget_store=BudgetStore(),
+        conversation=ConversationRules(
+            settings=conversation
+            if conversation is not None
+            else ConversationSettings(enabled=False, window_seconds=300),
+            message_store=MessageStore(),
+            room_store=RoomStore(),
+            agent_store=AgentStore(),
+            room_role_store=RoomRoleStore(),
+        ),
     )
 
 
@@ -229,6 +241,7 @@ def process_on(
     *,
     rooms: RoomAnnouncements | None = None,
     connections: AgentConnectionRegistry | None = None,
+    conversation: ConversationSettings | None = None,
 ) -> Process:
     """A process's routing on the test database: real stores, its own
     registry and buffer, telemetry that records. A test of presence across
@@ -242,7 +255,11 @@ def process_on(
     room_store = RoomStore()
     client_store = ClientStore()
     router = router_on(
-        session_factory, buffer=buffer, connections=connections, telemetry=telemetry
+        session_factory,
+        buffer=buffer,
+        connections=connections,
+        telemetry=telemetry,
+        conversation=conversation,
     )
     invites = InviteBus()
     factory = ClientFactory(

@@ -42,6 +42,12 @@ ADMIN_MARKER = "com.switch.admin"
 # the marker.
 PLATFORM_MARKER = "com.switch.platform"
 
+# Set by the collaboration bridge on a message the platform reported as posted
+# by an app (a workflow, an integration) rather than a person. Only the bridge
+# writes it, and only Slack reports it today. Following the conversation
+# (`delivery/conversation.py`) never delivers such a message.
+SENDER_IS_APP_MARKER = "com.switch.sender_is_app"
+
 
 class OnBehalfOf(NamedTuple):
     """Whose authority a platform message carries.

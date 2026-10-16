@@ -35,6 +35,7 @@ from switch_core.db.stores.agent_store import AgentStore
 from switch_core.db.stores.client_store import ClientStore
 from switch_core.db.stores.delivery_cursor_store import DeliveryCursorStore
 from switch_core.db.stores.document_store import DocumentStore
+from switch_core.db.stores.external_user_store import ExternalUserStore
 from switch_core.db.stores.media_store import MediaStore
 from switch_core.db.stores.message_store import MessageStore
 from switch_core.db.stores.ownership_lease_store import OwnershipLeaseStore
@@ -123,12 +124,14 @@ async def _process(
         agent_store=AgentStore(),
         room_store=RoomStore(),
         room_role_store=RoomRoleStore(),
+        external_user_store=ExternalUserStore(),
         document_store=DocumentStore(),
         reference_store=ReferenceStore(),
         agent_session_store=AgentSessionStore(),
         room_service=MagicMock(),
         connections=AgentConnectionRegistry(),
         frontend_base_url=None,
+        follow_the_conversation_enabled=False,
     )
     lease = process_lease_on(session_factory)
     ownership = Ownership(

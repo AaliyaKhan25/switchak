@@ -40,6 +40,7 @@ from switch_core.clients.actor import Actor, ClientConfig
 from switch_core.clients.admin_messages import (
     ADMIN_MARKER,
     PLATFORM_MARKER,
+    SENDER_IS_APP_MARKER,
     AdminMessageType,
     platform_on_behalf_of,
 )
@@ -1100,6 +1101,9 @@ class CollaborationCore:
                     format="markdown",
                     thread_root_id=thread_root_id,
                     metered=True,
+                    extra_content=(
+                        {SENDER_IS_APP_MARKER: True} if msg.sender_is_app else None
+                    ),
                 )
             if event_id is None:
                 logger.error(

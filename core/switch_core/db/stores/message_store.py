@@ -1,7 +1,7 @@
 from collections.abc import Collection
 from datetime import datetime
 
-from sqlalchemy import func, select, text
+from sqlalchemy import func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from switch_core.db.models import Message, MessageAttachment
@@ -244,6 +244,45 @@ class MessageStore:
         if before is not None:
             query = query.where(Message.sent_at < before)
         result = await session.execute(query.order_by(Message.seq.desc()).limit(limit))
+        return list(result.scalars().all())
+
+    async def list_thread_newest_first(
+        self,
+        session: AsyncSession,
+        room_id: str,
+        *,
+        thread_root_event_id: str,
+        limit: int,
+    ) -> list[Message]:
+        """A thread's newest messages, its root included, newest first."""
+        result = await session.execute(
+            select(Message)
+            .where(
+                Message.room_id == room_id,
+                or_(
+                    Message.thread_root_event_id == thread_root_event_id,
+                    Message.transport_event_id == thread_root_event_id,
+                ),
+            )
+            .order_by(Message.seq.desc())
+            .limit(limit)
+        )
+        return list(result.scalars().all())
+
+    async def list_top_level_newest_first(
+        self, session: AsyncSession, room_id: str, *, limit: int
+    ) -> list[Message]:
+        """The room's newest top-level messages, newest first. Replies inside
+        threads are left out."""
+        result = await session.execute(
+            select(Message)
+            .where(
+                Message.room_id == room_id,
+                Message.thread_root_event_id.is_(None),
+            )
+            .order_by(Message.seq.desc())
+            .limit(limit)
+        )
         return list(result.scalars().all())
 
     async def list_by_transport_event_ids(
