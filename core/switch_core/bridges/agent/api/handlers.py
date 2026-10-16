@@ -1007,11 +1007,13 @@ async def _open_connection(
             # stream 409s and retries forever.
             async with protocol.connections.slots(agent.id):
                 protocol.connections.claim_room(conn, room_id, takeover=True)
-            # The room's unread count follows the slot: whoever is told how far
-            # behind the room is has to be the one whose reading clears it.
-            await protocol.event_buffer.take_counting(
-                agent.tenant_id, agent.id, conn.id, room_id
-            )
+                # The room's unread count follows the slot: whoever is told how
+                # far behind the room is has to be the one whose reading clears
+                # it. Recorded with the slots still held, so a later claim of
+                # the room cannot have its count overwritten by this one.
+                await protocol.event_buffer.take_counting(
+                    agent.tenant_id, agent.id, conn.id, room_id
+                )
         except (ValueError, PermissionError) as exc:
             protocol.connections.close(
                 conn.id,
@@ -1418,12 +1420,14 @@ async def connection_subscribe(
         for departed in departing:
             protocol.connections.release_room(conn, departed)
 
-    # A room slot changes hands here as much as it does on the stream URL or in
-    # connect_to_room, and the room's unread count follows it: the holder being
-    # told how far behind the room is has to be the one whose reading clears it.
-    await protocol.event_buffer.take_counting(
-        agent.tenant_id, agent.id, conn.id, req.room_id
-    )
+        # A room slot changes hands here as much as it does on the stream URL
+        # or in connect_to_room, and the room's unread count follows it: the
+        # holder being told how far behind the room is has to be the one whose
+        # reading clears it. Recorded with the slots still held, so a later
+        # claim of the room cannot have its count overwritten by this one.
+        await protocol.event_buffer.take_counting(
+            agent.tenant_id, agent.id, conn.id, req.room_id
+        )
 
     if evicted is not None:
         logger.warning(
@@ -1501,14 +1505,17 @@ async def connection_placements(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    for session_id, room_id in req.placements.items():
-        if before.get(session_id) != room_id:
-            await protocol.event_buffer.hand_counting_to(
-                agent.tenant_id,
-                agent.id,
-                Reader(id=session_id, is_session=True),
-                room_id,
-            )
+        # Each moved session takes its room's unread count, with the slots
+        # still held, so a later claim of the room cannot have its count
+        # overwritten by this one.
+        for session_id, room_id in req.placements.items():
+            if before.get(session_id) != room_id:
+                await protocol.event_buffer.hand_counting_to(
+                    agent.tenant_id,
+                    agent.id,
+                    Reader(id=session_id, is_session=True),
+                    room_id,
+                )
     for lost in released:
         logger.warning(
             "[CONN] agent=%s connection=%s took room %s from connection %s "

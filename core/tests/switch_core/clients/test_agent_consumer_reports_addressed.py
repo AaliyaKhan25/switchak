@@ -119,10 +119,10 @@ async def _ignore_post(*_args: object, **_kwargs: object) -> None:
     return None
 
 
-def _message(**content: object) -> InboundMessage:
+def _message(event_id: str = "$evt", **content: object) -> InboundMessage:
     return InboundMessage(
         room_id="!room:s",
-        event_id="$evt",
+        event_id=event_id,
         sender="@alice:s",
         timestamp=0,
         content={"sender_name": "alice", **content},
@@ -218,8 +218,8 @@ async def test_a_telemetry_failure_does_not_cost_the_agent_the_message(
 
     try:
         with caplog.at_level("ERROR"):
-            await _deliver(consumer, _message())
-            await _deliver(consumer, _message())
+            await _deliver(consumer, _message(event_id="$first"))
+            await _deliver(consumer, _message(event_id="$second"))
         failures = next(
             p
             for p in registry.collect()

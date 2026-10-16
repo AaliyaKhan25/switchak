@@ -591,6 +591,8 @@ async def test_a_post_split_by_the_timeout_is_reported_once(
                         body=f"f{index}.png",
                         event_id=f"$part-{index}",
                         group={"id": "grp-late", "index": index, "total": 3},
+                        # Each part is a row of its own in the room's log.
+                        seq=index + 1,
                     ),
                 )
             await asyncio.sleep(0.15)

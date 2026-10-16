@@ -37,11 +37,13 @@ from tests.db_buffer import (
     seed_room,
     sender_of,
 )
+from tests.switch_core.statement_counts import StatementCounts
 
 AGENT = "agent-1"
 READER = "connection-1"
 ROOM_A = "room-a"
 ROOM_B = "room-b"
+ROOM_C = "room-c"
 
 SessionFactory = async_sessionmaker[AsyncSession]
 
@@ -569,3 +571,124 @@ async def test_a_room_not_caught_up_on_for_longer_than_the_window_counts_over_it
     await _chatter(session_factory, ROOM_A, times=2)
 
     assert await _unread(buffer, ROOM_A) == Unread(count=2, reason=COUNTED_FROM_WINDOW)
+
+
+async def _history_for_a_catch_up(
+    buffer: EventBuffer, session_factory: SessionFactory
+) -> dict[str, list[int]]:
+    """Rooms with every kind of row a count has to tell apart, as a stream
+    catching up meets them. The positions in each room a count is asked at:
+    every row in it, so that counts are asked in the middle of groups of files
+    and right after the agent's own messages."""
+    agent_sender = await sender_of(session_factory, AGENT)
+    # Room A: counted from the start, with chatter, messages addressed to the
+    # agent, what the agent said itself, files posted as one message, and
+    # files addressed to the agent as one message.
+    await buffer.ensure_counting(TENANT_ZERO_ID, AGENT, READER, ROOM_A)
+    await _chatter(session_factory, ROOM_A, times=2)
+    await _addressed(buffer, session_factory, ROOM_A)
+    await say(session_factory, ROOM_A, "on it", sender=agent_sender)
+    for index in range(3):
+        await say(session_factory, ROOM_A, "chart", content=_part("posted", index, 3))
+        await _chatter(session_factory, ROOM_A)
+    for index in range(2):
+        last = await say(
+            session_factory, ROOM_A, "brief", content=_part("asked", index, 2)
+        )
+    await buffer.enqueue(
+        TENANT_ZERO_ID,
+        AGENT,
+        ROOM_A,
+        _asked(ROOM_A, "asked"),
+        room_seq=last.seq,
+        message_key="asked",
+    )
+    await _chatter(session_factory, ROOM_A, times=2)
+    await _addressed(buffer, session_factory, ROOM_A)
+    await _chatter(session_factory, ROOM_A)
+
+    # Room B: last caught up before the retention window, so its counts start
+    # at the window and say so.
+    await buffer.ensure_counting(TENANT_ZERO_ID, AGENT, READER, ROOM_B)
+    long_ago = datetime.now(UTC) - timedelta(hours=2)
+    await say(session_factory, ROOM_B, "@agent over to you", sent_at=long_ago)
+    await say(session_factory, ROOM_B, "old chatter", sent_at=long_ago)
+    await _chatter(session_factory, ROOM_B, times=2)
+    await _addressed(buffer, session_factory, ROOM_B)
+    await say(session_factory, ROOM_B, "noted", sender=agent_sender)
+    await _chatter(session_factory, ROOM_B)
+
+    # Room C: nothing recorded a baseline, so it has no count at all.
+    await seed_room(session_factory, ROOM_C)
+    await _chatter(session_factory, ROOM_C, times=2)
+
+    return {
+        room: list(range(1, await _head(buffer, room) + 1))
+        for room in (ROOM_A, ROOM_B, ROOM_C)
+    }
+
+
+async def test_a_batch_counts_what_counting_each_event_alone_counts(
+    db_buffer: EventBuffer, session_factory: SessionFactory
+) -> None:
+    """A catch-up counts every event it is woken for in one batch, and must
+    tell each event exactly what counting it on its own would have.
+
+    The batch is counted by a second buffer on the same database, as another
+    process would after the agent's stream moved there."""
+    buffer = db_buffer
+    rooms = await _history_for_a_catch_up(buffer, session_factory)
+    # Part of room A caught up on, so some positions asked fall below the
+    # baseline.
+    await buffer.caught_up(TENANT_ZERO_ID, AGENT, _connection(READER), ROOM_A, 3, None)
+    # Asked out of order and with repeats, as events from several rooms
+    # interleave in a stream.
+    positions = [
+        (room, seq) for seq in range(30, 0, -1) for room in rooms if seq in rooms[room]
+    ]
+    positions += positions[:5]
+
+    elsewhere = db_buffer_on(session_factory)
+    batch = await elsewhere.unread_batch(TENANT_ZERO_ID, AGENT, positions)
+
+    one_by_one = {
+        (room, seq): await buffer.unread(TENANT_ZERO_ID, AGENT, room, seq)
+        for room, seq in positions
+    }
+    assert batch == one_by_one
+    # The mix covered every kind of answer, so the comparison means something.
+    assert {unread.reason for unread in batch.values()} == {
+        None,
+        COUNTED_FROM_WINDOW,
+        NO_BASELINE,
+    }
+    assert batch[(ROOM_A, rooms[ROOM_A][-1])] == Unread(count=7, reason=None)
+    assert batch[(ROOM_B, rooms[ROOM_B][-1])] == Unread(
+        count=3, reason=COUNTED_FROM_WINDOW
+    )
+
+
+async def test_a_batch_costs_the_same_statements_however_many_events_it_counts(
+    db_buffer: EventBuffer,
+    session_factory: SessionFactory,
+    statement_counts: StatementCounts,
+) -> None:
+    """Counting each event on its own cost four statements an event, so a
+    catch-up of two hundred events ran about eight hundred. A batch costs a
+    fixed number per room, whatever the number of events in it."""
+    buffer = db_buffer
+    rooms = await _history_for_a_catch_up(buffer, session_factory)
+
+    with statement_counts.scope("one event a room") as few:
+        await buffer.unread_batch(
+            TENANT_ZERO_ID, AGENT, [(room, seqs[-1]) for room, seqs in rooms.items()]
+        )
+    with statement_counts.scope("every event") as many:
+        await buffer.unread_batch(
+            TENANT_ZERO_ID,
+            AGENT,
+            [(room, seq) for room, seqs in rooms.items() for seq in seqs],
+        )
+
+    assert sum(len(seqs) for seqs in rooms.values()) > 3 * len(rooms)
+    assert many.count == few.count

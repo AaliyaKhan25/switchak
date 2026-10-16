@@ -437,14 +437,20 @@ class _ControllerStream:
             attached.cursor = max(attached.cursor, bound)
             self._conn.sent_cursors[agent_id] = attached.cursor
             return []
+        # The unread counts sent with the events below, counted for the whole
+        # batch at once, so that catching up on a few hundred events costs a
+        # few statements per room rather than several per event.
+        missed = await self._buffer.unread_batch(
+            self._tenant,
+            agent_id,
+            [(item.room_id, item.room_seq) for item in pending if item.notifiable],
+        )
         frames: list[ControllerFrame] = []
         for item in pending:
             data = item.event.model_dump(mode="json")
             data["sequence"] = item.seq
             if item.notifiable:
-                unread = await self._buffer.unread(
-                    self._tenant, agent_id, item.room_id, item.room_seq
-                )
+                unread = missed[(item.room_id, item.room_seq)]
                 data["missed"] = {"count": unread.count, "reason": unread.reason}
             attached.cursor = item.seq
             self._conn.sent_cursors[agent_id] = item.seq

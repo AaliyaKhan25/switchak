@@ -592,6 +592,39 @@ async def test_events_for_rooms_the_connection_does_not_cover_are_skipped(
     assert frames[1][1]["payload"]["body"] == "mine"
 
 
+async def test_a_room_claimed_while_a_batch_goes_out_is_not_sent_by_its_old_holder(
+    db_buffer: EventBuffer, session_factory: async_sessionmaker[AsyncSession]
+) -> None:
+    """The stream suspends after each event it sends. A session of the same
+    agent that claims the room in that moment takes the rest of the batch: the
+    connection that covered the room before must not send it too."""
+    await seed_member(session_factory, AGENT, ROOM_A)
+    registry = AgentConnectionRegistry()
+    watcher = _open(
+        registry, connection_id="watcher", scope="all", delivery_filter="addressed"
+    )
+    await _keep(db_buffer, _message("first"))
+    await _keep(db_buffer, _message("second"))
+
+    stream = event_frames(
+        conn=watcher, registry=registry, buffer=db_buffer, approvals=None
+    )
+    assert (await anext(stream)).event == "connection_state"
+    assert (await anext(stream)).data["payload"]["body"] == "first"
+
+    session = _open(
+        registry, connection_id="session", scope="single", delivery_filter="addressed"
+    )
+    registry.claim_room(session, ROOM_A)
+
+    try:
+        after: Frame | None = await asyncio.wait_for(anext(stream), timeout=1.0)
+    except TimeoutError:
+        after = None
+    assert after is None or after is KEEPALIVE
+    assert watcher.position[OWN_EVENTS] == await db_buffer.head(TENANT_ZERO_ID, AGENT)
+
+
 async def test_addressed_filter_drops_ambient_chatter(
     db_buffer: EventBuffer, session_factory: async_sessionmaker[AsyncSession]
 ) -> None:

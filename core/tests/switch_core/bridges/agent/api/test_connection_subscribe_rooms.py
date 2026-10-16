@@ -256,3 +256,60 @@ async def test_a_subscribe_waits_while_the_agents_room_slots_are_held(
     await repoint
 
     assert protocol.connections.claimant_of(AGENT_ID, ROOM_A) is conn
+
+
+@pytest.mark.asyncio
+async def test_a_slow_subscribe_cannot_take_the_count_back_from_a_later_one(
+    db_buffer: EventBuffer,
+    session_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two subscribes to one room, the first slow to record its unread count.
+
+    The second takes the room after the first, so the count must end up with
+    the second. Were the first recorded after the second finished, the room's
+    holder could never clear a room it has read to the end of.
+    """
+    protocol = _Protocol(db_buffer)
+    buffer = protocol.event_buffer
+    first = _open(protocol, "single", "conn-a")
+    second = _open(protocol, "single", "conn-b")
+
+    reached = asyncio.Event()
+    proceed = asyncio.Event()
+    take_counting = buffer.take_counting
+
+    async def slow_for_the_first(
+        tenant_id: str, agent_id: str, reader_id: str, room_id: str
+    ) -> None:
+        if reader_id == "conn-a":
+            reached.set()
+            await proceed.wait()
+        await take_counting(tenant_id, agent_id, reader_id, room_id)
+
+    monkeypatch.setattr(buffer, "take_counting", slow_for_the_first)
+
+    slow = asyncio.create_task(
+        _subscribe(protocol, ROOM_A, first.stream_generation, "conn-a", False)
+    )
+    await reached.wait()
+    later = asyncio.create_task(
+        _subscribe(protocol, ROOM_A, second.stream_generation, "conn-b", True)
+    )
+    await asyncio.sleep(0.05)
+    proceed.set()
+    await slow
+    await later
+    head = await _chatter(session_factory, ROOM_A, 3)
+
+    assert protocol.connections.claimant_of(AGENT_ID, ROOM_A) is second
+    assert (await buffer.unread(TENANT_ZERO_ID, AGENT_ID, ROOM_A, head)).count == 3
+    await buffer.caught_up(
+        TENANT_ZERO_ID,
+        AGENT_ID,
+        Reader(id="conn-b", is_session=False),
+        ROOM_A,
+        head,
+        "conn-b",
+    )
+    assert (await buffer.unread(TENANT_ZERO_ID, AGENT_ID, ROOM_A, head)).count == 0

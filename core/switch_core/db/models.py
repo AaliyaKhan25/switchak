@@ -2400,6 +2400,14 @@ class AgentEventRow(TenantScoped, Base):
     the room's conversation uses the pair to leave out the rows of `messages`
     it has already received from here.
 
+    `message_key`, `room_id`, `room_seq` and `type` together name the source of
+    an event,
+    and an agent has at most one event per source (`uq_agent_events_source`).
+    `EventBuffer.enqueue` hands back the number of the event already stored
+    instead of storing a second copy. A file of a multi-file message that
+    arrives after the message was delivered has a later `room_seq`, so it is
+    stored as an event of its own.
+
     The retention loop in `main.py` deletes rows older than
     `agent_event_retention_seconds`. It never deletes from `messages`.
     """
@@ -2415,7 +2423,19 @@ class AgentEventRow(TenantScoped, Base):
             "room_id",
             "room_seq",
         ),
-        Index("ix_agent_events_agent_message_key", "agent_id", "message_key"),
+        # One decision of the consumer is stored once. The same room row, read
+        # by the consumer of a second process or written again after a commit
+        # whose acknowledgement was lost, finds this row already there.
+        Index(
+            "uq_agent_events_source",
+            "agent_id",
+            "message_key",
+            "room_id",
+            "room_seq",
+            "type",
+            unique=True,
+            postgresql_where=text("message_key IS NOT NULL"),
+        ),
         ForeignKeyConstraint(
             ["tenant_id", "agent_id"],
             ["agents.tenant_id", "agents.id"],

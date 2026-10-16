@@ -12,8 +12,10 @@ the room's log, and the per-room and all-rooms polls read it from there.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import Any
 
 import pytest
 from sqlalchemy import delete, select
@@ -430,22 +432,61 @@ async def test_overlapping_polls_never_move_a_reader_back(
     db_buffer: EventBuffer, session_factory: async_sessionmaker[AsyncSession]
 ) -> None:
     """Two polls of the same reader can overlap, and the one that finishes
-    last may have read less. Its save is merged with the stored position,
-    source by source, so the reader is never moved back to events it was
-    already sent."""
+    last may have read less. Its save is refused, because the stored position
+    is no longer the one it read from, so the reader is never moved back to
+    events it was already sent."""
     room = f"r:{ROOM}"
-    await db_buffer._save_poll_position(
-        TENANT_ZERO_ID, AGENT, "legacy:all", {OWN_EVENTS: 5, room: 7}
+    first = {OWN_EVENTS: 5, room: 7}
+    assert await db_buffer._save_poll_position(
+        TENANT_ZERO_ID, AGENT, "legacy:all", first, expected=None
     )
-    await db_buffer._save_poll_position(
-        TENANT_ZERO_ID, AGENT, "legacy:all", {OWN_EVENTS: 3, room: 9, "r:other": 1}
+    assert not await db_buffer._save_poll_position(
+        TENANT_ZERO_ID, AGENT, "legacy:all", {OWN_EVENTS: 3, room: 9}, expected=None
+    )
+    assert not await db_buffer._save_poll_position(
+        TENANT_ZERO_ID,
+        AGENT,
+        "legacy:all",
+        {OWN_EVENTS: 3, room: 9},
+        expected={OWN_EVENTS: 2, room: 7},
+    )
+    assert await _poll_position(session_factory, "legacy:all") == first
+
+    after = {OWN_EVENTS: 6, room: 8}
+    assert await db_buffer._save_poll_position(
+        TENANT_ZERO_ID, AGENT, "legacy:all", after, expected=first
+    )
+    assert await _poll_position(session_factory, "legacy:all") == after
+
+
+async def test_overlapping_polls_return_each_event_once(
+    db_buffer: EventBuffer,
+    session_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two polls of the same reader that both read before either saves would
+    both return what they read. The second to save reads again from where the
+    first stopped instead."""
+    await _asked(db_buffer, session_factory)
+    both_read = asyncio.Barrier(2)
+    read_from = db_buffer.read_from
+    calls = [0]
+
+    async def read_together(*args: Any, **kwargs: Any) -> Any:
+        calls[0] += 1
+        found = await read_from(*args, **kwargs)
+        if calls[0] <= 2:
+            await both_read.wait()
+        return found
+
+    monkeypatch.setattr(db_buffer, "read_from", read_together)
+
+    polled = await asyncio.gather(
+        db_buffer.poll_notifications(TENANT_ZERO_ID, AGENT, timeout=0, rooms={ROOM}),
+        db_buffer.poll_notifications(TENANT_ZERO_ID, AGENT, timeout=0, rooms={ROOM}),
     )
 
-    assert await _poll_position(session_factory, "legacy:all") == {
-        OWN_EVENTS: 5,
-        room: 9,
-        "r:other": 1,
-    }
+    assert sorted(len(events) for events in polled) == [0, 1]
 
 
 async def test_a_write_that_fails_on_the_connection_is_retried(
