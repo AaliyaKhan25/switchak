@@ -595,6 +595,9 @@ class PlatformAdapter(ABC):
         # default icons, which someone notices, rather than quietly sending
         # names to avatar services an operator has turned off.
         self._third_party_avatars = False
+        # Set by the lifecycle (`set_holder_relay`): hands a request to the
+        # process that holds the bridge, for work only the holder does.
+        self._relay_to_holder: Callable[[dict[str, str]], None] | None = None
 
     def set_max_attachment_bytes(self, max_bytes: int) -> None:
         self._max_attachment_bytes = max_bytes
@@ -604,6 +607,31 @@ class PlatformAdapter(ABC):
         for it, or runs it quietly. Before `start`; an adapter that cannot
         keep quiet ignores it (`keeps_quiet_unless_listening`)."""
         self._listening = listening
+
+    def set_holder_relay(self, relay: Callable[[dict[str, str]], None]) -> None:
+        """How a quiet copy hands the process holding the bridge a piece of
+        work only the holder does, which reached this process instead: a
+        webhook arrives at whichever process the load balancer picks. The
+        holder receives it in `receive_relayed`."""
+        self._relay_to_holder = relay
+
+    def _hand_to_holder(self, request: dict[str, str]) -> None:
+        """Hand `request` to the process holding the bridge. Nobody may hold
+        it right now; the next holder catches up as it takes the bridge over,
+        as it does for anything that happened while nobody held it."""
+        if self._relay_to_holder is None:
+            logger.warning(
+                "No way to reach the process holding this bridge; dropping %r",
+                request,
+            )
+            return
+        self._relay_to_holder(request)
+
+    async def receive_relayed(self, request: Mapping[str, str]) -> None:
+        """Do a piece of work a quiet copy in another process handed here
+        (`_hand_to_holder`), as this process holds the bridge. Nothing hands
+        work to an adapter that does not override this."""
+        logger.warning("Ignoring a relayed request this bridge has no use for")
 
     def set_third_party_avatars(self, enabled: bool) -> None:
         """Whether this adapter may hand platforms an icon drawn by an outside
@@ -683,6 +711,17 @@ class PlatformAdapter(ABC):
 
         Quoted verbatim in that refusal, so it must not embed credential
         material. Return None for a platform with no such notion.
+        """
+        return None
+
+    @classmethod
+    def held_with(cls, connection_config: dict[str, object]) -> tuple[str, str] | None:
+        """Other owned work this bridge must be held beside, as (kind, key) in
+        `ownership.py`, or None for a bridge placed on its own.
+
+        For a bridge whose platform events reach it in-process from something
+        else that runs once per deployment, such as Discord's one shared
+        Gateway connection: held anywhere else, it would never hear them.
         """
         return None
 

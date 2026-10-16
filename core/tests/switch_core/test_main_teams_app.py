@@ -114,7 +114,6 @@ async def test_the_apps_client_is_closed_only_after_the_bridges_stop(
             connector_lifecycle=_Stoppable("connectors"),  # type: ignore[arg-type]
             provisioning=_Stoppable("provisioning"),  # type: ignore[arg-type]
             discord_gateway=None,
-            discord_gateway_task=None,
             teams_app=_TeamsApp(),  # type: ignore[arg-type]
         )
 
@@ -199,7 +198,6 @@ async def test_shutdown_drains_before_it_closes_anything(
             connector_lifecycle=_Stoppable("connectors"),  # type: ignore[arg-type]
             provisioning=_Stoppable("provisioning"),  # type: ignore[arg-type]
             discord_gateway=None,
-            discord_gateway_task=None,
             teams_app=None,
         )
 

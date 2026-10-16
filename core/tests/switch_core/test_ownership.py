@@ -167,6 +167,21 @@ class TestOneOwner:
             owner = a if owner_of(KIND, key, live) == a.process_id else b
             assert key in owner.runs()
 
+    async def test_keys_placed_with_another_kinds_key_run_beside_it(
+        self, two: tuple[_Process, _Process]
+    ) -> None:
+        a, b = two
+        beside = ("socket", "the-one")
+        for process in two:
+            for key in KEYS:
+                process.kind.want(key, placed_with=beside)
+        await a.ownership.balance()
+        await b.ownership.balance()
+
+        live = sorted([a.process_id, b.process_id])
+        owner = a if owner_of(*beside, live) == a.process_id else b
+        assert owner.runs() == set(KEYS)
+
     async def test_one_process_owns_everything(
         self,
         session_factory: async_sessionmaker[AsyncSession],
@@ -181,6 +196,42 @@ class TestOneOwner:
 
         assert only.runs() == set(KEYS)
         assert [fence.token for fence in only.started] == [1] * len(KEYS)
+
+    async def test_a_kind_registered_while_balancing_runs_from_the_next_balance(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """Discord's gateway registers its kind once the signal bus has
+        started, so a resync's balance can be under way as it does. That
+        balance goes on with the kinds it began with; the next one takes the
+        new kind in."""
+        lease = process_lease_on(session_factory)
+        ownership = Ownership(
+            lease=lease,
+            session_factory=session_factory,
+            bus=SignalBus(
+                session_factory, _never_listening, process_id=lease.process_id
+            ),
+            store=OwnershipLeaseStore(),
+            processes=SwitchCoreProcessStore(),
+        )
+        late_started: list[str] = []
+
+        async def late_start(key: str, _fence: Fence) -> None:
+            late_started.append(key)
+
+        async def nothing(_key: str) -> None:
+            return None
+
+        async def start_and_register(_key: str, _fence: Fence) -> None:
+            ownership.kind("socket", start=late_start, stop=nothing).want("the-one")
+
+        ownership.kind(KIND, start=start_and_register, stop=nothing).want("key-0")
+        await lease.renew()
+
+        await ownership.balance()
+        assert late_started == []
+        await ownership.balance()
+        assert late_started == ["the-one"]
 
 
 class TestHandingOver:

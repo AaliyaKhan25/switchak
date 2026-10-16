@@ -238,8 +238,8 @@ class _Chat(PlatformAdapter):
 
 
 class _LoudChat(_Chat):
-    """A platform whose adapter cannot keep quiet, as Discord's gateway and
-    Teams' listener are today: every process's copy listens to it."""
+    """A platform whose adapter cannot keep quiet: every process's copy
+    listens to it."""
 
     keeps_quiet_unless_listening: ClassVar[bool] = False
 

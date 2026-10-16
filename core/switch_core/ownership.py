@@ -14,7 +14,8 @@ is decided twice over:
   `switch_core_processes` holds: every process scores every key against every
   live process and the highest score wins. All processes reading the same
   leases agree, and a process coming or going moves only the keys it wins or
-  held, not everyone's.
+  held, not everyone's. A key that can only run beside another kind's key is
+  hashed as that key (`OwnedKind.want`), so both land on the same process.
 - **Who does.** A row in `ownership_leases`, claimed in one statement and only
   while nobody holds it or its holder's process lease has lapsed. The hash says
   who tries; the row makes sure only one succeeds, whatever two processes
@@ -129,16 +130,28 @@ class OwnedKind:
         self._start = start
         self._stop = stop
         self._wanted: set[str] = set()
+        # Keys placed with another kind's key (`want`), by that kind and key.
+        self._placed_with: dict[str, tuple[str, str]] = {}
         self._held: dict[str, Fence] = {}
         # Fences the work reported taken over, kept until the next balance
         # stops it.
         self._lost: set[Fence] = set()
 
-    def want(self, key: str) -> None:
-        """This process could run `key`. It runs it once it owns it."""
-        if key in self._wanted:
+    def want(self, key: str, *, placed_with: tuple[str, str] | None = None) -> None:
+        """This process could run `key`. It runs it once it owns it.
+
+        `placed_with` names another kind's key, as (kind, key), whose owner
+        should own this one too: work that can only run beside it, such as a
+        Discord bridge whose events reach it in-process from the one shared
+        Gateway connection. Both are hashed the same, so every process puts
+        them on the same one. Each still has a lease of its own."""
+        if key in self._wanted and self._placed_with.get(key) == placed_with:
             return
         self._wanted.add(key)
+        if placed_with is None:
+            self._placed_with.pop(key, None)
+        else:
+            self._placed_with[key] = placed_with
         self._ownership.nudge()
 
     def wanted(self) -> set[str]:
@@ -170,6 +183,7 @@ class OwnedKind:
         runs, and let go of its lease. For work being deleted, which must be
         stopped before its rows go."""
         self._wanted.discard(key)
+        self._placed_with.pop(key, None)
         async with self._ownership.balancing():
             if key in self._held:
                 await self._stop_held([key])
@@ -194,7 +208,7 @@ class OwnedKind:
                 ", ".join(sorted(lost)),
             )
             await self._stop_held(lost)
-        mine = {key for key in self._wanted if owner_of(self.name, key, live) == me}
+        mine = {key for key in self._wanted if self._owner(key, live) == me}
         leaving = [key for key in self._held if key not in mine]
         if leaving:
             logger.info(
@@ -219,6 +233,10 @@ class OwnedKind:
                 await self._start(key, fence)
             except Exception:
                 logger.exception("Starting %s %s failed", self.name, key)
+
+    def _owner(self, key: str, live: Sequence[str]) -> str | None:
+        kind, placed_key = self._placed_with.get(key, (self.name, key))
+        return owner_of(kind, placed_key, live)
 
     async def _stop_held(self, keys: Sequence[str]) -> None:
         """Stop the work of `keys` here, all at once, each failure logged."""
@@ -256,6 +274,10 @@ class Ownership:
         self._bus = bus
         self._store = store
         self._processes = processes
+        # A kind can be registered while a balance is under way (Discord's
+        # gateway registers its kind once the signal bus has started, and a
+        # resync balances at any time), so every loop over the kinds that
+        # awaits goes over a copy taken before it starts.
         self._kinds: dict[str, OwnedKind] = {}
         # One balance, drop or stop at a time: each reads what is held, then
         # awaits stops and claims, and two interleaved would claim or release
@@ -352,7 +374,7 @@ class Ownership:
                     )
                 return
             self._stopped = True
-            for kind in self._kinds.values():
+            for kind in list(self._kinds.values()):
                 await kind._stop_all()
             self._work_stopped = True
             try:
@@ -406,7 +428,7 @@ class Ownership:
                     self.process_id,
                 )
                 self._suspended = False
-            for kind in self._kinds.values():
+            for kind in list(self._kinds.values()):
                 await kind._balance(live)
 
     async def _prune_now_and_then(self) -> None:
@@ -433,7 +455,7 @@ class Ownership:
             self.process_id,
         )
         self._suspended = True
-        for kind in self._kinds.values():
+        for kind in list(self._kinds.values()):
             await kind._stop_all()
 
     async def claim(self, kind: str, keys: Sequence[str]) -> dict[str, int]:

@@ -720,7 +720,7 @@ class CollaborationBridgeLifecycleService:
 
         logger.info("Wanting %d collaboration bridges", len(bridges))
         for bridge in bridges:
-            self._owned.want(bridge.id)
+            self._want(bridge)
 
     async def start_quiet_copies(self) -> None:
         """Start, quietly, every wanted bridge this process does not hold.
@@ -983,7 +983,7 @@ class CollaborationBridgeLifecycleService:
         try:
             # Which process holds it is settled first, so it starts once, in
             # the form it will run here.
-            self._owned.want(bridge.id)
+            self._want(bridge)
             await self._owned.settle()
             failed = self._failed_take_overs.pop(bridge.id, None)
             if failed is not None:
@@ -1161,6 +1161,9 @@ class CollaborationBridgeLifecycleService:
                 lambda channel_id, team_id: self._persist_channel_team(
                     bridge_id, tenant_id, channel_id, team_id
                 )
+            )
+            adapter.set_holder_relay(
+                lambda request: self._relay_to_holder(bridge_id, request)
             )
             adapter.set_max_attachment_bytes(self._config.agent_media_max_bytes)
             adapter.set_third_party_avatars(self._config.third_party_avatars_enabled)
@@ -1729,9 +1732,44 @@ class CollaborationBridgeLifecycleService:
 
         self._quiet_starts[bridge_id] = asyncio.create_task(run())
 
+    def _want(self, bridge: CollaborationBridge) -> None:
+        """This process could hold `bridge`, beside whatever its platform
+        says it must be held with (`PlatformAdapter.held_with`)."""
+        adapter_cls = self._adapter_registry.get(bridge.type)
+        held_with = (
+            adapter_cls.held_with(bridge.connection_config or {})
+            if adapter_cls is not None
+            else None
+        )
+        self._owned.want(bridge.id, placed_with=held_with)
+
     def holds(self, bridge_id: str) -> bool:
         """Whether this process holds the bridge and listens for it."""
         return self._owned.fence(bridge_id) is not None
+
+    def _relay_to_holder(self, bridge_id: str, request: dict[str, str]) -> None:
+        if self._signals is None:
+            logger.warning(
+                "Collaboration bridge %s has work for its holder and no signal "
+                "bus to send it on; dropping %r",
+                bridge_id,
+                request,
+            )
+            return
+        self._signals.for_holder(bridge_id, request)
+
+    async def receive_relayed(self, bridge_id: str, request: dict[str, str]) -> None:
+        """Work a quiet copy of the bridge in another process relayed to its
+        holder. Done here only if this process holds the bridge and its copy
+        is running; otherwise it is another process's, or nobody's until the
+        next holder catches up as it takes the bridge over."""
+        if not self.holds(bridge_id):
+            return
+        running = self._running(bridge_id)
+        if running is None or not running.active:
+            return
+        with no_tenant():
+            await running.adapter.receive_relayed(request)
 
     # ── Changes made in other processes ──────────────────────────────────────
 
@@ -1797,7 +1835,7 @@ class CollaborationBridgeLifecycleService:
         if not self._owned.wants(bridge_id):
             # New here: which process holds it is settled first, so it starts
             # once, in the form it runs in.
-            self._owned.want(bridge_id)
+            self._want(bridge)
             await self._owned.settle()
         if bridge_id in self._quiet_starts:
             # Starting in the background, from the row as it reads then.

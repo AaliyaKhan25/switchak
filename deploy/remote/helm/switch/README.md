@@ -160,10 +160,11 @@ example), leave `tls.enabled` false and annotate.
 how many. Shared state lives in the database: replicas signal each other through
 Postgres notifications, and each bridge's listener and outbound relay, each
 server connector and each command reader is owned by one replica at a time
-through a lease. Any replica can hold any client's connection. Two things are
-not single-owner and run on every replica: the shared Discord gateway
-connection of the distributed Discord app, and each Teams bridge's Graph
-subscriptions, which every replica adopts and renews.
+through a lease. That includes the shared Discord gateway connection of the
+distributed Discord app, whose Discord bridges run beside it on the same
+replica, and each Teams bridge's Graph subscriptions, which only the replica
+holding the bridge makes and renews. Any replica can hold any client's
+connection, and a platform webhook can reach any replica.
 
 One replica upgrades with `Recreate`, so an upgrade has a brief outage. More
 than one rolls (`switchCore.rollingUpdate`, one extra pod at a time by

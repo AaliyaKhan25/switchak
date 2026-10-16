@@ -624,10 +624,10 @@ switchCore:
   # connections. Each bridge's listener and outbound relay, each server
   # connector and each command reader runs on one pod at a time, through
   # leases in the database, and each message is routed to its agents as it is
-  # written, so any pod can take any request. Two things still run on every
-  # pod: the deployment's shared Discord gateway connection (the distributed
-  # Discord app), and each Teams bridge's Graph subscriptions, which every pod
-  # adopts and renews.
+  # written, so any pod can take any request. So does the deployment's shared
+  # Discord gateway connection (the distributed Discord app), with its Discord
+  # bridges on the same pod, and each Teams bridge's Graph subscriptions, made
+  # and renewed by the pod that holds the bridge.
   #
   # One replica is replaced (Recreate): the old pod stops before the new one
   # starts, so an upgrade has a short outage. More than one rolls (see

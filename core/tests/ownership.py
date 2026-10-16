@@ -140,7 +140,7 @@ class _NeverOwnedKind:
     def __init__(self) -> None:
         self._wanted: set[str] = set()
 
-    def want(self, key: str) -> None:
+    def want(self, key: str, *, placed_with: tuple[str, str] | None = None) -> None:
         self._wanted.add(key)
 
     def wants(self, key: str) -> bool:
@@ -210,7 +210,7 @@ class _SoleKind:
         self._wanted: set[str] = set()
         self._started: set[str] = set()
 
-    def want(self, key: str) -> None:
+    def want(self, key: str, *, placed_with: tuple[str, str] | None = None) -> None:
         self._wanted.add(key)
 
     def wanted(self) -> set[str]:

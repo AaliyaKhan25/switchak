@@ -22,6 +22,11 @@ again (`reload_rooms`), so the one listening to the platform stops carrying
 the channel into a room that no longer has it. A room bridged elsewhere is
 also found on the spot when a message reaches a process that has not mapped
 it yet (`CollaborationCore._channel_for_room`).
+
+Work only the holder does that reached a quiet copy instead, such as a Teams
+webhook saying a Graph subscription needs renewing, is relayed to the holder
+as `bridge.for_holder` (`PlatformAdapter.set_holder_relay`). Every process
+hears it and only the one holding the bridge acts on it.
 """
 
 from __future__ import annotations
@@ -36,6 +41,11 @@ if TYPE_CHECKING:
 
 BRIDGE_CHANGED_SIGNAL = "bridge.changed"
 BRIDGE_ROOMS_CHANGED_SIGNAL = "bridge.rooms_changed"
+BRIDGE_FOR_HOLDER_SIGNAL = "bridge.for_holder"
+
+# A relayed request as `PendingWork` keeps it: the bridge, then the request's
+# fields in order, so the same request relayed twice is one piece of work.
+_Relayed = tuple[str, tuple[tuple[str, str], ...]]
 
 
 class BridgeSignals:
@@ -45,8 +55,11 @@ class BridgeSignals:
         self._bus = bus
         self._owed = bus.pending_work("bridges", lifecycle.reconcile_bridge)
         self._rooms_owed = bus.pending_work("bridge-rooms", lifecycle.reload_rooms)
+        self._lifecycle = lifecycle
+        self._relayed = bus.pending_work("bridge-for-holder", self._receive_relayed)
         bus.handle(BRIDGE_CHANGED_SIGNAL, self._on_changed)
         bus.handle(BRIDGE_ROOMS_CHANGED_SIGNAL, self._on_rooms_changed)
+        bus.handle(BRIDGE_FOR_HOLDER_SIGNAL, self._on_for_holder)
         bus.on_resync(lifecycle.reconcile_all)
         bus.on_recheck(lifecycle.reconcile_all)
         bus.on_resync(lifecycle.reload_all_rooms)
@@ -62,6 +75,20 @@ class BridgeSignals:
         """A room was bridged to the bridge or unbridged from it, and that has
         committed: every other process maps the bridge's rooms again."""
         self._bus.publish(BRIDGE_ROOMS_CHANGED_SIGNAL, bridge_id=bridge_id)
+
+    def for_holder(self, bridge_id: str, request: dict[str, str]) -> None:
+        """A quiet copy here has work for the process holding the bridge."""
+        self._bus.publish(
+            BRIDGE_FOR_HOLDER_SIGNAL, bridge_id=bridge_id, request=request
+        )
+
+    def _on_for_holder(self, signal: dict[str, Any]) -> None:
+        request = signal["request"]
+        self._relayed.add((signal["bridge_id"], tuple(sorted(request.items()))))
+
+    async def _receive_relayed(self, relayed: _Relayed) -> None:
+        bridge_id, request = relayed
+        await self._lifecycle.receive_relayed(bridge_id, dict(request))
 
     def _on_changed(self, signal: dict[str, Any]) -> None:
         self._owed.add(signal["bridge_id"])

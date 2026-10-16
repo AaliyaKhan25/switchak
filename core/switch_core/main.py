@@ -1375,15 +1375,16 @@ async def run(config: SwitchConfig, process_id: str) -> None:
         )
     await collab_lifecycle.start_all()
 
-    # The one shared Discord Gateway connection. Started after the bridges so it
-    # can attach to the inert ones the moment it connects — a shared-delivery
-    # bridge opens no socket of its own, and attaching re-runs the agent-identity
-    # provisioning that could not run at start. Supervised in the background: a
-    # configured-but-unreachable Discord app must never block or fail a boot that
-    # serves every other platform, so its initial connect retries with backoff
-    # and Discord installs stay inert until it succeeds.
+    # The one shared Discord Gateway connection, opened in the one process that
+    # holds it (`ownership.py`) and logged in for the API alone in every other.
+    # Wanted after the bridges so it can attach to the inert ones the moment it
+    # connects — a shared-delivery bridge opens no socket of its own, and
+    # attaching re-runs the agent-identity provisioning that could not run at
+    # start. Brought up in the background: a configured-but-unreachable Discord
+    # app must never block or fail a boot that serves every other platform, so
+    # its initial connect retries with backoff and Discord installs stay inert
+    # until it succeeds.
     discord_gateway: DiscordGatewayClient | None = None
-    discord_gateway_task: asyncio.Task[None] | None = None
     if config.discord_app_bot_token:
         # install_service is present whenever an installer is registered, and the
         # Discord bot token being set means the Discord installer is — so this is
@@ -1393,8 +1394,8 @@ async def run(config: SwitchConfig, process_id: str) -> None:
         async def _attach_shared_discord_bridges(
             connection: DiscordConnection,
         ) -> None:
-            # Runs once the socket is up: hand it to every already-running
-            # Discord bridge. Narrowed to Discord's adapter and not only to the
+            # Runs once the connection is up, as the socket or for the API
+            # alone: hand it to every already-running Discord bridge. Narrowed to Discord's adapter and not only to the
             # capability, because Telegram's shared bridges have it too and
             # must be handed Telegram's bot, not this socket.
             for adapter in collab_lifecycle.iter_adapters():
@@ -1409,9 +1410,7 @@ async def run(config: SwitchConfig, process_id: str) -> None:
             on_connected=_attach_shared_discord_bridges,
         )
         collab_lifecycle.add_bridge_starting_listener(discord_gateway.attach_if_live)
-        discord_gateway_task = asyncio.create_task(
-            discord_gateway.start_with_retry(), name="discord-gateway-start"
-        )
+        discord_gateway.own(ownership)
 
     # The shared Telegram bot: `getMe`, then `setWebhook`. In the background
     # for the reason the Discord connection is — an unreachable Telegram must
@@ -1434,6 +1433,8 @@ async def run(config: SwitchConfig, process_id: str) -> None:
     # stops being sure stops the work it holds there and then.
     ownership_task = asyncio.create_task(ownership.run())
     await collab_lifecycle.start_quiet_copies()
+    if discord_gateway is not None:
+        discord_gateway.start_quietly()
 
     # Backfill room membership: system clients (e.g. the admin client) added
     # after a room was created, and any agent whose invite did not land. The
@@ -1478,7 +1479,6 @@ async def run(config: SwitchConfig, process_id: str) -> None:
                     connector_lifecycle,
                     provisioning,
                     discord_gateway,
-                    discord_gateway_task,
                     teams_app,
                     telegram_app,
                     telegram_app_task,
@@ -1989,7 +1989,6 @@ async def _shutdown(
     connector_lifecycle: ServerSideConnectorLifecycleService,
     provisioning: Provisioning,
     discord_gateway: DiscordGatewayClient | None,
-    discord_gateway_task: asyncio.Task[None] | None,
     teams_app: TeamsSharedApp | None,
     # Defaulted so a caller with no Telegram app, as the shutdown-order tests
     # are, need not name it; `run` always passes both.
@@ -2012,14 +2011,10 @@ async def _shutdown(
     server.should_exit = True
     await connector_lifecycle.stop_all()
     await collab_lifecycle.stop_all()
-    # Cancel the supervised connect/retry loop before closing the socket, so a
-    # retry in flight cannot re-open what stop() just closed.
-    if discord_gateway_task is not None:
-        discord_gateway_task.cancel()
-        try:
-            await discord_gateway_task
-        except asyncio.CancelledError:
-            pass
+    # The API log-in of a process that did not hold the socket; the socket
+    # itself was closed with the rest of the owned work in `release`. `stop`
+    # cancels a connect or log-in still retrying before it closes, so a retry
+    # in flight cannot re-open what it just closed.
     if discord_gateway is not None:
         await discord_gateway.stop()
     # After the bridges, which borrow its HTTP client until they stop.
