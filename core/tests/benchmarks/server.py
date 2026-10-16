@@ -43,7 +43,6 @@ from switch_core.bridges.agent.protocol.types import (
 )
 from switch_core.bridges.resource.service import ResourceService
 from switch_core.clients.actor import Actor, AgentActor, HumanActor
-from switch_core.clients.agent_consumer import AgentConsumer
 from switch_core.clients.client_factory import ClientFactory
 from switch_core.clients.client_lifecycle_service import ClientLifecycleService
 from switch_core.db.engine import create_unpooled_engine
@@ -56,8 +55,14 @@ from switch_core.db.models import (
     agent_event_boot_sequence,
 )
 from switch_core.db.session_scope import tenant_session
+from switch_core.db.stores.budget_store import BudgetStore
+from switch_core.db.stores.delivery_cursor_store import DeliveryCursorStore
+from switch_core.db.stores.ownership_lease_store import OwnershipLeaseStore
+from switch_core.db.stores.switch_core_process_store import SwitchCoreProcessStore
 from switch_core.db.stores.tenant_store import TenantStore
 from switch_core.db.stores.usage_store import UsageStore
+from switch_core.delivery.recipient import RecipientServices
+from switch_core.delivery.router import MessageRouter
 from switch_core.main import (
     _agent_event_retention_loop,
     _connection_sweep_loop,
@@ -66,6 +71,7 @@ from switch_core.main import (
 )
 from switch_core.messages.notify import MessageListener
 from switch_core.observability.runtime import EventLoopLag
+from switch_core.ownership import Ownership
 from switch_core.provisioning import Provisioning
 from switch_core.provisioning.postgres import PostgresProvisioning
 from switch_core.room_service import RoomCreateConfig, RoomService
@@ -73,10 +79,12 @@ from switch_core.session_activity.listener import AgentSessionActivityListener
 from switch_core.session_activity.outcomes import ApprovalOutcomes
 from switch_core.session_activity.service import AgentSessionActivityService, SwitchUser
 from switch_core.sessions.contract import ApprovalResult
+from switch_core.signals import SignalBus
 from switch_core.telemetry.messages import MessageTelemetry
 from switch_core.telemetry.service import TelemetryService
 from switch_core.telemetry.sink import NullSink
 from switch_core.tenant_context import bind_tenant_id, tenant_scope
+from switch_core.transport.cursors import CursorWriter
 from switch_core.transport.ephemeral import EphemeralBus
 from switch_core.transport.invites import InviteBus
 from switch_core.transport.room_cache import RoomCacheLimits, RoomDeliveryCache
@@ -95,6 +103,7 @@ from tests.integration.conftest import (
     _NoBridges,
     _truncate_all,
 )
+from tests.ownership import process_lease_on
 
 # Agents driven by a host process, which is what the benchmark spawns. The
 # profile has to say so: `session_passive` would suppress the addressed
@@ -269,7 +278,7 @@ class BenchServer:
             client = await self._await_client(agent.agent_id, deadline)
             await client.wait_ready()
 
-    async def _await_client(self, agent_id: str, deadline: float) -> AgentConsumer:
+    async def _await_client(self, agent_id: str, deadline: float) -> AgentActor:
         while asyncio.get_event_loop().time() < deadline:
             client = self.client_lifecycle.get_by_agent_id(agent_id)
             if client is not None:
@@ -457,9 +466,12 @@ async def _serve(
     # production. The events themselves are rows and outlive the restart.
     async with session_env.engine.begin() as connection:
         event_boot = await connection.scalar(agent_event_boot_sequence.next_value())
+    message_listener = MessageListener(lambda: create_unpooled_engine(config))
+    await message_listener.start()
     event_buffer = EventBuffer(
         session_factory,
         sequence_base=event_boot << 32,
+        rooms=message_listener,
         retention_seconds=config.agent_event_retention_seconds,
     )
     agent_event_listener = AgentEventListener(
@@ -468,8 +480,6 @@ async def _serve(
     connections = AgentConnectionRegistry()
     collab_lifecycle = _NoBridges()
 
-    message_listener = MessageListener(lambda: create_unpooled_engine(config))
-    await message_listener.start()
     await agent_event_listener.start()
     activity_listener = AgentSessionActivityListener(
         lambda: create_unpooled_engine(config)
@@ -488,25 +498,6 @@ async def _serve(
         session_factory=session_factory,
     )
 
-    provisioning: Provisioning = PostgresProvisioning(
-        session_factory=session_factory,
-        room_store=session_env.room_store,
-        client_store=session_env.client_store,
-        message_store=session_env.message_store,
-        invites=invites,
-    )
-
-    room_cache = RoomDeliveryCache(
-        session_factory=session_factory,
-        message_store=session_env.message_store,
-        limits=RoomCacheLimits(
-            max_bytes=config.room_delivery_cache_max_bytes,
-            max_rooms=config.room_delivery_cache_max_rooms,
-            max_rows_per_room=config.room_delivery_cache_max_rows_per_room,
-            max_age_seconds=config.room_delivery_cache_max_age_seconds,
-        ),
-    )
-
     # Telemetry off: these flows are not about reporting, but the
     # message hook must still be wired for the clients to build.
     message_telemetry = MessageTelemetry(
@@ -519,6 +510,45 @@ async def _serve(
             telemetry_internal=True,
         ),
         session_factory=session_factory,
+    )
+
+    router = MessageRouter(
+        services=RecipientServices(
+            session_factory=session_factory,
+            event_buffer=event_buffer,
+            agent_store=session_env.agent_store,
+            room_store=session_env.room_store,
+            document_store=session_env.document_store,
+            reference_store=session_env.reference_store,
+            agent_session_store=session_env.agent_session_store,
+            room_role_store=session_env.room_role_store,
+            external_user_store=session_env.external_user_store,
+            connections=connections,
+            frontend_base_url=config.frontend_base_url,
+            message_telemetry=message_telemetry,
+        ),
+        message_store=session_env.message_store,
+        client_store=session_env.client_store,
+        budget_store=BudgetStore(),
+    )
+
+    provisioning: Provisioning = PostgresProvisioning(
+        session_factory=session_factory,
+        room_store=session_env.room_store,
+        client_store=session_env.client_store,
+        router=router,
+        invites=invites,
+    )
+
+    room_cache = RoomDeliveryCache(
+        session_factory=session_factory,
+        message_store=session_env.message_store,
+        limits=RoomCacheLimits(
+            max_bytes=config.room_delivery_cache_max_bytes,
+            max_rooms=config.room_delivery_cache_max_rooms,
+            max_rows_per_room=config.room_delivery_cache_max_rows_per_room,
+            max_age_seconds=config.room_delivery_cache_max_age_seconds,
+        ),
     )
 
     client_factory = ClientFactory(
@@ -534,27 +564,16 @@ async def _serve(
         ephemeral=ephemeral,
         room_cache=room_cache,
         message_observer=message_telemetry,
+        router=router,
     )
-    client_factory.register(
-        "agent",
-        AgentActor,
-        AgentConsumer,
-        event_buffer=event_buffer,
-        agent_store=session_env.agent_store,
-        room_store=session_env.room_store,
-        bridge_store=session_env.bridge_store,
-        document_store=session_env.document_store,
-        reference_store=session_env.reference_store,
-        agent_session_store=session_env.agent_session_store,
-        room_role_store=session_env.room_role_store,
-        external_user_store=session_env.external_user_store,
-        connections=connections,
-        frontend_base_url=config.frontend_base_url,
-        message_telemetry=message_telemetry,
-    )
+    client_factory.register("agent", AgentActor)
     client_factory.register("user", HumanActor)
     client_factory.register("bridge", Actor)
 
+    # This process's lease and what it owns, as `main` wires them. Only agent
+    # clients run here, which have no consumer, so nothing is ever claimed;
+    # the signal bus is never started.
+    lease = process_lease_on(session_factory)
     client_lifecycle = ClientLifecycleService(
         provisioning=provisioning,
         client_store=session_env.client_store,
@@ -563,6 +582,23 @@ async def _serve(
         session_factory=session_factory,
         config=config,
         tenants_isolated=True,
+        ownership=Ownership(
+            lease=lease,
+            session_factory=session_factory,
+            bus=SignalBus(
+                session_factory,
+                lambda: create_unpooled_engine(config),
+                process_id=lease.process_id,
+            ),
+            store=OwnershipLeaseStore(),
+            processes=SwitchCoreProcessStore(),
+        ),
+        cursor_writer=CursorWriter(
+            session_factory=session_factory,
+            cursors=DeliveryCursorStore(),
+            leases=OwnershipLeaseStore(),
+            process_id=lease.process_id,
+        ),
     )
 
     room_service = RoomService(

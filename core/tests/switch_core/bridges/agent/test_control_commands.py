@@ -46,7 +46,7 @@ def _client(
     placed: str | None = None,
     relayed: list[Any] | None = None,
 ) -> SimpleNamespace:
-    """Minimal AgentConsumer stand-in for _dispatch_control_command."""
+    """Minimal AgentRecipient stand-in for _dispatch_control_command."""
 
     agent = SimpleNamespace(
         id="agent-1",

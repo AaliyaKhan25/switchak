@@ -143,6 +143,9 @@ class _StoppableClientLifecycle:
     def start_client(self, client: Client) -> None:
         pass
 
+    def announce(self, tenant_id: str) -> None:
+        return None
+
     async def stop(self, client_id: str) -> None:
         self.stopped.append(client_id)
 

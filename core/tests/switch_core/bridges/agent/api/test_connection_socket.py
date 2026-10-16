@@ -210,6 +210,20 @@ def test_a_refusal_is_sent_then_the_socket_closes_with_its_status(
         assert closed.value.code == 4400
 
 
+def test_an_over_long_connection_id_is_refused(
+    client: TestClient, protocol: _Protocol
+) -> None:
+    with client.websocket_connect(_url(connection_id="c" * 7900)) as ws:
+        refused = ws.receive_json()
+
+        assert refused["event"] == "refused"
+        assert refused["data"]["status"] == 400
+        with pytest.raises(WebSocketDisconnect) as closed:
+            ws.receive_json()
+        assert closed.value.code == 4400
+    assert protocol.connections.get("c" * 7900) is None
+
+
 def test_closing_the_socket_detaches_the_stream(
     client: TestClient, protocol: _Protocol
 ) -> None:

@@ -202,6 +202,27 @@ async def test_streaming_without_a_connection_id_is_refused(
     assert "connection_id is required" in excinfo.value.detail
 
 
+async def test_streaming_with_an_over_long_connection_id_is_refused(
+    db_buffer: EventBuffer,
+) -> None:
+    """The id travels in the signals switch-core processes send each other,
+    which Postgres caps at 8000 bytes, so one this long cannot be opened."""
+    protocol = _Protocol(db_buffer)
+    with pytest.raises(HTTPException) as excinfo:
+        await poll_events(
+            agent_id=AGENT_ID,
+            agent=_agent(),
+            protocol=protocol,  # type: ignore[arg-type]
+            config=None,  # type: ignore[arg-type]
+            accept="text/event-stream",
+            connection_id="c" * 7900,
+        )
+
+    assert excinfo.value.status_code == 400
+    assert "connection_id" in excinfo.value.detail
+    assert protocol.connections.get("c" * 7900) is None
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [("scope", "everything"), ("event_filter", "some")],

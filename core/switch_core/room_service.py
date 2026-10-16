@@ -664,6 +664,8 @@ class RoomService:
                 collaboration_core.add_room_mapping(
                     room.id, transport_room_id, external_channel_id, room.tenant_id
                 )
+            if bridge_id and external_channel_id:
+                self._collab_lifecycle.rooms_changed(bridge_id)
         finally:
             if collaboration_core and external_channel_id:
                 collaboration_core.end_provisioning(external_channel_id)
@@ -855,6 +857,7 @@ class RoomService:
             collaboration_core = self._collab_lifecycle.get(bridge_id)
             if collaboration_core:
                 collaboration_core.remove_room_mapping(room.id, room.transport_room_id)
+            self._collab_lifecycle.rooms_changed(bridge_id)
 
         logger.info("Deleted room %s", room_id)
 
@@ -1252,6 +1255,9 @@ class RoomService:
             collaboration_core.add_room_mapping(
                 room.id, room.transport_room_id, external_channel_id, room.tenant_id
             )
+        if external_channel_id:
+            self._collab_lifecycle.rooms_changed(bridge_id)
+        if collaboration_core and external_channel_id:
             await self._ensure_channel_capture(
                 collaboration_core, external_channel_id, channel_type
             )
@@ -1274,6 +1280,7 @@ class RoomService:
             collaboration_core = self._collab_lifecycle.get(bridge_id)
             if collaboration_core:
                 collaboration_core.remove_room_mapping(room.id, room.transport_room_id)
+            self._collab_lifecycle.rooms_changed(bridge_id)
 
         logger.info("Unlinked bridge from room %s", room_id)
 
@@ -1395,6 +1402,7 @@ class RoomService:
                 new_bridge.add_room_mapping(
                     room_id, transport_room_id, external_channel_id, room.tenant_id
                 )
+                self._collab_lifecycle.rooms_changed(bridge_id)
             finally:
                 new_bridge.end_provisioning(external_channel_id)
 
@@ -1421,6 +1429,7 @@ class RoomService:
                 )
 
             if old_bridge_id:
+                self._collab_lifecycle.rooms_changed(old_bridge_id)
                 old_bridge = self._collab_lifecycle.get(old_bridge_id)
                 if old_bridge is not None:
                     old_bridge.remove_room_mapping(room_id, transport_room_id)

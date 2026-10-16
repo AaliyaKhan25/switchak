@@ -442,9 +442,12 @@ preStop drain for a pod that rolls with a surge (a new pod is Ready before the
 old one stops): hold the old pod for a few seconds after it is marked
 terminating, so endpoint and load-balancer deregistration land before the
 process gets SIGTERM. Not for a Recreate Deployment, where nothing else is
-serving and the wait only lengthens the outage. The native `sleep` action needs
-no shell (the images are distroless) but needs Kubernetes 1.30+, so nothing
-renders on an older cluster.
+serving and the wait only lengthens the outage. Not for switch-core either:
+with more than one replica it drains itself after SIGTERM, first handing the
+work it owns to the other pods and then serving on for a few seconds out of
+readiness, and a sleep here would only hold that hand-over back. The native
+`sleep` action needs no shell (the images are distroless) but needs Kubernetes
+1.30+, so nothing renders on an older cluster.
 Usage: {{- include "switch.preStopDrain" . | nindent 10 }}
 */}}
 {{- define "switch.preStopDrain" -}}
@@ -709,6 +712,17 @@ the owner's password.
 {{- end }}
 - name: DB_MIGRATION_LOCK_TIMEOUT
   value: {{ .Values.postgresql.migrationLockTimeout | quote }}
+{{- /* The pod's own name names the process on its lease, its signals, its
+logs and its metrics, so one pod can be told from another. */}}
+- name: POD_NAME
+  valueFrom:
+    fieldRef:
+      fieldPath: metadata.name
+{{- /* How many replicas share the database: sizes the connection budget
+switch-core checks at boot, and decides whether a dead LISTEN connection takes
+a pod out of service. */}}
+- name: CORE_REPLICAS
+  value: {{ .Values.switchCore.replicaCount | quote }}
 - name: AGENT_AUTH_CACHE_TTL_SECONDS
   value: {{ .Values.switchCore.authCache.ttlSeconds | quote }}
 - name: ID_SERVER_NAME

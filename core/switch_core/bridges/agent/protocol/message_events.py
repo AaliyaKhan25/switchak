@@ -1,8 +1,8 @@
 """Builds the agent event for a room message or join, for every code path.
 
-A room row reaches an agent in one of two ways. `AgentConsumer` builds an event
-when the row is delivered and is for the agent (an addressed message, a join it
-listens for), and writes it to the agent's own events (`agent_events`), the
+A room row reaches an agent in one of two ways. The router builds an event when
+the row is written and is for the agent (an addressed message, a join it listens
+for), and stores it as one of the agent's own events (`agent_events`), the
 events meant for the agent, not ones it sent. `EventBuffer` builds one later
 from the `messages` row itself, for a reader that asked for the rest of the
 room's conversation too. Both call the functions here, so the agent receives

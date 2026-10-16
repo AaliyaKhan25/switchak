@@ -31,6 +31,33 @@ class MessageStore:
         await session.flush()
         return message
 
+    async def create_unless_stored(
+        self,
+        session: AsyncSession,
+        message: Message,
+        attachments: list[MessageAttachment],
+    ) -> bool:
+        """`create`, unless a message with the same `transport_event_id` is
+        already stored, in which case nothing is written. Returns whether the
+        message was written.
+
+        For writes whose id is derived from what caused them, so causing them
+        twice writes once. The check runs under the room's lock, which every
+        writer to the room holds to commit, so an earlier write of the same
+        message has either committed and is found, or has not started.
+        """
+        message.seq = await self._next_seq(session, message.room_id)
+        if await self.get_by_transport_event_id(session, message.transport_event_id):
+            return False
+        session.add(message)
+        await session.flush()
+        for position, attachment in enumerate(attachments):
+            attachment.message_id = message.id
+            attachment.position = position
+            session.add(attachment)
+        await session.flush()
+        return True
+
     async def create_historical(
         self,
         session: AsyncSession,

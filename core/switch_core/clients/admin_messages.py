@@ -5,7 +5,7 @@ from enum import StrEnum
 from typing import NamedTuple
 
 # Content flag stamped on the no-session / busy-elsewhere auto-reply (see
-# AgentConsumer.on_message). Its first job is to mark a message as itself an
+# AgentRecipient.decide_message). Its first job is to mark a message as itself an
 # auto-reply so that another offline agent addressed by it does NOT emit a
 # second auto-reply — two session-less agents tagging each other would
 # otherwise ping-pong identical "no session" replies forever. It also lets the

@@ -23,6 +23,7 @@ from sqlalchemy import delete, func, select, update
 from switch_core.addressing import owner_only_policy
 from switch_core.db.models import (
     Agent,
+    AgentEventRow,
     AgentSessionActivityItem,
     ApprovalRequest,
     ChatOperation,
@@ -411,6 +412,19 @@ async def test_a_sent_message_reads_back_as_the_console_member(chats: _Harness) 
     assert [m["messageId"] for m in body["messages"]] == [message["messageId"]]
     assert body["headSeq"] >= message["seq"]
     assert body["hasMore"] is False
+
+
+async def test_a_sent_message_is_an_event_of_the_agent_in_the_chat(
+    chats: _Harness,
+) -> None:
+    agent = await chats.agent("helper", owner=chats.alice)
+    room_id = await chats.new_chat(chats.alice, agent, "c1")
+
+    sent = await chats.send(chats.alice, room_id, "s1", "hello")
+    assert sent.status_code == 200, sent.text
+    [message] = sent.json()["messages"]
+
+    assert (room_id, message["seq"]) in await _events_of(chats, agent)
 
 
 async def test_a_plain_sent_message_carries_no_html(chats: _Harness) -> None:
@@ -1682,3 +1696,14 @@ async def test_the_activity_stream_forgets_revisions_past_its_cap(
     await chats.activity.change(_turn_change(agent, "t1"))
     assert [(await events.next())[1]["itemId"] for _ in range(2)] == ["turn", "tool-1"]
     await events.stream.aclose()  # type: ignore[attr-defined]
+
+
+async def _events_of(chats: _Harness, agent: Agent) -> list[tuple[str, int]]:
+    """The rows stored as the agent's own events, by room and place."""
+    async with chats.factory() as session:
+        rows = await session.execute(
+            select(AgentEventRow.room_id, AgentEventRow.room_seq).where(
+                AgentEventRow.agent_id == agent.id
+            )
+        )
+        return [(room_id, room_seq) for room_id, room_seq in rows.all()]

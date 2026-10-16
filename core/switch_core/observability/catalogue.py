@@ -246,11 +246,35 @@ OBSERVER_FAILURES = _spec(
     "sum",
     "{failure}",
     "Reports about a message that raised: the transport telling its observer "
-    "after the commit, or an agent's consumer reporting a message addressed to "
-    "it. The message is unaffected and only the report is lost, so these are "
+    "after the commit, or the router reporting a message addressed to an agent "
+    "once it has committed. The message is unaffected and only the report is lost, so these are "
     "caught by design and invisible without a counter. `actor` is who was "
     "writing or reading.",
     "actor",
+)
+DELIVERY_BACKLOG_SKIPPED = _spec(
+    "switch.messages.backlog_skipped",
+    "sum",
+    "{message}",
+    "Room rows a consumer resuming from its stored cursor stepped over because "
+    "they were too old to act on (`transport/cursors.py`, BACKLOG_MAX_AGE): "
+    "rows written while no process read for that client, past the cap. They "
+    "stay in the room's history; the command replies and platform posts they "
+    "would have caused were never made. `actor` is whose consumer it was.",
+    "actor",
+)
+ROUTING_FAILURES = _spec(
+    "switch.messages.routing_failures",
+    "sum",
+    "{failure}",
+    "Work the router could not do for one agent while the message it was "
+    "routing still went out: deciding whether the message is for the agent "
+    "(`stage` decide), storing the agent's own event for it "
+    "(`stage` store), a reply or report owed once it committed "
+    "(`stage` after_commit), or deciding a multi-file post given up on "
+    "(`stage` sweep). Each is caught so one agent cannot cost a room its "
+    "message, which is what makes it invisible without a counter.",
+    "stage",
 )
 DELIVERY_LAG = _spec(
     "switch.messages.delivery_lag",
@@ -626,6 +650,8 @@ CATALOGUE: dict[str, MetricSpec] = {
         SEND_FAILURES,
         DELIVERY_FAILURES,
         OBSERVER_FAILURES,
+        DELIVERY_BACKLOG_SKIPPED,
+        ROUTING_FAILURES,
         DELIVERY_LAG,
         DELIVERY_CACHE_READS,
         DELIVERY_CACHE_FILLS,

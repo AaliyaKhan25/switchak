@@ -24,6 +24,8 @@ from switch_core.db.models import (
     Message,
     Room,
 )
+from switch_core.db.stores.bridge_message_map_store import BridgeMessageMapStore
+from switch_core.db.stores.external_user_store import ExternalUserStore
 from switch_core.events import CommandEvent
 from switch_core.transport import InboundMessage as TransportMessage
 from switch_core.transport import RoomRef
@@ -289,6 +291,7 @@ async def _fake_collab_core_full(
 
         actor = SimpleNamespace(
             send_message=send_message,
+            client_id=f"fake-client-{external_user_id}",
             transport_user_id=f"@fake-{external_user_id}:switch.test",
         )
         human_actors[external_user_id] = actor
@@ -310,11 +313,17 @@ async def _fake_collab_core_full(
         assert room is not None
         transport_room_id = room.transport_room_id
 
-    ns = SimpleNamespace(
+    ns = CollaborationCore.__new__(CollaborationCore)
+    vars(ns).update(
         _bridge_id=bridge.id,
         _bridge_type="fake",
         _adapter=adapter,
         _human_user_ids=set(),
+        _not_human_user_ids=set(),
+        _session_factory=chats.factory,
+        _bridge_tenant_id=bridge.tenant_id,
+        _external_user_store=ExternalUserStore(),
+        _bridge_message_map_store=BridgeMessageMapStore(),
         _workspace_consumer_transport_user_id="@bridge-bot:switch.test",
         _channel_to_room={"fake-chan-1": (room_id, transport_room_id)},
         _channel_locks={},
@@ -334,17 +343,8 @@ async def _fake_collab_core_full(
     ns._find_channel = lambda room_id=None, transport_room_id=None: (
         "fake-chan-1" if transport_room_id == transport_room_id else None
     )
-    ns._outbound_thread_root_ref = CollaborationCore._outbound_thread_root_ref.__get__(
-        ns
-    )
-    ns._relay_outbound_message = CollaborationCore._relay_outbound_message.__get__(ns)
-    ns.handle_outbound_message = CollaborationCore.handle_outbound_message.__get__(ns)
-    ns._relay_outbound_media = CollaborationCore._relay_outbound_media.__get__(ns)
-    ns._counted_outbound = CollaborationCore._counted_outbound.__get__(ns)
-    ns._handle_inbound_message = CollaborationCore._handle_inbound_message.__get__(ns)
-    ns._download_media = CollaborationCore._download_media.__get__(ns)
 
-    return ns  # type: ignore[return-value]
+    return ns
 
 
 @pytest.mark.asyncio

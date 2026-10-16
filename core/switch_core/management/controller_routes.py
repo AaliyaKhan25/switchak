@@ -43,6 +43,7 @@ from switch_core.bridges.agent.dependencies import get_protocol, get_session
 from switch_core.bridges.agent.protocol.agent_core import AgentCore
 from switch_core.bridges.agent.protocol.controller_presence import (
     ControllerConnectionError,
+    ControllerRevokedError,
 )
 from switch_core.bridges.agent.protocol.controller_stream import (
     IDLE,
@@ -351,19 +352,38 @@ async def open_connection(
     body: ControllerConnectionRequest,
     principal: PathController,
     protocol: Protocol,
+    management: Management,
+    session: Session,
 ) -> dict[str, Any]:
     """Open the controller's connection, taking over any it had.
 
     The agents bound to it are attached on the stream, each from its cursor
     here; the response names them. Opening again is a takeover: the earlier
-    connection's socket ends with `taken_over`, and its beats are refused.
+    connection's socket ends with `taken_over`, and its beats are refused,
+    whichever process held it. The connection is recorded before the answer,
+    so its socket can attach through any process.
     """
     presence = protocol.connections.controllers
+    resume_cursors = body.resume_cursors()
+    if presence.is_revoked(principal.controller_id):
+        raise _connection_refusal(ControllerRevokedError(principal.controller_id))
+    # Recorded before it is held: a read of the row in between would find the
+    # connection this one replaces still named there, and close this one.
+    identity = presence.new_connection()
+    connection_id, generation = identity
+    await management.record_opened(
+        session,
+        principal,
+        connection_id=connection_id,
+        generation=generation,
+        resume_cursors=resume_cursors,
+    )
     try:
         conn = presence.open(
             controller_id=principal.controller_id,
             tenant_id=principal.tenant_id,
-            resume_cursors=body.resume_cursors(),
+            resume_cursors=resume_cursors,
+            identity=identity,
         )
     except ControllerConnectionError as exc:
         raise _connection_refusal(exc) from exc
@@ -401,9 +421,18 @@ async def attach_stream(
     presence = protocol.connections.controllers
     nudges = management.notifier.subscribe(principal.controller_id)
     try:
-        conn = presence.require(principal.controller_id, connection_id, generation)
         async with tenant_session(session_factory, principal.tenant_id) as session:
+            # Wherever it was opened or last held: decided on the
+            # controller's row, which says whether it is still the one the
+            # controller opened last.
+            conn = await management.hold_connection(
+                session, principal, connection_id, generation
+            )
             state = await management.connection_state(session, principal)
+        # Attached once nothing more is awaited, and refused if the connection
+        # stopped being the controller's current one while the reads above
+        # waited.
+        token = presence.attach_stream(conn)
     except ControllerConnectionError as exc:
         nudges.close()
         raise _connection_refusal(exc) from exc
@@ -416,7 +445,6 @@ async def attach_stream(
         "generation": conn.generation,
         "heartbeat_interval_s": HEARTBEAT_INTERVAL_SECONDS,
     }
-    token = presence.attach_stream(conn)
     return controller_event_stream(
         conn=conn,
         stream_token=token,

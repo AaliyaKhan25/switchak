@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi import FastAPI
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette.middleware.sessions import SessionMiddleware
 
 from switch_core.bridges.agent.protocol.agent_core import AgentCore
@@ -22,6 +23,7 @@ from switch_core.clients.client_lifecycle_service import ClientLifecycleService
 from switch_core.config import SwitchConfig
 from switch_core.connections.adapters.github import load_github_app
 from switch_core.connections.flows import ServiceFlows
+from switch_core.connections.sign_in_flows import SignInFlows
 from switch_core.db.stores.agent_store import AgentStore
 from switch_core.db.stores.api_key_store import ApiKeyStore
 from switch_core.db.stores.budget_store import BudgetStore
@@ -91,7 +93,7 @@ def create_gateway_app(
     connector_lifecycle: ServerSideConnectorLifecycleService,
     connector_store: ServerConnectorStore,
     event_buffer: EventBuffer,
-    session_factory: object,
+    session_factory: async_sessionmaker[AsyncSession],
     user_store: UserStore,
     external_user_store: ExternalUserStore,
     api_key_store: ApiKeyStore,
@@ -159,7 +161,12 @@ def create_gateway_app(
     )
     app.include_router(connection_catalog_router, tags=["provider-connections"])
     app.include_router(providers_router, tags=["agent providers"])
-    app.state.service_flows = ServiceFlows(config.gateway_public_url)
+    # Sign-ins under way, GitHub's and the catalog's, in Postgres so that any
+    # switch-core process can take any step of one.
+    app.state.sign_in_flows = SignInFlows(session_factory, config.keyring)
+    app.state.service_flows = ServiceFlows(
+        config.gateway_public_url, app.state.sign_in_flows
+    )
     if config.service_connections_enabled:
         app.include_router(service_connections_router, tags=["service-connections"])
         app.include_router(service_flows_router, tags=["service-connections"])

@@ -28,8 +28,8 @@ from switch_core.db.models import (
 )
 from switch_core.db.models import AgentDefinition as AgentDefinitionRow
 from switch_core.management.advanced_config import validate_advanced_config
-from switch_core.management.process_lease import ProcessLeases
 from switch_core.management.sealed_logins import PublicKey, key_id
+from switch_core.process_lease import ProcessLeases
 from switch_core.providers.registry import AgentProviderId
 
 Provider = AgentProviderId

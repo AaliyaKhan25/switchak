@@ -156,13 +156,21 @@ example), leave `tls.enabled` false and annotate.
 
 ## Constraints you cannot configure away
 
-**switch-core runs exactly one replica.** Four things live in the process
-rather than the database: the per-agent event buffer, the invite bus, the
-presence bus, and the message listener's subscriber registry. A second replica
-would hold its own copy of each, so a signal raised in one would never reach a
-client attached to the other. Bridge connections live in memory too. `switchCore.replicaCount` other than 1 fails the render,
-and the deployment strategy is `Recreate`, so upgrades have a brief outage
-rather than two pods fighting.
+**switch-core can run more than one replica.** `switchCore.replicaCount` sets
+how many. Shared state lives in the database: replicas signal each other through
+Postgres notifications, and each bridge's listener and outbound relay, each
+server connector and each command reader is owned by one replica at a time
+through a lease. Any replica can hold any client's connection. Two things are
+not single-owner and run on every replica: the shared Discord gateway
+connection of the distributed Discord app, and each Teams bridge's Graph
+subscriptions, which every replica adopts and renews.
+
+One replica upgrades with `Recreate`, so an upgrade has a brief outage. More
+than one rolls (`switchCore.rollingUpdate`, one extra pod at a time by
+default) and gets a PodDisruptionBudget (`switchCore.podDisruptionBudget`) and
+a soft spread across nodes (`switchCore.topologySpread`). On SIGTERM a pod
+hands its owned work to the others before it stops, inside
+`switchCore.terminationGracePeriodSeconds`.
 
 **Bridges are created at runtime, not in values.** You register a collaboration
 bridge in the gateway dashboard, with its credentials, after the chart is

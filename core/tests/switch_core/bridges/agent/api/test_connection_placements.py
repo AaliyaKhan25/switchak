@@ -148,6 +148,24 @@ async def test_a_room_the_agent_is_not_in_refuses_the_whole_request(
 
 
 @pytest.mark.asyncio
+async def test_an_over_long_session_id_refuses_the_whole_request(
+    db_buffer: EventBuffer,
+) -> None:
+    """A session id travels in the signals switch-core processes send each
+    other when its room is taken, which Postgres caps at 8000 bytes."""
+    protocol = _Protocol(db_buffer)
+    conn = _open(protocol, "watcher")
+    await _place(protocol, conn, {"session-1": ROOM_A})
+
+    with pytest.raises(HTTPException) as refused:
+        await _place(protocol, conn, {"session-1": ROOM_B, "s" * 7900: ROOM_A})
+
+    assert refused.value.status_code == 400
+    assert protocol.connections.connection_placements(conn) == {"session-1": ROOM_A}
+    assert conn.rooms == {ROOM_A}
+
+
+@pytest.mark.asyncio
 async def test_two_sessions_in_one_room_are_refused(db_buffer: EventBuffer) -> None:
     protocol = _Protocol(db_buffer)
     conn = _open(protocol, "watcher")

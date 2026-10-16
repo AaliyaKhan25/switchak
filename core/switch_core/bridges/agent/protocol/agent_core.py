@@ -726,6 +726,7 @@ class AgentCore:
 
         await session.commit()
         self.client_lifecycle.start_client(client_record)
+        self.client_lifecycle.announce(client_record.tenant_id)
         return agent.id
 
     async def _reregister_agent(
@@ -1027,17 +1028,28 @@ class AgentCore:
         if self._agent_removal_listener is not None:
             await self._agent_removal_listener(tenant_id, resolved_id)
         await self.client_lifecycle.stop(client_id)
-        self.event_buffer.remove(resolved_id)
+        try:
+            self.event_buffer.remove(resolved_id)
 
-        await self._remove_bridge_identities(tenant_id, resolved_name)
+            await self._remove_bridge_identities(tenant_id, resolved_name)
 
-        # One transaction for the agent and its client, stopped above; see
-        # `ClientLifecycleService.delete_record`.
-        async with self.session_factory() as session:
-            await self.agent_store.delete(session, resolved_id)
-            await self.client_lifecycle.delete_record(session, client_id)
-            await session.commit()
+            # One transaction for the agent and its client, stopped above; see
+            # `ClientLifecycleService.delete_record`.
+            async with self.session_factory() as session:
+                await self.agent_store.delete(session, resolved_id)
+                await self.client_lifecycle.delete_record(session, client_id)
+                await session.commit()
+        except BaseException:
+            # A deletion that did not commit leaves the agent in place, and
+            # its client must not stay stopped here.
+            self.client_lifecycle.deletion_failed(client_id)
+            raise
+        self.client_lifecycle.announce(tenant_id)
         self.api_key_cache.invalidate_agent(resolved_id)
+        # Its connections end with it, here and in whichever process holds
+        # one: their rows went with its row. After its key is dropped, so a
+        # client told cannot open another.
+        await self.connections.agent_deleted(resolved_id)
         if self._room_agents_listener is not None:
             for room_id in room_ids:
                 await self._room_agents_listener(tenant_id, room_id)
@@ -2369,10 +2381,10 @@ class AgentCore:
         without the same check this call would hand over events from a room
         the agent has since been removed from.
 
-        `AgentConsumer.on_removed` already empties the buffer of a removed
-        room's events, so this is the second of two answers. It is the
-        authoritative one: that signal is in-process, and this reads the table
-        the removal wrote.
+        The removal deletes the agent's events in the room it left
+        (`MessageRouter.remove`), so this is the second of two answers, and
+        the one that holds whatever wrote the events, an older release's
+        consumer included: it reads the membership the removal wrote.
         """
         async with self.session_factory() as session:
             await self.agent_session_store.touch_heartbeat(session, agent_id, None)

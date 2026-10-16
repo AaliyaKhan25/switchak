@@ -260,8 +260,8 @@ reasons. Each is now answered rather than ignored:
    sink now batches: events wait up to five seconds, or until two hundred are
    queued, and go as one request. Its buffer is bounded, so a relay that is down
    costs events, never memory.
-2. **The sender must not pay for it.** The transport and the agent consumer
-   hand a small record to a queue and return. One worker looks up the room and
+2. **The sender must not pay for it.** The transport and the router hand a
+   small record to a queue and return. One worker looks up the room and
    the sender — cached, so a busy room is read once every five minutes rather
    than once per message — and emits. That queue is bounded too, and drops with
    a warning when it falls behind.
@@ -1004,7 +1004,7 @@ Two things to set up first, or a third of the list cannot fire at all:
   same agent and session emits nothing, across restarts, for 7 days.
 
 **Messages** — `telemetry/messages.py`, fed by `transport/postgres.py` and
-`clients/agent_consumer.py`
+`delivery/recipient.py`
 
 - `room_message_sent` — any person or agent posting in any room. A post with
   three files is one event. A command reply or an offline notice is none.

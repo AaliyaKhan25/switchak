@@ -4,8 +4,10 @@ What a reader that wants everything (`filter=all`, the legacy polls) is sent
 besides the agent's own events. Three properties are pinned here, each found
 running the stream end to end:
 
-- a row is read once the agent's consumer has decided it is not the agent's
-  own, and no sooner, so it is never sent twice;
+- a row is read as soon as it is written, because whether it is the agent's
+  own was decided in the transaction that wrote it, so it is never sent twice;
+  the one row read later is a file of a post the router is still waiting on,
+  which holds the read back until the post is decided;
 - the agent's own event for a message stands for that message up to the row it
   was delivered through, so a file that arrives after its group was delivered
   is still read;
@@ -18,17 +20,23 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from switch_core.attachments import ATTACHMENT_GROUP_KEY
 from switch_core.bridges.agent.protocol.event_buffer import BufferedEvent, EventBuffer
 from switch_core.bridges.agent.protocol.positions import OWN_EVENTS, room_source
 from switch_core.bridges.agent.protocol.types import AgentEvent, MessagePayload
-from switch_core.db.models import TENANT_ZERO_ID, Agent, Message, MessageAttachment
+from switch_core.db.models import (
+    TENANT_ZERO_ID,
+    Agent,
+    Message,
+    MessageAttachment,
+    PendingAttachmentGroup,
+)
 from switch_core.db.session_scope import tenant_session
 from switch_core.db.stores.message_store import MessageStore
-from tests.db_buffer import db_buffer_on, say, seed_member, seed_room
+from tests.db_buffer import say, seed_member, seed_room
 
 AGENT = "agent-1"
 ROOM = "room-1"
@@ -41,12 +49,6 @@ SessionFactory = async_sessionmaker[AsyncSession]
 async def _rows(session_factory: SessionFactory) -> None:
     await seed_member(session_factory, AGENT, ROOM)
     await seed_room(session_factory, EMPTY_ROOM)
-
-
-def _unsettling(session_factory: SessionFactory) -> EventBuffer:
-    """A buffer that takes a minute to settle a row on its own, so a test row
-    is read only when the agent's own events say it was decided."""
-    return db_buffer_on(session_factory, settle_seconds=60.0)
 
 
 async def _keep(buffer: EventBuffer, room_seq: int, message_key: str) -> None:
@@ -117,42 +119,67 @@ def _bodies(items: list[BufferedEvent]) -> list[str | None]:
     return [getattr(item.event.payload, "body", None) for item in items]
 
 
-async def test_what_came_before_the_agents_own_event_is_read_at_once(
-    session_factory: SessionFactory,
+async def test_what_came_before_and_after_the_agents_own_event_is_read_at_once(
+    db_buffer: EventBuffer, session_factory: SessionFactory
 ) -> None:
-    """The consumer takes a room's rows one at a time, in order, so once it has
-    kept a row as the agent's own, every row before it is decided. Waiting for
-    them to settle would send the agent its mention before the conversation
-    that led up to it."""
-    buffer = _unsettling(session_factory)
+    """A row and the own events decided for it commit together, so a row that
+    can be read is decided: the conversation around a mention is read at once,
+    and the mention, already the agent's own, is not read again. Waiting for
+    rows to settle sent the agent its mention ahead of the conversation that
+    led up to it."""
+    buffer = db_buffer
     await say(session_factory, ROOM, "before")
     asked = await say(session_factory, ROOM, "@agent over to you")
     await _keep(buffer, asked.seq, asked.transport_event_id)
-    await say(session_factory, ROOM, "after")
+    after = await say(session_factory, ROOM, "after")
 
     read = await buffer.read_conversation(TENANT_ZERO_ID, AGENT, {ROOM: 0}, limit=100)
 
-    assert _bodies(read.events) == ["before"]
-    # Looked through the agent's own row, and no further: "after" is not
-    # decided yet.
-    assert read.through == {ROOM: asked.seq}
+    assert _bodies(read.events) == ["before", "after"]
+    assert read.through == {ROOM: after.seq}
 
 
-async def test_a_row_not_yet_decided_holds_back_the_rows_after_it(
-    session_factory: SessionFactory,
+async def test_a_post_not_yet_decided_holds_back_the_rows_after_it(
+    db_buffer: EventBuffer, session_factory: SessionFactory
 ) -> None:
-    """Rows are read as an unbroken run from the reader's place. A settled row
-    after an unsettled one waits for it, or the reader's place would move past
-    the unsettled row and it would never be read."""
-    buffer = db_buffer_on(session_factory, settle_seconds=30.0)
-    now = datetime.now(UTC)
-    await say(session_factory, ROOM, "settled", sent_at=now - timedelta(minutes=5))
-    await say(session_factory, ROOM, "fresh", sent_at=now)
-    await say(session_factory, ROOM, "stamped late", sent_at=now - timedelta(minutes=5))
+    """Rows are read as an unbroken run from the reader's place. A post whose
+    files are still arriving is decided as a whole, so the read stops at its
+    first file, and the rows after it wait with it: had the reader's place
+    moved past the file, the post would reach the agent in pieces."""
+    buffer = db_buffer
+    long_ago = datetime.now(UTC) - timedelta(minutes=5)
+    await say(session_factory, ROOM, "decided", sent_at=long_ago)
+    first = await say(
+        session_factory,
+        ROOM,
+        "first of two",
+        content={ATTACHMENT_GROUP_KEY: {"id": "grp", "index": 0, "total": 2}},
+        sent_at=long_ago,
+    )
+    async with tenant_session(session_factory, TENANT_ZERO_ID) as session:
+        session.add(
+            PendingAttachmentGroup(
+                room_id=ROOM,
+                group_id="grp",
+                total=2,
+                from_seq=first.seq,
+                deadline=datetime.now(UTC) + timedelta(minutes=1),
+            )
+        )
+        await session.commit()
+    await say(session_factory, ROOM, "after it", sent_at=long_ago)
 
     read = await buffer.read_conversation(TENANT_ZERO_ID, AGENT, {ROOM: 0}, limit=100)
 
-    assert _bodies(read.events) == ["settled"]
+    assert _bodies(read.events) == ["decided"]
+
+    async with tenant_session(session_factory, TENANT_ZERO_ID) as session:
+        await session.execute(delete(PendingAttachmentGroup))
+        await session.commit()
+    read = await buffer.read_conversation(TENANT_ZERO_ID, AGENT, {ROOM: 0}, limit=100)
+
+    # Decided: the read goes on from the post's first file.
+    assert _bodies(read.events) == ["decided", "first of two", "after it"]
 
 
 async def test_a_backlog_longer_than_one_read_keeps_its_order(
@@ -240,17 +267,23 @@ async def test_a_group_held_back_by_another_keeps_its_first_file(
     hold, so the read must not move past A's first file either, or the next
     read would send A with only its second file."""
     buffer = db_buffer
-    async with tenant_session(session_factory, TENANT_ZERO_ID) as session:
-        now = await session.scalar(select(func.now()))
-    assert now is not None
-    # Past the settle time (0.2 s for `db_buffer`) and within the group grace
-    # time (5 s), so B, missing its second file, is held.
-    recent = now - timedelta(seconds=3)
+    long_ago = datetime.now(UTC) - timedelta(minutes=5)
     a_first = await _file(
-        session_factory, "A", 0, "a-one.pdf", recent, caption="see these"
+        session_factory, "A", 0, "a-one.pdf", long_ago, caption="see these"
     )
-    await _file(session_factory, "B", 0, "b-one.pdf", recent)
-    await _file(session_factory, "A", 1, "a-two.pdf", recent)
+    b_first = await _file(session_factory, "B", 0, "b-one.pdf", long_ago)
+    await _file(session_factory, "A", 1, "a-two.pdf", long_ago)
+    async with tenant_session(session_factory, TENANT_ZERO_ID) as session:
+        session.add(
+            PendingAttachmentGroup(
+                room_id=ROOM,
+                group_id="B",
+                total=2,
+                from_seq=b_first.seq,
+                deadline=datetime.now(UTC) + timedelta(minutes=1),
+            )
+        )
+        await session.commit()
 
     first = await buffer.read_conversation(TENANT_ZERO_ID, AGENT, {ROOM: 0}, limit=100)
 
@@ -258,13 +291,9 @@ async def test_a_group_held_back_by_another_keeps_its_first_file(
     place = first.through.get(ROOM, 0)
     assert place < a_first.seq
 
-    # B's grace time runs out without its second file.
+    # B is decided without its second file.
     async with tenant_session(session_factory, TENANT_ZERO_ID) as session:
-        await session.execute(
-            update(Message)
-            .where(Message.room_id == ROOM)
-            .values(sent_at=Message.sent_at - timedelta(minutes=1))
-        )
+        await session.execute(delete(PendingAttachmentGroup))
         await session.commit()
 
     second = await buffer.read_conversation(

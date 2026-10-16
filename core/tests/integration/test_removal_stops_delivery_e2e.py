@@ -1,15 +1,14 @@
 """End-to-end: removing an agent from a room stops delivering that room to it.
 
 Drives the genuine path, no mocks and no stubs. `RoomService` removes the agent
-the way the gateway's `DELETE /rooms/{id}/agents/{id}` does → the kick is rung
-over the invite bus → the transport drops the subscription and tells its client
-→ the client empties the event buffer of that room → every reader stops serving
-it.
+the way the gateway's `DELETE /rooms/{id}/agents/{id}` does, the kick deletes
+the agent's own events in that room in the transaction that removes the
+membership (`MessageRouter.remove`), and every reader stops serving it.
 
 The unit tests cover each of those links. What only this can show is that they
-are joined: severing the one line in `Actor.setup` that wires the removal
-handler to the transport left the whole unit suite green while a kick reached
-nothing.
+are joined: a removal that reached the membership but not the agent's events
+would leave the whole unit suite green while a resuming reader was handed the
+room.
 
 Two readers rather than one, because they fail differently. `poll_events`
 applies membership from the database on every poll, so it is right even if the
@@ -34,12 +33,11 @@ pytestmark = [pytest.mark.integration, pytest.mark.asyncio(loop_scope="session")
 async def _wait_joined(
     client: object, transport_room_id: str, timeout: float = 30
 ) -> None:
-    deadline = asyncio.get_event_loop().time() + timeout
-    while asyncio.get_event_loop().time() < deadline:
-        if transport_room_id in client.room_join_times:  # type: ignore[attr-defined]
-            return
-        await asyncio.sleep(0.25)
-    raise AssertionError(f"client never joined {transport_room_id} within {timeout}s")
+    """Block until the agent is a member of the room: its membership is a
+    row, written when it was invited (`Actor.wait_joined` reads it)."""
+    assert await client.wait_joined(transport_room_id, timeout), (  # type: ignore[attr-defined]
+        f"client never joined {transport_room_id} within {timeout}s"
+    )
 
 
 async def _wait_buffered(

@@ -491,9 +491,10 @@ class TemplateAgents:
 
     async def _listening(self, created: list[CreatedAgent]) -> list[CreatedAgent]:
         """Wait, up to the listen timeout in all, for each new agent's client
-        to be taking events. A client that starts after a room exists reads
-        it only from then on, so without this the kickoff posted the moment
-        the room is made never reaches an agent created a moment before."""
+        to be taking events, so the kickoff posted the moment the room is made
+        reaches an agent created a moment before. An agent's client is taking
+        events as soon as it exists (`AgentActor.wait_receiving`): the rows of
+        its rooms are decided for it as they are written."""
         loop = asyncio.get_running_loop()
         deadline = loop.time() + self._listen_timeout
         out: list[CreatedAgent] = []

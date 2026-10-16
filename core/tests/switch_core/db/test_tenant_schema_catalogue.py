@@ -112,6 +112,10 @@ class TestEveryTableIsScopedUnlessItIsNamedGlobal:
             # sockets for every tenant at once, and the row says only that it
             # is alive.
             "switch_core_processes",
+            # Which of those processes runs each piece of work that must run
+            # once: a process holds work for every tenant at once, and the row
+            # names only which process runs which id.
+            "ownership_leases",
             # Switch Trust's one guardrails policy for the whole deployment.
             # A policy that varied per tenant would be a new scoped table.
             "trust_settings",
@@ -119,6 +123,9 @@ class TestEveryTableIsScopedUnlessItIsNamedGlobal:
             # vendor sees one Switch, so one client per deployment and
             # service, holding no person's account.
             "service_oauth_clients",
+            # Which schema revisions a release from before them can still
+            # serve on, as Alembic applied them: a fact about the schema.
+            "schema_expand_only_revisions",
         }
 
     async def test_scoped_is_everything_else(self) -> None:

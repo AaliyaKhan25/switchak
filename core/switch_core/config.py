@@ -356,6 +356,18 @@ class SwitchConfig(BaseSettings):
     # (pilot, development, demo, public), not the machine.
     service_name: str = "switch-core"
     environment: str | None = None
+    # The Kubernetes pod this process runs in, from the downward API. It names
+    # the process everywhere one process has to be told from another: its
+    # lease row, the controller connections it holds, the signals it sends,
+    # its log lines and its metrics (`process_identity.py`). Unset outside
+    # Kubernetes, where the host name stands in.
+    pod_name: str | None = None
+    # How many switch-core processes the deployment runs against this
+    # database. Read for the connection budget checked at boot
+    # (`db/connection_budget.py`) and for whether a dead LISTEN connection
+    # takes this process out of service: with one replica there is no other
+    # to send traffic to, so it does not.
+    core_replicas: int = Field(default=1, ge=1)
 
     # The placeholder a log line carries when no tenant is bound at all —
     # deliberately not a tenant id, and it must not be set to one. An

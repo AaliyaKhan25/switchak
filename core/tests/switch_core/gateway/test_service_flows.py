@@ -10,25 +10,25 @@ from __future__ import annotations
 import json
 import secrets
 import shutil
-import time
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from switch_core.connections.adapters.oauth import OAuthAdapter
 from switch_core.connections.broker import ServiceBroker
-from switch_core.connections.flows import MAX_FLOWS, ServiceFlows
+from switch_core.connections.flows import ServiceFlows
 from switch_core.connections.loader import CATALOG_ROOT, load_catalog
 from switch_core.connections.oauth_clients import (
     LOOPBACK_CALLBACK_PATH,
     RegisteredClient,
     redirect_uris,
 )
-from switch_core.db.models import ServiceConnection, User
+from switch_core.connections.sign_in_flows import MAX_FLOWS, SignInFlows
+from switch_core.db.models import ServiceConnection, SignInFlow, User
 from switch_core.db.stores.service_connection_store import ServiceConnectionStore
 from switch_core.gateway.service_connections import (
     router as service_connections_router,
@@ -112,7 +112,7 @@ def _world(
     )
     harness = build_harness(session_factory)
     harness.gateway_app.state.service_broker = broker
-    flows = ServiceFlows(public_url)
+    flows = ServiceFlows(public_url, SignInFlows(session_factory, TEST_KEYRING))
     harness.gateway_app.state.service_flows = flows
     harness.gateway_app.include_router(service_connections_router)
     harness.gateway_app.include_router(service_flows_router)
@@ -163,6 +163,11 @@ def _listener_code(url: str, state: str) -> str:
     query = parse_qs(parts.query)
     assert query["state"] == [state]
     return query["code"][0]
+
+
+async def _flow_ids(session_factory: async_sessionmaker[AsyncSession]) -> set[str]:
+    async with session_factory() as session:
+        return set((await session.execute(select(SignInFlow.id))).scalars())
 
 
 async def _connection(
@@ -235,7 +240,7 @@ class TestLoopback:
         assert connection.granted_scopes == ["read:items", "write:items"]
         secret = json.loads(TEST_KEYRING.decrypt(connection.encrypted_secret))
         assert secret["refresh_token"] in world.vendor.live_refresh
-        assert world.flows.flows == {}
+        assert await _flow_ids(session_factory) == set()
 
     async def test_a_code_is_completed_once(self, session_factory, tmp_path) -> None:
         world = _world(session_factory, tmp_path / "catalog")
@@ -287,7 +292,13 @@ class TestLoopback:
             code = _listener_code(
                 world.vendor.authorize(started.json()["url"]), console.state
             )
-            world.flows.flows[console.state].expires_at = time.time() - 1
+            async with session_factory() as session:
+                await session.execute(
+                    update(SignInFlow)
+                    .where(SignInFlow.id == console.state)
+                    .values(expires_at=datetime.now(UTC) - timedelta(seconds=1))
+                )
+                await session.commit()
             assert (await console.complete(code)).status_code == 410
             assert (await console.status()).status_code == 410
 
@@ -315,11 +326,16 @@ class TestLoopback:
         users = [await add_member(session_factory, f"u{i}") for i in range(2)]
         async with world.harness.client() as client:
             assert (await Console(client, users[0]).start()).status_code == 200
-            template = next(iter(world.flows.flows.values()))
-            for i in range(MAX_FLOWS - 1):
-                world.flows.flows[f"filler-{i}"] = type(template)(
-                    **{**template.__dict__, "user_id": f"someone-{i}"}
-                )
+            async with session_factory() as session:
+                template = await session.scalar(select(SignInFlow))
+                assert template is not None
+                columns = {
+                    column.key: getattr(template, column.key)
+                    for column in SignInFlow.__table__.columns
+                }
+                for i in range(MAX_FLOWS - 1):
+                    session.add(SignInFlow(**{**columns, "id": f"filler-{i}"}))
+                await session.commit()
             busy = await Console(client, users[1]).start()
             assert busy.status_code == 409
             assert "Too many sign-ins" in busy.json()["detail"]
@@ -445,7 +461,7 @@ class TestLoopbackPorts:
             refused = await Console(client, ada).start(port=43999)
         assert refused.status_code == 409
         assert "port 43123, 43124" in refused.json()["detail"]
-        assert world.flows.flows == {}
+        assert await _flow_ids(session_factory) == set()
 
 
 class TestCoreCallback:

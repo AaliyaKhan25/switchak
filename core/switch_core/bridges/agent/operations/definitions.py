@@ -342,18 +342,23 @@ async def connect_to_room(
             # then fails would send them somewhere the session is not — and the
             # rooms to vacate are the caller's own, read under the bind's lock
             # rather than from what it believed on arrival.
-            if caller is not None:
-                previous, displaced_session_id = protocol.connections.place_session(
-                    agent_id, caller.id, room.id, key
-                )
-            else:
-                previous = rooms_on_caller_connection(protocol, agent_id, key)
+            #
+            # Recorded, so the move is made on what every process holds and the
+            # process holding the caller's connection is told: its stream may
+            # be parked waiting for exactly this room.
+            async with protocol.connections.recorded(agent_id):
+                if caller is not None:
+                    previous, displaced_session_id = protocol.connections.place_session(
+                        agent_id, caller.id, room.id, key
+                    )
+                else:
+                    previous = rooms_on_caller_connection(protocol, agent_id, key)
 
-            evicted_connection_id = claim_room_on_caller_connection(
-                protocol, agent_id, key, room.id
-            )
-            for departed in previous - {room.id}:
-                release_room_on_caller_connection(protocol, agent_id, key, departed)
+                evicted_connection_id = claim_room_on_caller_connection(
+                    protocol, agent_id, key, room.id
+                )
+                for departed in previous - {room.id}:
+                    release_room_on_caller_connection(protocol, agent_id, key, departed)
 
             # Connecting is how an agent's occupancy of a room changes hands, and
             # the occupant is the one whose reading clears that room's unread

@@ -532,7 +532,19 @@ class PlatformAdapter(ABC):
     #: withheld is the notice, not the request.
     discloses_unconfirmed_posts: ClassVar[bool] = False
 
+    # Whether this adapter keeps quiet when told not to listen
+    # (`set_listening`): it opens nothing the platform delivers events over,
+    # no socket, no poll, no subscription it keeps alive, and only calls the
+    # platform's API. A bridge is listened to by the one switch-core process
+    # that holds it (`ownership.py`); every other runs it quietly to serve the
+    # requests and webhooks that reach it. An adapter that cannot keep quiet
+    # listens wherever it runs, so its platform delivers to every process.
+    keeps_quiet_unless_listening: ClassVar[bool] = False
+
     def __init__(self) -> None:
+        # Whether this process holds the bridge: see
+        # `keeps_quiet_unless_listening`. Set by the lifecycle before `start`.
+        self._listening = True
         self._on_message: Callable[[InboundMessage], Awaitable[None]] | None = None
         self._on_command: Callable[[InboundCommand], Awaitable[None]] | None = None
         self._on_agent_joined: Callable[[InboundAgentJoin], Awaitable[None]] | None = (
@@ -586,6 +598,12 @@ class PlatformAdapter(ABC):
 
     def set_max_attachment_bytes(self, max_bytes: int) -> None:
         self._max_attachment_bytes = max_bytes
+
+    def set_listening(self, listening: bool) -> None:
+        """Whether this process holds the bridge and listens to the platform
+        for it, or runs it quietly. Before `start`; an adapter that cannot
+        keep quiet ignores it (`keeps_quiet_unless_listening`)."""
+        self._listening = listening
 
     def set_third_party_avatars(self, enabled: bool) -> None:
         """Whether this adapter may hand platforms an icon drawn by an outside

@@ -31,7 +31,6 @@ from switch_core.management import reason_codes
 from switch_core.management.advanced_config import provider_fields
 from switch_core.management.errors import ManagementError
 from switch_core.management.placement import is_revoked, provider_auth
-from switch_core.management.process_lease import ProcessLeases
 from switch_core.management.schemas import (
     CreateManagedAgentRequest,
     DefinitionV1,
@@ -41,6 +40,7 @@ from switch_core.management.schemas import (
     workspaces_dir_of,
 )
 from switch_core.management.service import ManagementService
+from switch_core.process_lease import ProcessLeases
 
 NOTHING_CREATED = "Nothing was created"
 NOTHING_CHANGED = "Nothing was changed"

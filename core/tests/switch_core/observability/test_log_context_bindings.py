@@ -68,6 +68,7 @@ class TestTheDeliveryLoopBindsItsRoom:
         transport._wake = asyncio.Event()  # type: ignore[attr-defined]
         transport._pending = {"room-7"}  # type: ignore[attr-defined]
         transport._delivering = False  # type: ignore[attr-defined]
+        transport._stopping = False  # type: ignore[attr-defined]
 
         async def _boom(room_id: str) -> None:
             logging.getLogger("switch_core.test").info("inside the drain")
@@ -97,6 +98,7 @@ class TestTheDeliveryLoopBindsItsRoom:
         transport._wake = asyncio.Event()  # type: ignore[attr-defined]
         transport._pending = {"room-7"}  # type: ignore[attr-defined]
         transport._delivering = False  # type: ignore[attr-defined]
+        transport._stopping = False  # type: ignore[attr-defined]
 
         async def _ok(room_id: str) -> None:
             return None

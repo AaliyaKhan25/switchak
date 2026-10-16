@@ -10,14 +10,16 @@ from urllib.parse import parse_qs, urlsplit
 import httpx
 import pytest
 from fastapi import FastAPI
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from switch_core.connections.adapters.github import GitHubAdapter
 from switch_core.connections.broker import ServiceBroker
 from switch_core.connections.loader import CATALOG
+from switch_core.connections.sign_in_flows import SignInFlows
 from switch_core.db.models import (
     ServiceConnection,
     ServiceTokenIssuance,
+    SignInFlow,
     User,
     require_tenant_id,
 )
@@ -87,12 +89,24 @@ async def github_app(tmp_path, session_factory):
         await session.commit()
     identity = {"user": user}
 
+    app = _process(github, identity, session_factory)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="https://switch.example.com"
+    ) as client:
+        yield client, github, identity, session_factory
+
+
+def _process(github, identity, session_factory) -> FastAPI:
+    """One switch-core process's gateway: its own app, broker and flow store,
+    on the shared database."""
+
     async def sessions():
         async with session_factory() as session:
             yield session
 
     app = FastAPI()
     app.state.github_connections = github
+    app.state.sign_in_flows = SignInFlows(session_factory, TEST_KEYRING)
     app.state.service_broker = ServiceBroker(
         session_factory=session_factory,
         keyring=TEST_KEYRING,
@@ -106,10 +120,21 @@ async def github_app(tmp_path, session_factory):
     app.dependency_overrides[get_current_user] = lambda: identity["user"]
     app.dependency_overrides[get_session] = sessions
     app.dependency_overrides[get_config] = lambda: SimpleNamespace(keyring=TEST_KEYRING)
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="https://switch.example.com"
-    ) as client:
-        yield client, github, identity, session_factory
+    return app
+
+
+class _EachRequestToTheNextProcess(httpx.AsyncBaseTransport):
+    """A load balancer with no stickiness: each request goes to the next of
+    the processes, in turn."""
+
+    def __init__(self, *apps: FastAPI) -> None:
+        self._transports = [httpx.ASGITransport(app=app) for app in apps]
+        self._next = 0
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        transport = self._transports[self._next % len(self._transports)]
+        self._next += 1
+        return await transport.handle_async_request(request)
 
 
 BASE = "/gateway/provider-connections/github"
@@ -240,22 +265,84 @@ async def test_flow_is_bound_to_initiating_user_and_tenant(github_app):
     assert (await client.get(BASE + f"/flows/{flow_id}")).status_code == 404
     assert (await complete(client, flow_id)).status_code == 404
     identity["user"] = SimpleNamespace(id="github-user")
+    # Another workspace does not see the flow at all.
     with tenant_scope("other-tenant"):
-        assert (await complete(client, flow_id)).status_code == 404
+        assert (await complete(client, flow_id)).status_code == 410
     github.exchange.assert_not_called()
 
 
-async def test_cancel_expiry_and_restart_are_visible(github_app):
-    client, github, _, _ = github_app
+async def test_cancel_and_expiry_are_visible(github_app):
+    client, github, _, factory = github_app
     flow_id = await authorize(client)
     assert (await client.delete(BASE + f"/flows/{flow_id}")).status_code == 204
     assert (await client.get(BASE + f"/flows/{flow_id}")).status_code == 410
     flow_id = await authorize(client)
-    github.flows[flow_id].expires_at = 0
+    async with factory() as session:
+        await session.execute(
+            update(SignInFlow)
+            .where(SignInFlow.id == flow_id)
+            .values(expires_at=datetime.now(UTC) - timedelta(seconds=1))
+        )
+        await session.commit()
     assert (await client.get(BASE + f"/flows/{flow_id}")).status_code == 410
+    assert (
+        await client.get(BASE + "/authorize", params={"state": flow_id})
+    ).status_code == 400
+
+
+async def test_a_flow_keeps_nothing_secret_in_the_clear(github_app):
+    client, _, _, factory = github_app
     flow_id = await authorize(client)
-    github.flows.clear()
-    assert (await client.get(BASE + f"/flows/{flow_id}")).status_code == 410
+    await relay(client, flow_id)
+    assert (await complete(client, flow_id)).status_code == 204
+    async with factory() as session:
+        row = await session.scalar(select(SignInFlow).where(SignInFlow.id == flow_id))
+    assert row is not None
+    assert SECRET not in row.completion_secret_hash
+    assert "SYNTHETIC-REFRESH" not in (row.encrypted_result or "")
+    assert row.browser_nonce_hash is not None
+    assert row.account_label == "example-user"
+
+
+async def test_a_sign_in_started_on_one_process_completes_on_another(
+    github_app,
+):
+    """Every request of the sign-in lands on the other process from the one
+    before: start, the browser's three steps, completion, status and confirm."""
+    _, github, identity, factory = github_app
+    first = _process(github, identity, factory)
+    second = _process(github, identity, factory)
+    async with httpx.AsyncClient(
+        transport=_EachRequestToTheNextProcess(first, second),
+        base_url="https://switch.example.com",
+    ) as client:
+        flow_id = await authorize(client)
+        await relay(client, flow_id)
+        assert (await complete(client, flow_id)).status_code == 204
+        assert (await client.get(BASE + f"/flows/{flow_id}")).json() == {
+            "status": "ready",
+            "login": "example-user",
+        }
+        assert (await confirm(client, flow_id)).status_code == 200
+        assert (await client.get(BASE)).json()["login"] == "example-user"
+    github.exchange.assert_awaited_once()
+
+
+async def test_two_processes_racing_to_complete_exchange_the_code_once(github_app):
+    _, github, identity, factory = github_app
+    first = _process(github, identity, factory)
+    second = _process(github, identity, factory)
+    async with httpx.AsyncClient(
+        transport=_EachRequestToTheNextProcess(first, second),
+        base_url="https://switch.example.com",
+    ) as client:
+        flow_id = await authorize(client)
+        await relay(client, flow_id)
+        results = await asyncio.gather(
+            complete(client, flow_id), complete(client, flow_id)
+        )
+    assert sorted(r.status_code for r in results) == [204, 400]
+    github.exchange.assert_awaited_once()
 
 
 async def test_refresh_saved_before_repository_failure(github_app):

@@ -13,6 +13,7 @@ from switch_core.trust.client import NullTrustClient
 
 
 class _FakeHumanActor:
+    client_id = "human-actor-client"
     transport_user_id = "@human actor:s"
 
     def __init__(self) -> None:
@@ -88,6 +89,7 @@ def _fake_bridge() -> SimpleNamespace:
         return None
 
     ns = SimpleNamespace(
+        _bridge_id="bridge-1",
         _handle_text_answer=_no_text_answer,
         _repair_placeholder_username=_repair_placeholder_username,
         _adapter=_FakeAdapter(),
@@ -161,6 +163,27 @@ async def test_three_attachments_are_stamped_as_one_group() -> None:
         }
     ]
     assert bridge.human_actor.messages == []
+
+
+async def test_a_post_delivered_again_writes_into_the_same_group() -> None:
+    # A delivery that stopped after the first file is sent again by the
+    # platform; the files it still writes must complete the first group, not
+    # start one of their own.
+    bridge = _fake_bridge()
+    post = _msg(
+        content="two files",
+        attachments=[
+            _attachment("cat.png", "image/png"),
+            _attachment("notes.md", "text/markdown"),
+        ],
+    )
+
+    await CollaborationCore._handle_inbound_message(bridge, post)
+    await CollaborationCore._handle_inbound_message(bridge, post)
+
+    media = bridge.human_actor.media
+    assert len(media) == 4
+    assert len({m["group"]["id"] for m in media}) == 1
 
 
 async def test_single_attachment_carries_no_group_marker() -> None:

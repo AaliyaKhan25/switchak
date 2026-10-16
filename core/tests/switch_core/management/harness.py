@@ -19,7 +19,7 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -59,14 +59,18 @@ from switch_core.db.stores.agent_store import AgentStore
 from switch_core.db.stores.api_key_store import ApiKeyStore
 from switch_core.db.stores.room_role_store import RoomRoleStore
 from switch_core.db.stores.room_store import RoomStore
+from switch_core.db.stores.switch_core_process_store import SwitchCoreProcessStore
 from switch_core.db.stores.user_store import UserStore
 from switch_core.gateway import dependencies as gw_deps
 from switch_core.gateway.auth import create_jwt
 from switch_core.gateway.providers import router as providers_router
 from switch_core.keys import Keyring
 from switch_core.management import controller_routes
+from switch_core.management.dependencies import get_authenticator, get_management
 from switch_core.management.errors import ManagementError
 from switch_core.management.wiring import Management, build_management
+from switch_core.process_lease import ProcessLease
+from switch_core.signals import SignalBus
 from tests.db_buffer import db_buffer_on
 from tests.switch_core.connections.fake_vendor import FakeVendor
 from tests.switch_core.connections.github_seed import github_broker
@@ -125,6 +129,9 @@ class _FakeClientLifecycle:
     def start_client(self, client: Client) -> None:
         return None
 
+    def announce(self, tenant_id: str) -> None:
+        return None
+
     def get_by_agent_id(self, agent_id: str) -> None:
         """No client is ever started here."""
         return None
@@ -165,6 +172,9 @@ class Harness:
     # Mounted at `/gateway` on `app`, for a test to add routes to.
     gateway_app: FastAPI
     management: Management
+    # This process's signal bus, started only by a test that runs several
+    # processes against one database.
+    bus: SignalBus
     protocol: AgentCore
     cache: ApiKeyCache
     controller_auth_cache: ControllerAuthCache
@@ -192,6 +202,10 @@ class Harness:
         )
 
 
+def _no_listening_engine() -> Any:
+    raise AssertionError("the harness's signal bus is never started")
+
+
 def build_harness(
     session_factory: async_sessionmaker[AsyncSession],
     *,
@@ -199,6 +213,7 @@ def build_harness(
     server_url: str | None = SERVER_URL,
     third_party_avatars: bool = True,
     controller_release: ControllerRelease | None = None,
+    signal_engine: Callable[[], Any] = _no_listening_engine,
 ) -> Harness:
     """The controller-token cache is on, as it is by default in production,
     so every management test runs through it."""
@@ -208,6 +223,8 @@ def build_harness(
         ttl_seconds=controller_auth_ttl_seconds, max_entries=64
     )
     protocol = protocol_service(session_factory, cache)
+    process_id = str(uuid.uuid4())
+    signal_bus = SignalBus(session_factory, signal_engine, process_id=process_id)
     management = build_management(
         token_secret=TOKEN_SECRET,
         status_interval_seconds=STATUS_INTERVAL,
@@ -218,7 +235,15 @@ def build_harness(
         presence=protocol.connections.controllers,
         auth_cache=controller_auth_cache,
         clock=clock,
-        process_id=str(uuid.uuid4()),
+        # Never started unless a test runs several processes: with one, every
+        # nudge is delivered locally and what it would publish goes nowhere.
+        signal_bus=signal_bus,
+        lease=ProcessLease(
+            process_id=process_id,
+            session_factory=session_factory,
+            processes=SwitchCoreProcessStore(),
+            key_ids=[key.id for key in TEST_KEYRING.keys],
+        ),
     )
 
     async def _session() -> AsyncIterator[AsyncSession]:
@@ -235,6 +260,13 @@ def build_harness(
     management.install(
         agent_bridge_app=agent_app, gateway_app=gateway_app, protocol=protocol
     )
+    # `install` sets management's request dependencies in module state, one
+    # per process, and two harnesses in one test are two processes: each app
+    # is pointed at its own, or the first's routes record what they do as the
+    # second process.
+    for app in (agent_app, gateway_app):
+        app.dependency_overrides[get_management] = lambda: management.service
+        app.dependency_overrides[get_authenticator] = lambda: management.authenticator
 
     agent_app.include_router(activity_router)
     agent_app.include_router(api_router, prefix="/agents")
@@ -269,6 +301,7 @@ def build_harness(
         app=agent_app,
         gateway_app=gateway_app,
         management=management,
+        bus=signal_bus,
         protocol=protocol,
         cache=cache,
         controller_auth_cache=controller_auth_cache,
@@ -588,7 +621,7 @@ async def connect(
     conn = presence.current_connection(controller.controller_id)
     assert conn is not None
     presence.attach_stream(conn)
-    await harness.management.start()
+    await harness.management.lease.renew()
     await harness.management.ledger.flush_all()
     return opened
 
@@ -604,7 +637,7 @@ async def ensure_connected(
     if conn is None or not conn.stream_attached:
         await connect(client, controller)
         return
-    await harness.management.start()
+    await harness.management.lease.renew()
     await harness.management.ledger.flush_all()
 
 

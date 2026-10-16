@@ -101,6 +101,17 @@ async def test_a_session_selector_needs_its_connection() -> None:
 
 
 @pytest.mark.asyncio
+async def test_an_over_long_session_id_is_refused() -> None:
+    """The session's id is recorded with its room, and travels in the
+    signals switch-core processes send each other when another session takes
+    that room, which Postgres caps at 8000 bytes."""
+    with pytest.raises(HTTPException) as refused:
+        await _resolve(_protocol(), connection_id=CONNECTION, session_id="s" * 7900)
+
+    assert refused.value.status_code == 400
+
+
+@pytest.mark.asyncio
 async def test_a_dead_or_foreign_connection_is_refused() -> None:
     protocol = _protocol()
     with pytest.raises(HTTPException) as foreign:

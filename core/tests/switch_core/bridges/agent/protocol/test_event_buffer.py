@@ -41,7 +41,7 @@ from switch_core.db.models import (
     AgentPollPosition,
 )
 from switch_core.db.session_scope import tenant_session
-from tests.db_buffer import db_buffer_on, say, seed_agent, seed_member
+from tests.db_buffer import db_buffer_on, forget_room, say, seed_agent, seed_member
 
 AGENT = "agent-1"
 ROOM = "room-1"
@@ -282,7 +282,7 @@ async def test_dropping_a_room_forgets_what_it_still_held(
     await _asked(q, session_factory, ROOM)
     await _asked(q, session_factory, "room-2")
 
-    await q.drop_room(TENANT_ZERO_ID, AGENT, ROOM)
+    await forget_room(session_factory, q, AGENT, ROOM)
 
     # Gone from the low-level read every reader is built on, filter or no
     # filter — which is what closes it for the stream, the one reader with no
@@ -304,7 +304,7 @@ async def test_dropping_a_room_does_not_report_a_gap(
     await _asked(q, session_factory, ROOM)
     await _asked(q, session_factory, "room-2")
 
-    await q.drop_room(TENANT_ZERO_ID, AGENT, ROOM)
+    await forget_room(session_factory, q, AGENT, ROOM)
 
     assert await q.rooms_dropped_after(TENANT_ZERO_ID, AGENT, 0) == ()
     assert [item.seq for item in (await q.read_from(TENANT_ZERO_ID, AGENT, 0))] == [2]

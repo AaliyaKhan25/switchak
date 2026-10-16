@@ -38,6 +38,7 @@ from switch_core.provisioning.postgres import PostgresProvisioning
 from switch_core.room_service import RoomService
 from switch_core.session_activity.listener import Change
 from switch_core.transport.invites import InviteBus
+from tests.routing import router_on
 from tests.switch_core.gateway.agent_route_harness import add_agent
 
 _MESSAGE_STORE = MessageStore()
@@ -223,11 +224,12 @@ async def chats(
 
     room_store = RoomStore()
     lifecycle = _FakeLifecycle()
+    message_router = router_on(session_factory)
     provisioning = PostgresProvisioning(
         session_factory=session_factory,
         room_store=room_store,
         client_store=ClientStore(),
-        message_store=_MESSAGE_STORE,
+        router=message_router,
         invites=InviteBus(),
     )
     room_service = RoomService(
@@ -254,6 +256,7 @@ async def chats(
         agent_store=AgentStore(),
         user_store=UserStore(),
         message_store=_MESSAGE_STORE,
+        router=message_router,
         media_store=MediaStore(),
         usage_store=UsageStore(),
         id_server_name="switch.test",

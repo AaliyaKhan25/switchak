@@ -288,7 +288,7 @@
     {
       "definition": {
         "type": "timeseries",
-        "title": "Delivery and message-observer failures per second",
+        "title": "Delivery, routing and message-observer failures, and rows too old to replay, per second",
         "show_legend": true,
         "requests": [
           {
@@ -299,10 +299,24 @@
             }
           },
           {
+            "q": "sum:switch.messages.routing_failures{$env,$service} by {stage}.as_rate()",
+            "display_type": "bars",
+            "style": {
+              "palette": "purple"
+            }
+          },
+          {
             "q": "sum:switch.messages.observer_failures{$env,$service} by {actor}.as_rate()",
             "display_type": "bars",
             "style": {
               "palette": "orange"
+            }
+          },
+          {
+            "q": "sum:switch.messages.backlog_skipped{$env,$service} by {actor}.as_rate()",
+            "display_type": "bars",
+            "style": {
+              "palette": "cool"
             }
           }
         ]

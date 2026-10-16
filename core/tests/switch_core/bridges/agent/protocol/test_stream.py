@@ -51,8 +51,16 @@ from switch_core.bridges.agent.protocol.types import (
 from switch_core.db.models import TENANT_ZERO_ID, Agent, Message
 from switch_core.db.session_scope import tenant_session
 from switch_core.db.stores.room_store import RoomStore
+from switch_core.messages.notify import MessageListener
 from switch_core.observability.metrics import MetricsRegistry, install, uninstall
-from tests.db_buffer import age_events, db_buffer_on, say, seed_member, sender_of
+from tests.db_buffer import (
+    age_events,
+    db_buffer_on,
+    forget_room,
+    say,
+    seed_member,
+    sender_of,
+)
 
 AGENT = "agent-1"
 ROOM_A = "room-a"
@@ -94,6 +102,16 @@ def _command(name: str, *, room: str = ROOM_A) -> AgentEvent:
         room_id=room,
         payload=CommandPayload(command=name, user_id="@u:s", user_name="u"),
     )
+
+
+@pytest.fixture
+def db_buffer(
+    session_factory: async_sessionmaker[AsyncSession], room_bells: MessageListener
+) -> EventBuffer:
+    """The db-buffer, with its rooms' announcements listened to: a stream that
+    reads a room's conversation is woken by a row written there, not by a
+    timer, so a test that writes one while a stream waits needs them."""
+    return db_buffer_on(session_factory, rooms=room_bells)
 
 
 async def _keep(buffer: EventBuffer, event: AgentEvent, *, agent: str = AGENT) -> int:
@@ -379,15 +397,13 @@ async def test_the_conversation_is_read_from_where_the_room_was_when_covered(
 
 
 async def test_the_chatter_before_a_mention_arrives_with_it_and_ahead_of_it(
-    session_factory: async_sessionmaker[AsyncSession],
+    db_buffer: EventBuffer, session_factory: async_sessionmaker[AsyncSession]
 ) -> None:
-    """The agent's consumer takes a room's rows in order, so every row up to
-    one it kept for the agent has been decided: those are read straight away
-    rather than once settled, and what led up to a mention arrives ahead of
-    it."""
+    """Every row is decided as it is written, so the rows around a mention are
+    read straight away rather than once settled, and what led up to a mention
+    arrives ahead of it."""
     registry = AgentConnectionRegistry()
-    # Settles long after this test is over.
-    buffer = db_buffer_on(session_factory, settle_seconds=60)
+    buffer = db_buffer
     conn = _open(registry, position={OWN_EVENTS: 0, room_source(ROOM_A): 0})
     registry.claim_room(conn, ROOM_A)
     await say(session_factory, ROOM_A, "chatter")
@@ -1189,10 +1205,10 @@ async def test_a_resumed_stream_does_not_replay_a_room_the_agent_was_removed_fro
     await _keep(buffer, _message("said before the removal"))
     await _keep(buffer, _message("still a member here", room=ROOM_B))
 
-    # What a kick does: the membership goes, and `AgentConsumer.on_removed`
-    # makes these two calls.
+    # What a kick does: the membership goes, its own events in the room go
+    # with it (`MessageRouter.remove`), and the room is let go of here.
     await _leave(session_factory, ROOM_A)
-    await buffer.drop_room(TENANT_ZERO_ID, AGENT, ROOM_A)
+    await forget_room(session_factory, buffer, AGENT, ROOM_A)
     registry.release_room_everywhere(AGENT, ROOM_A)
 
     # The supervisor comes back and resumes from before all of it.
@@ -1210,7 +1226,7 @@ async def test_a_resumed_stream_does_not_replay_a_room_the_agent_was_removed_fro
 
 
 async def test_a_last_event_id_reconnect_does_not_replay_a_removed_room(
-    db_buffer: EventBuffer,
+    db_buffer: EventBuffer, session_factory: async_sessionmaker[AsyncSession]
 ) -> None:
     """The resume a real client actually performs.
 
@@ -1228,7 +1244,7 @@ async def test_a_last_event_id_reconnect_does_not_replay_a_removed_room(
     await _keep(buffer, _message("while it was still a member"))
     await _keep(buffer, _message("in the room it kept", room=ROOM_B))
 
-    await buffer.drop_room(TENANT_ZERO_ID, AGENT, ROOM_A)
+    await forget_room(session_factory, buffer, AGENT, ROOM_A)
     registry.release_room_everywhere(AGENT, ROOM_A)
 
     # `seen` is what the client would send back as Last-Event-ID: a cursor from

@@ -82,9 +82,11 @@ def _page(name: str, message: str, status: int) -> HTMLResponse:
     )
 
 
-def _owned(flows: ServiceFlows, service: str, flow_id: str, user: User) -> ServiceFlow:
+async def _owned(
+    flows: ServiceFlows, service: str, flow_id: str, user: User
+) -> ServiceFlow:
     try:
-        flow = flows.owned(flow_id, require_tenant_id(), user.id)
+        flow = await flows.owned(flow_id, require_tenant_id(), user.id)
     except FlowError as error:
         raise HTTPException(410, str(error)) from None
     if flow.service != service:
@@ -126,7 +128,7 @@ async def start(
     if tenant is None:
         raise HTTPException(404, "Workspace not found.")
     try:
-        flow = flows.start(
+        flow = await flows.start(
             definition=definition,
             tenant_id=require_tenant_id(),
             user_id=user.id,
@@ -141,7 +143,7 @@ async def start(
         url = flows.authorize_url(service, body.state)
     else:
         try:
-            url = await flows.vendor_url(body.state, adapter)
+            url, _ = await flows.vendor_url(flow, adapter)
         except ServiceUnavailableError as error:
             raise HTTPException(503, str(error)) from None
         except ServiceAdapterError as error:
@@ -162,10 +164,10 @@ async def authorize(
     except ServiceError:
         return _page("Connections", INTERRUPTED, 400)
     try:
-        flow = flows.flow(state)
+        flow = await flows.flow(state)
         if flow.service != service or flow.mode != "core":
             raise FlowError(INTERRUPTED)
-        url = await flows.vendor_url(state, adapter)
+        url, nonce = await flows.vendor_url(flow, adapter)
     except (FlowError, ServiceAdapterError):
         return _page(definition.name, INTERRUPTED, 400)
     response = RedirectResponse(
@@ -173,7 +175,7 @@ async def authorize(
     )
     response.set_cookie(
         _cookie(state),
-        flow.browser_nonce,
+        nonce,
         max_age=600,
         secure=True,
         httponly=True,
@@ -193,10 +195,10 @@ async def callback(
     state = request.query_params.get("state", "")
     code = request.query_params.get("code", "")
     try:
-        flow = flows.flow(state)
+        flow = await flows.flow(state)
         if flow.service != service:
             raise FlowError(INTERRUPTED)
-        flows.returning(state, code, request.cookies.get(_cookie(state), ""))
+        await flows.returning(flow, code, request.cookies.get(_cookie(state), ""))
     except FlowError:
         return _page("Connections", INTERRUPTED, 400)
     response = _page(
@@ -233,10 +235,12 @@ async def relay(
     state = value.get("state", [""])[0]
     code = value.get("code", [""])[0]
     try:
-        flow = flows.flow(state)
+        flow = await flows.flow(state)
         if flow.service != service:
             raise FlowError(INTERRUPTED)
-        target = flows.deliver(state, code, request.cookies.get(_cookie(state), ""))
+        target = await flows.deliver(
+            flow, code, request.cookies.get(_cookie(state), "")
+        )
     except FlowError:
         return _page("Connections", INTERRUPTED, 400)
     response = RedirectResponse(
@@ -264,14 +268,14 @@ async def complete(
     flows: Annotated[ServiceFlows, Depends(get_service_flows)],
 ) -> Response:
     """Console hands back the code its listener received, with its secret."""
-    _owned(flows, service, flow_id, user)
+    flow = await _owned(flows, service, flow_id, user)
     try:
         _, adapter = broker.sign_in(service)
     except ServiceError as error:
         return service_refusal(error)
     try:
         await flows.complete(
-            flow_id,
+            flow,
             completion_secret=body.completion_secret,
             code=body.code,
             adapter=adapter,
@@ -290,7 +294,7 @@ async def flow_status(
     user: Annotated[User, Depends(get_current_user)],
     flows: Annotated[ServiceFlows, Depends(get_service_flows)],
 ) -> dict:
-    flow = _owned(flows, service, flow_id, user)
+    flow = await _owned(flows, service, flow_id, user)
     return {
         "status": (
             flow.status if flow.status in ("checking", "ready", "failed") else "pending"
@@ -307,8 +311,7 @@ async def cancel(
     user: Annotated[User, Depends(get_current_user)],
     flows: Annotated[ServiceFlows, Depends(get_service_flows)],
 ) -> Response:
-    _owned(flows, service, flow_id, user)
-    flows.flows.pop(flow_id, None)
+    await flows.discard(await _owned(flows, service, flow_id, user))
     return Response(status_code=204)
 
 
@@ -323,13 +326,14 @@ async def confirm(
     flows: Annotated[ServiceFlows, Depends(get_service_flows)],
 ) -> dict | JSONResponse:
     """The person confirms the account: the connection is written."""
-    _owned(flows, service, flow_id, user)
+    flow = await _owned(flows, service, flow_id, user)
     try:
-        flow = flows.ready(flow_id, body.completion_secret)
+        flows.ready(flow, body.completion_secret)
         consent = flows.consent(flow)
     except FlowError as error:
         raise HTTPException(409, str(error)) from None
-    assert flow.account is not None and flow.signed_in is not None
+    account, signed_in = flow.account, flow.signed_in
+    assert account is not None and signed_in is not None
     await session.execute(
         text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
         {"key": f"service-link:{require_tenant_id()}:{service}"},
@@ -339,7 +343,7 @@ async def confirm(
             ServiceConnection.tenant_id == require_tenant_id(),
             ServiceConnection.service == service,
             ServiceConnection.user_id != user.id,
-            ServiceConnection.account_id == flow.account.account_id,
+            ServiceConnection.account_id == account.account_id,
         )
     )
     if taken is not None:
@@ -360,14 +364,14 @@ async def confirm(
             user_id=user.id,
             service=service,
             consent=consent,
-            granted_scopes=flow.signed_in.granted_scopes,
-            account_id=flow.account.account_id,
-            external_identity=flow.account.label,
-            secret=flow.signed_in.secret,
+            granted_scopes=signed_in.granted_scopes,
+            account_id=account.account_id,
+            external_identity=account.label,
+            secret=signed_in.secret,
         )
     except ServiceError as error:
         return service_refusal(error)
-    flows.flows.pop(flow_id, None)
+    await flows.discard(flow)
     logger.info(
         "Service account linked: tenant=%s user=%s service=%s",
         require_tenant_id(),

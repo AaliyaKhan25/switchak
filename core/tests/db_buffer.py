@@ -13,7 +13,10 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import func, select, update
 
-from switch_core.bridges.agent.protocol.event_buffer import EventBuffer
+from switch_core.bridges.agent.protocol.event_buffer import (
+    EventBuffer,
+    RoomAnnouncements,
+)
 from switch_core.db.models import (
     TENANT_ZERO_ID,
     Agent,
@@ -29,7 +32,27 @@ from switch_core.db.session_scope import tenant_session
 from switch_core.db.stores.message_store import MessageStore
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+
+class QuietRooms:
+    """Room announcements for a test that has none to make.
+
+    A stream that reads a room's conversation asks to be woken when the room
+    has a new row. A test that writes conversation while a stream waits, and
+    expects the stream to wake for it, gives the buffer a running
+    `MessageListener` instead (`tests/routing.py`, `room_bells`).
+    """
+
+    def subscribe(self, room_id: str, waker: Callable[[str], Awaitable[None]]) -> None:
+        return None
+
+    def unsubscribe(
+        self, room_id: str, waker: Callable[[str], Awaitable[None]]
+    ) -> None:
+        return None
 
 
 def db_buffer_on(
@@ -37,15 +60,14 @@ def db_buffer_on(
     *,
     sequence_base: int = 0,
     retention_seconds: float = 3600,
-    settle_seconds: float = 0.2,
+    rooms: RoomAnnouncements | None = None,
 ) -> EventBuffer:
-    """The db-buffer, settling conversation for a fraction of the real time:
-    a test has no consumer to race, and `say` writes rows already settled."""
+    """The db-buffer on a test's database."""
     return EventBuffer(
         session_factory,
         sequence_base=sequence_base,
+        rooms=rooms if rooms is not None else QuietRooms(),
         retention_seconds=retention_seconds,
-        settle_seconds=settle_seconds,
     )
 
 
@@ -203,11 +225,14 @@ async def say(
     event_type: str = "m.room.message",
     content: dict[str, Any] | None = None,
 ) -> Message:
-    """Write one row to a room's log, as the transport does, and return it
-    (its `seq` is its place in the room). The room must exist.
+    """Write one row to a room's log and return it (its `seq` is its place
+    in the room). The room must exist.
 
-    Stamped a second ago by the database's clock, the one conversation is
-    settled by, so it reads as conversation straight away."""
+    Written straight to the table, as a row from before the router or from a
+    process on the release before it would be: decided for nobody. A test of
+    what the router decides writes through it instead (`tests/routing.py`).
+    Stamped a second ago by the database's clock, so it reads as written
+    after any membership the test made a moment before."""
     async with tenant_session(session_factory, tenant_id) as session:
         if sent_at is None:
             sent_at = await session.scalar(select(func.now() - timedelta(seconds=1)))
@@ -230,3 +255,18 @@ async def say(
         await session.commit()
         await session.refresh(message)
     return message
+
+
+async def forget_room(
+    session_factory: async_sessionmaker[AsyncSession],
+    buffer: EventBuffer,
+    agent_id: str,
+    room_id: str,
+    *,
+    tenant_id: str = TENANT_ZERO_ID,
+) -> None:
+    """What taking the agent out of the room does to its own events there,
+    in a transaction of its own (`EventBuffer.forget_room`)."""
+    async with tenant_session(session_factory, tenant_id) as session:
+        await buffer.forget_room(session, agent_id=agent_id, room_id=room_id)
+        await session.commit()

@@ -24,6 +24,7 @@ from switch_core.connections.flows import ServiceFlows
 from switch_core.connections.loader import CATALOG
 from switch_core.connections.oauth_clients import LOOPBACK_CALLBACK_PATH
 from switch_core.connections.registry import ClientRegistration, build_adapters
+from switch_core.connections.sign_in_flows import SignInFlows
 from switch_core.db.models import ServiceConnection, User
 from switch_core.db.stores.service_connection_store import ServiceConnectionStore
 from switch_core.gateway.service_connections import (
@@ -112,7 +113,9 @@ def _world(
     )
     harness = build_harness(session_factory)
     harness.gateway_app.state.service_broker = broker
-    harness.gateway_app.state.service_flows = ServiceFlows(PUBLIC)
+    harness.gateway_app.state.service_flows = ServiceFlows(
+        PUBLIC, SignInFlows(harness.session_factory, TEST_KEYRING)
+    )
     harness.gateway_app.include_router(service_connections_router)
     harness.gateway_app.include_router(service_flows_router)
     return World(harness, google, broker)
