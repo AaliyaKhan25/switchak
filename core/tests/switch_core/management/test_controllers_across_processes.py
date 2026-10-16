@@ -277,6 +277,27 @@ class TestPresence:
         assert conn is not None
         await _eventually(lambda: conn.session_commands == [(agent_id, frame)])
 
+    async def test_a_warm_reaches_the_controller_on_the_other_process(
+        self, processes: tuple[Harness, Harness]
+    ) -> None:
+        here, there = processes
+        owner = await add_member(here.session_factory, "ada")
+        async with here.client() as client:
+            controller = await enroll_console(here, client, owner)
+            agent_id = await place_agent(client, controller, name="reviewer")
+            await connect(client, controller)
+        await _eventually(
+            lambda: there.protocol.connections.controllers.is_live(agent_id)
+        )
+
+        assert there.protocol.connections.relay_warm(agent_id, "room")
+
+        conn = here.protocol.connections.controllers.current_connection(
+            controller.controller_id
+        )
+        assert conn is not None
+        await _eventually(lambda: conn.warms == {(agent_id, "room")})
+
 
 class TestTheConnectionOnAnyProcess:
     async def test_the_socket_attaches_through_the_process_that_did_not_open_it(

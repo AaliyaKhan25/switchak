@@ -644,9 +644,10 @@ async def chat_events(
 
     Catches every member room up from its cursor in `after`, says `ready`,
     then pushes as rooms move. A room the caller joined since is announced as
-    `chat` and followed from its head; one that leaves the list is `chat.removed`. A
-    re-read every `recheck_seconds` recovers anything a missed notification
-    or another process's membership change left behind.
+    `chat` and followed from its head; one that leaves the list is `chat.removed`.
+    A change to the caller's chats wakes the stream at once, whichever process
+    made it (`chats/signals.py`). A re-read every `recheck_seconds` recovers
+    anything a missed notification or a missed signal left behind.
     """
     stream = _ChatStream(service, tenant_id, user, after)
     service.watch_memberships(tenant_id, user.id, stream.on_memberships)

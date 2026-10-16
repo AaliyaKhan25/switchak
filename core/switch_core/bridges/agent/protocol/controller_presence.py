@@ -591,8 +591,10 @@ class ControllerPresence:
 
     def relay_warm(self, agent_id: str, room_id: str) -> bool:
         """Ask the agent's controller to start the session a message to
-        `room_id` would start. False when its controller is not live or the
-        agent is stopped. A warm already owed for the room is not repeated."""
+        `room_id` would start, when this process holds its stream. False when
+        its controller is not live here or the agent is stopped. A warm
+        already owed for the room is not repeated. A controller held by
+        another process is reached through the registry (`process_holding`)."""
         binding = self._bindings.get(agent_id)
         if binding is None or not binding.running:
             return False

@@ -1,9 +1,12 @@
 """The `/chats` harness: real routes, `ChatService`, `RoomService` and
-Postgres provisioning, shared by the chats test modules."""
+Postgres provisioning, shared by the chats test modules, and a second
+switch-core process beside it for the tests across processes."""
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable
+from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
@@ -12,21 +15,27 @@ import httpx
 import pytest
 from fastapi import FastAPI, Request
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
 
+from switch_core.bridges.agent.protocol.agent_connections import AgentConnectionRegistry
+from switch_core.bridges.agent.protocol.connection_rows import SharedConnections
 from switch_core.chats.service import ChatError, ChatService
+from switch_core.chats.signals import ChatSignals
 from switch_core.db.models import (
     Agent,
     Client,
     Message,
     User,
 )
+from switch_core.db.stores.agent_connection_store import AgentConnectionStore
 from switch_core.db.stores.agent_store import AgentStore
 from switch_core.db.stores.client_store import ClientStore
 from switch_core.db.stores.collaboration_bridge_store import CollaborationBridgeStore
 from switch_core.db.stores.media_store import MediaStore
 from switch_core.db.stores.message_store import MessageStore
 from switch_core.db.stores.room_store import RoomStore
+from switch_core.db.stores.switch_core_process_store import SwitchCoreProcessStore
 from switch_core.db.stores.usage_store import UsageStore
 from switch_core.db.stores.user_store import UserStore
 from switch_core.gateway.auth import get_current_user
@@ -34,14 +43,21 @@ from switch_core.gateway.chats import (
     chat_error_response,
     router,
 )
+from switch_core.process_identity import new_process_id
+from switch_core.process_lease import ProcessLease
 from switch_core.provisioning.postgres import PostgresProvisioning
 from switch_core.room_service import RoomService
 from switch_core.session_activity.listener import Change
+from switch_core.signals import SignalBus
 from switch_core.transport.invites import InviteBus
+from tests.conftest import TEST_KEYRING
 from tests.routing import router_on
 from tests.switch_core.gateway.agent_route_harness import add_agent
 
 _MESSAGE_STORE = MessageStore()
+
+# How long `two_processes` waits for each process's signal bus to connect.
+_CONNECT_SECONDS = 10.0
 
 
 class _FakeLifecycle:
@@ -96,24 +112,6 @@ class _FakeActivityListener:
             await on_resync()
 
 
-class _FakeControllers:
-    """The controller presence, as far as warming a chat reads it."""
-
-    def __init__(self) -> None:
-        self.bound: set[str] = set()
-        self.live = True
-        self.warms: list[tuple[str, str]] = []
-
-    def is_bound(self, agent_id: str) -> bool:
-        return agent_id in self.bound
-
-    def relay_warm(self, agent_id: str, room_id: str) -> bool:
-        if not self.live:
-            return False
-        self.warms.append((agent_id, room_id))
-        return True
-
-
 class _Harness(SimpleNamespace):
     client: httpx.AsyncClient
     factory: async_sessionmaker[AsyncSession]
@@ -122,7 +120,7 @@ class _Harness(SimpleNamespace):
     listener: _FakeListener
     activity: _FakeActivityListener
     lifecycle: _FakeLifecycle
-    controllers: _FakeControllers
+    connections: AgentConnectionRegistry
     alice: User
     bob: User
     carol: User
@@ -211,19 +209,17 @@ async def _user(session: AsyncSession, name: str, role: str | None) -> User:
     return user
 
 
-@pytest.fixture
-async def chats(
+def _chat_service(
     session_factory: async_sessionmaker[AsyncSession],
-) -> AsyncIterator[_Harness]:
-    async with session_factory() as session:
-        alice = await _user(session, "alice", "member")
-        bob = await _user(session, "bob", "member")
-        carol = await _user(session, "carol", None)
-        admin = await _user(session, "admin", "admin")
-        await session.commit()
-
+    *,
+    lifecycle: _FakeLifecycle,
+    listener: _FakeListener,
+    activity: _FakeActivityListener,
+    connections: AgentConnectionRegistry,
+) -> tuple[ChatService, RoomService]:
+    """A chat service and the room service it works through, built as one
+    switch-core process builds them."""
     room_store = RoomStore()
-    lifecycle = _FakeLifecycle()
     message_router = router_on(session_factory)
     provisioning = PostgresProvisioning(
         session_factory=session_factory,
@@ -243,9 +239,6 @@ async def chats(
         session_factory=session_factory,
         room_cache=MagicMock(),
     )
-    listener = _FakeListener()
-    activity = _FakeActivityListener()
-    controllers = _FakeControllers()
     service = ChatService(
         session_factory=session_factory,
         room_service=room_service,
@@ -262,9 +255,34 @@ async def chats(
         id_server_name="switch.test",
         media_max_bytes=1024,
         agent_chats_enabled=True,
-        controllers=controllers,  # type: ignore[arg-type]
+        connections=connections,
     )
     room_service.on_room_agents_changed(service.sync_room)
+    return service, room_service
+
+
+@pytest.fixture
+async def chats(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> AsyncIterator[_Harness]:
+    async with session_factory() as session:
+        alice = await _user(session, "alice", "member")
+        bob = await _user(session, "bob", "member")
+        carol = await _user(session, "carol", None)
+        admin = await _user(session, "admin", "admin")
+        await session.commit()
+
+    lifecycle = _FakeLifecycle()
+    listener = _FakeListener()
+    activity = _FakeActivityListener()
+    connections = AgentConnectionRegistry()
+    service, room_service = _chat_service(
+        session_factory,
+        lifecycle=lifecycle,
+        listener=listener,
+        activity=activity,
+        connections=connections,
+    )
 
     app = FastAPI()
     app.state.chat_service = service
@@ -289,9 +307,102 @@ async def chats(
             listener=listener,
             activity=activity,
             lifecycle=lifecycle,
-            controllers=controllers,
+            connections=connections,
             alice=alice,
             bob=bob,
             carol=carol,
             admin=admin,
         )
+
+
+@dataclass
+class _Process:
+    """One switch-core process's side of chats on the shared database: its
+    chat service and agent connections, and the signal bus over which it
+    tells the other process what changed."""
+
+    service: ChatService
+    connections: AgentConnectionRegistry
+    signals: ChatSignals
+    shared: SharedConnections
+    bus: SignalBus
+    lease: ProcessLease
+
+
+def _process(
+    session_factory: async_sessionmaker[AsyncSession],
+    postgres_url: str,
+    service: ChatService,
+    connections: AgentConnectionRegistry,
+) -> _Process:
+    process_id = new_process_id("test-pod")
+    bus = SignalBus(
+        session_factory,
+        lambda: create_async_engine(postgres_url, poolclass=NullPool),
+        process_id=process_id,
+    )
+    lease = ProcessLease(
+        process_id=process_id,
+        session_factory=session_factory,
+        processes=SwitchCoreProcessStore(),
+        key_ids=[key.id for key in TEST_KEYRING.keys],
+    )
+    return _Process(
+        service=service,
+        connections=connections,
+        signals=ChatSignals(service=service, bus=bus),
+        shared=SharedConnections(
+            registry=connections,
+            session_factory=session_factory,
+            store=AgentConnectionStore(),
+            bus=bus,
+            lease=lease,
+        ),
+        bus=bus,
+        lease=lease,
+    )
+
+
+@pytest.fixture
+async def two_processes(
+    chats: _Harness, postgres_url: str
+) -> AsyncIterator[tuple[_Process, _Process]]:
+    """The harness's chat service as one switch-core process, and a second on
+    the same database. Each tells the other what changed over its own signal
+    bus on the real `NOTIFY` channel: people's chats (`ChatSignals`) and its
+    agent connections (`SharedConnections`)."""
+    connections = AgentConnectionRegistry()
+    service, _ = _chat_service(
+        chats.factory,
+        lifecycle=chats.lifecycle,
+        listener=_FakeListener(),
+        activity=_FakeActivityListener(),
+        connections=connections,
+    )
+    processes = [
+        _process(chats.factory, postgres_url, chats.service, chats.connections),
+        _process(chats.factory, postgres_url, service, connections),
+    ]
+    for process in processes:
+        await process.lease.renew()
+        await process.shared.start()
+        await process.bus.start()
+    # Each lease is renewed while the process runs, as in production, so the
+    # other reads what it holds as held however long the test takes.
+    runs = [
+        asyncio.create_task(run())
+        for process in processes
+        for run in (process.lease.run, process.shared.run)
+    ]
+    try:
+        for process in processes:
+            await asyncio.wait_for(process.bus.connected.wait(), _CONNECT_SECONDS)
+        yield processes[0], processes[1]
+    finally:
+        # The buses first, so no signal starts work after the processes
+        # stopped running; then the runs, which wait for the work they started.
+        for process in processes:
+            await process.bus.stop()
+        for run in runs:
+            run.cancel()
+        await asyncio.gather(*runs, return_exceptions=True)

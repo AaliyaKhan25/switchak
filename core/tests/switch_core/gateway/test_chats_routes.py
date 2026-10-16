@@ -4,7 +4,9 @@ sends, and the live event stream — against real Postgres.
 The routes run behind a real `ChatService`, `RoomService` and Postgres
 provisioning. Only the running-client registry is faked (no agent consumer
 runs here) and the message listener, whose wake-ups the stream tests ring by
-hand so a missed notification can be staged.
+hand so a missed notification can be staged. The stream tests across
+processes add a second chat service on the same database, each process with
+its own signal bus on the real `NOTIFY` channel.
 """
 
 from __future__ import annotations
@@ -12,7 +14,7 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -46,7 +48,7 @@ from switch_core.gateway.chats import (
     chat_events,
 )
 from switch_core.session_activity.listener import Change
-from tests.switch_core.gateway.conftest import _Harness
+from tests.switch_core.gateway.conftest import _Harness, _Process
 
 
 def _code(response: httpx.Response) -> str:
@@ -981,7 +983,8 @@ async def test_the_periodic_recheck_announces_a_chat_that_regains_an_agent(
     )
     assert (await events.next())[0] == "ready"
 
-    # Written straight to the table, as another process would: no hook runs.
+    # Written straight to the table: no hook runs and no signal is sent, as
+    # when another process's signal is missed.
     async with chats.factory() as session:
         await session.execute(
             room_agents.insert().values(room_id=room_id, agent_id=agent.id)
@@ -1049,6 +1052,95 @@ async def test_the_periodic_recheck_recovers_a_missed_notification(
     name, data = await events.next()
     assert name == "message" and data["body"] == "unannounced"
     await events.stream.aclose()  # type: ignore[attr-defined]
+
+
+def _stream_on(process: _Process, user: User) -> _Events:
+    """A stream held by `process` that re-reads on its own only after an hour,
+    so whatever it says before then, something woke it to say."""
+    return _Events(
+        chat_events(
+            process.service,
+            TENANT,
+            user,
+            {},
+            ping_seconds=60.0,
+            recheck_seconds=3600.0,
+        )
+    )
+
+
+async def _eventually(check: Callable[[], bool]) -> None:
+    async with asyncio.timeout(10.0):
+        while not check():
+            await asyncio.sleep(0.02)
+
+
+async def _join_unannounced(chats: _Harness, user: User, room_id: str) -> None:
+    """Put the user in the room without waking any stream or sending any
+    signal, as a change whose signal was lost."""
+    async with chats.factory() as session:
+        room = await session.get(Room, room_id)
+        assert room is not None
+    await chats.service._join(
+        TENANT, room, await chats.service.member_actor(TENANT, user)
+    )
+
+
+async def test_a_change_through_another_process_reaches_the_stream_at_once(
+    chats: _Harness, two_processes: tuple[_Process, _Process]
+) -> None:
+    """Bob's Console streams from one process while Alice invites him through
+    the other: his stream announces the chat at once, not at its re-read."""
+    _, there = two_processes
+    agent = await chats.agent("helper", owner=chats.alice)
+    room_id = await chats.new_chat(chats.alice, agent, "c1")
+    events = _stream_on(there, chats.bob)
+    assert (await events.next())[0] == "ready"
+
+    assert (await chats.invite(chats.alice, room_id, chats.bob)).status_code == 200
+
+    name, summary = await events.next()
+    assert name == "chat" and summary["roomId"] == room_id
+    await events.stream.aclose()  # type: ignore[attr-defined]
+
+
+async def test_every_stream_re_reads_when_its_signal_connection_comes_back(
+    chats: _Harness, two_processes: tuple[_Process, _Process]
+) -> None:
+    """A signal sent while a process's signal connection is down never reaches
+    it, so once the connection is back every stream it holds re-reads."""
+    _, there = two_processes
+    agent = await chats.agent("helper", owner=chats.alice)
+    room_id = await chats.new_chat(chats.alice, agent, "c1")
+    events = _stream_on(there, chats.bob)
+    assert (await events.next())[0] == "ready"
+
+    await there.bus.stop()
+    await _join_unannounced(chats, chats.bob, room_id)
+    await there.bus.start()
+
+    name, summary = await events.next()
+    assert name == "chat" and summary["roomId"] == room_id
+    await events.stream.aclose()  # type: ignore[attr-defined]
+
+
+async def test_a_change_concerning_more_people_than_one_signal_holds_reaches_them_all(
+    two_processes: tuple[_Process, _Process],
+) -> None:
+    """The people a change concerns are split over as many signals as it takes
+    to stay under the `NOTIFY` limit, and each one's streams are woken."""
+    here, there = two_processes
+    user_ids = [str(uuid.uuid4()) for _ in range(500)]
+    woken: list[str] = []
+    for user_id in user_ids:
+        there.service.watch_memberships(
+            TENANT, user_id, lambda user_id=user_id: woken.append(user_id)
+        )
+
+    here.signals.memberships_changed(TENANT, user_ids)
+
+    await _eventually(lambda: len(woken) == len(user_ids))
+    assert sorted(woken) == sorted(user_ids)
 
 
 # ── Agent owners ─────────────────────────────────────────────────────────────
@@ -1323,7 +1415,8 @@ async def test_the_periodic_recheck_finds_a_chat_the_agent_joined_elsewhere(
     events = _stream(chats, chats.alice, {}, recheck=0.2)
     assert (await events.next())[0] == "ready"
 
-    # Written straight to the table, as another process would: no hook runs.
+    # Written straight to the table: no hook runs and no signal is sent, as
+    # when another process's signal is missed.
     async with chats.factory() as session:
         await session.execute(
             room_agents.insert().values(room_id=room_id, agent_id=agent.id)

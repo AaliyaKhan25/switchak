@@ -37,18 +37,20 @@ lease check (`WATCH_SECONDS`) drops the copies of a process whose lease
 lapsed. What a signal asks this process to read goes through the bus's
 `PendingWork`, so a read that fails is kept and tried again.
 
-Two requests are handed to the holder rather than served where they land: a
+Three requests are handed to the holder rather than served where they land: a
 `POST /connection/beat` from an old event-stream client (forwarded in batches,
-`agent_connections.beats`) and a session command for a stream another process
+`agent_connections.beats`), a session command for a stream another process
 holds, the agent's watcher or its controller's (stored as a relay row for that
 process and signalled, `agent_connections.session_command`, since its content
-may not travel in a `NOTIFY`).
+may not travel in a `NOTIFY`), and a warm for a controller another process
+holds (`agent_connections.warm`). A warm is nothing but ids, so it travels in
+the signal itself; it is a hint, and one lost costs only the head start it
+would have given the agent's session.
 """
 
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -76,7 +78,7 @@ from switch_core.process_lease import (
     RENEW_INTERVAL_SECONDS,
     ProcessLease,
 )
-from switch_core.signals import MAX_PAYLOAD_BYTES, RETRY_SECONDS
+from switch_core.signals import RETRY_SECONDS, payload_chunks
 from switch_core.tenant_context import current_tenant_id, no_tenant
 
 if TYPE_CHECKING:
@@ -89,6 +91,7 @@ logger = logging.getLogger(__name__)
 CHANGED_SIGNAL = "agent_connections.changed"
 BEATS_SIGNAL = "agent_connections.beats"
 SESSION_COMMAND_SIGNAL = "agent_connections.session_command"
+WARM_SIGNAL = "agent_connections.warm"
 
 # How many incarnations are drawn from the sequence at a time. One draw per
 # this many opens, and a process restart wastes at most this many numbers out
@@ -178,6 +181,7 @@ class SharedConnections:
         bus.handle(CHANGED_SIGNAL, self._on_changed)
         bus.handle(BEATS_SIGNAL, self._on_beats)
         bus.handle(SESSION_COMMAND_SIGNAL, self._on_session_command)
+        bus.handle(WARM_SIGNAL, self._on_warm)
         bus.on_resync(self.reload_all)
         bus.on_recheck(self.reload_all)
         registry.use_rows(self)
@@ -342,6 +346,11 @@ class SharedConnections:
         )
         self._writes.set()
 
+    def relay_warm(self, agent_id: str, process_id: str, room_id: str) -> None:
+        self._bus.publish(
+            WARM_SIGNAL, agent_id=agent_id, room_id=room_id, process_id=process_id
+        )
+
     # ── Reading the rows into the registry ────────────────────────────────
 
     async def _read_agent(self, session: AsyncSession, agent_id: str) -> AgentSlotRows:
@@ -477,12 +486,24 @@ class SharedConnections:
             await session.commit()
         self._deliver(relayed)
 
+    def _on_warm(self, signal: dict[str, Any]) -> None:
+        if signal["process_id"] != self.process_id:
+            return
+        if not self._registry.controllers.relay_warm(
+            signal["agent_id"], signal["room_id"]
+        ):
+            logger.warning(
+                "A warm for agent %s arrived after the controller stream it was "
+                "relayed to went, or the agent was stopped; dropped",
+                signal["agent_id"],
+            )
+
     def _publish_changed(
         self, tenant_id: str, agent_id: str, released: list[Released]
     ) -> None:
         entries = [[r.connection_id, r.room_id, r.session_id] for r in released]
         # Sent with no rooms released too: the change is what is announced.
-        for chunk in _chunks(entries) or [[]]:
+        for chunk in payload_chunks(entries, _SIGNAL_ENVELOPE_BYTES) or [[]]:
             self._bus.publish(
                 CHANGED_SIGNAL, tenant_id=tenant_id, agent_id=agent_id, released=chunk
             )
@@ -585,7 +606,7 @@ class SharedConnections:
             await self._beats_waiting.wait()
             self._beats_waiting.clear()
             beats, self._beats = list(self._beats.values()), {}
-            for chunk in _chunks(beats):
+            for chunk in payload_chunks(beats, _SIGNAL_ENVELOPE_BYTES):
                 try:
                     self._bus.publish(BEATS_SIGNAL, beats=chunk)
                 except ValueError as error:
@@ -628,24 +649,3 @@ class SharedConnections:
                 raise
             except Exception:
                 logger.exception("Checking the other processes' connections failed")
-
-
-def _chunks(entries: list[list[Any]]) -> list[list[list[Any]]]:
-    """Split a signal's entries, forwarded beats or released rooms, into lists
-    that each fit in one payload under the `NOTIFY` limit. Measured as JSON,
-    which writes a character outside ASCII in up to twelve bytes. An entry
-    too large to fit even alone gets a list of its own, which the bus then
-    refuses."""
-    chunks: list[list[list[Any]]] = []
-    current: list[list[Any]] = []
-    size = _SIGNAL_ENVELOPE_BYTES
-    for entry in entries:
-        cost = len(json.dumps(entry)) + 1
-        if current and size + cost > MAX_PAYLOAD_BYTES:
-            chunks.append(current)
-            current, size = [], _SIGNAL_ENVELOPE_BYTES
-        current.append(entry)
-        size += cost
-    if current:
-        chunks.append(current)
-    return chunks

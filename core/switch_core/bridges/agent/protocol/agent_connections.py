@@ -565,6 +565,11 @@ class ConnectionRows(Protocol):
         block."""
         ...
 
+    def relay_warm(self, agent_id: str, process_id: str, room_id: str) -> None:
+        """A warm for a controller whose stream another process holds. Must
+        not block."""
+        ...
+
 
 class AgentConnectionRegistry:
     """The live set of agent connections: those this process holds,
@@ -1246,6 +1251,20 @@ class AgentConnectionRegistry:
                 self.deliver_session_command(conn, frame)
                 delivered = True
         return delivered
+
+    def relay_warm(self, agent_id: str, room_id: str) -> bool:
+        """Ask the controller running the agent to start the session a message
+        to `room_id` would start. False when no process holds that controller's
+        live socket or the agent is stopped. A controller another process
+        holds is asked through that process (`ConnectionRows.relay_warm`),
+        which hands the warm to its `ControllerPresence.relay_warm`."""
+        if self.controllers.relay_warm(agent_id, room_id):
+            return True
+        holder = self.controllers.process_holding(agent_id)
+        if holder is None or self._rows is None:
+            return False
+        self._rows.relay_warm(agent_id, holder, room_id)
+        return True
 
     def _watchers(self, agent_id: str) -> list[AgentConnection]:
         return [

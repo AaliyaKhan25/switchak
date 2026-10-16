@@ -416,3 +416,24 @@ class SignalBus:
                 handler(signal)
             except Exception:
                 logger.error("Handling signal %r failed", signal["kind"], exc_info=True)
+
+
+def payload_chunks[T](entries: list[T], envelope_bytes: int) -> list[list[T]]:
+    """Split the list a signal carries into lists that each fit in one payload
+    under the `NOTIFY` limit, beside the `envelope_bytes` kept for the
+    signal's other fields. Measured as JSON, which writes a character outside
+    ASCII in up to twelve bytes. An entry too large to fit even alone gets a
+    list of its own, which `SignalBus.publish` then refuses."""
+    chunks: list[list[T]] = []
+    current: list[T] = []
+    size = envelope_bytes
+    for entry in entries:
+        cost = len(json.dumps(entry)) + 1
+        if current and size + cost > MAX_PAYLOAD_BYTES:
+            chunks.append(current)
+            current, size = [], envelope_bytes
+        current.append(entry)
+        size += cost
+    if current:
+        chunks.append(current)
+    return chunks
