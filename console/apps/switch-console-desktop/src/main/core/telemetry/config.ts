@@ -21,7 +21,7 @@ const viteEnv = (import.meta as ImportMetaWithEnv).env;
  * are entitled to know but was not ours to decide unilaterally. Adopted with
  * the collaborating dev's agreement, pending the product owner's.
  */
-export const TELEMETRY_RELAY_ENDPOINT = 'https://telemetry.flintai.dev/v1/logs';
+export const TELEMETRY_RELAY_ENDPOINT = 'https://telemetry.switchagents.ai/v1/logs';
 
 /** Which build sent an event, so a developer's app cannot pollute real numbers. */
 export type TelemetryBuildChannel = 'dev' | 'canary' | 'stable';

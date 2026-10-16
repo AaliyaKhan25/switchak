@@ -283,7 +283,7 @@ switchCore:
     enabled: false
     # Base URL, no path — `/v1/logs` is appended, the same
     # convention otlpEndpoint follows.
-    endpoint: https://telemetry.flintai.dev
+    endpoint: https://telemetry.switchagents.ai
     # How often the usage snapshot is collected and sent.
     snapshotIntervalHours: 24
     # Which Amplitude project the usage lands in: prod, staging, dev or local.
