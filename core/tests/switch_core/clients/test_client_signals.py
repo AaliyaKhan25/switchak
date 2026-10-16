@@ -19,6 +19,7 @@ from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
+from switch_core.chats import MEMBER_CLIENT_TYPE
 from switch_core.clients.client_lifecycle_service import ClientLifecycleService
 from switch_core.clients.client_signals import ClientSignals
 from switch_core.db.models import TENANT_ZERO_ID, Agent, Client
@@ -188,6 +189,27 @@ class TestReconcile:
                 transport_user_id="@half-registered:test",
                 display_name="half",
                 type="agent",
+            )
+            session.add(client)
+            await session.commit()
+            client_id = client.id
+
+        await lifecycle.reconcile_tenant(TENANT_ZERO_ID)
+
+        assert lifecycle.get(client_id) is None
+
+    async def test_a_console_member_client_is_not_started(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """A Console member's client has no actor: the chats routes write its
+        messages. The re-check started one, and the real factory refuses the
+        type, which failed every resync."""
+        lifecycle = _lifecycle(session_factory)
+        async with session_factory() as session:
+            client = Client(
+                transport_user_id="@console-member:test",
+                display_name="member",
+                type=MEMBER_CLIENT_TYPE,
             )
             session.add(client)
             await session.commit()

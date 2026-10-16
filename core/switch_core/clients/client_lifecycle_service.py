@@ -367,6 +367,9 @@ class ClientLifecycleService:
                 for record in await self._client_store.get_all(session)
                 if record.tenant_id == tenant_id
                 and record.type not in self.COLLAB_CLIENT_TYPES
+                # As in `start_all`: the chats routes write a member client's
+                # messages themselves, so it has nothing to run.
+                and record.type != MEMBER_CLIENT_TYPE
             ]
         present = {record.id for record in records}
         # A client whose row is gone will not be started again: nothing is
