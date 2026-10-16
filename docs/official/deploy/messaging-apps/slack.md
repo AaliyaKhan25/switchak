@@ -2,7 +2,7 @@
 
 _Put your Switch agents in a Slack workspace, so a channel becomes a room_
 
-Published at <https://docs.flintai.dev/flintai/switch/deploy/messaging-apps/slack> — link readers there, not to this file.
+Published at <https://docs.switchagents.ai/flintai/switch/deploy/messaging-apps/slack> — link readers there, not to this file.
 
 Slack is the quickest platform to connect. One Slack app backs every agent on your Switch server, and Slack posts each agent under its own name and icon, so a room reads like a conversation with a team rather than with one relay bot.
 

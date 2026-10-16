@@ -72,7 +72,7 @@ class TestTheEndpointIsABaseUrl:
         with pytest.raises(ValueError, match="no path of its own"):
             _config(
                 telemetry_enabled=True,
-                telemetry_endpoint="https://telemetry.flintai.dev/v1/logs",
+                telemetry_endpoint="https://telemetry.switchagents.ai/v1/logs",
             )
 
     def test_whitespace_is_refused(self) -> None:
@@ -81,7 +81,7 @@ class TestTheEndpointIsABaseUrl:
         with pytest.raises(ValueError, match="whitespace"):
             _config(
                 telemetry_enabled=True,
-                telemetry_endpoint="https://telemetry.flintai.dev ",
+                telemetry_endpoint="https://telemetry.switchagents.ai ",
             )
 
     def test_a_query_string_is_refused(self) -> None:

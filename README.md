@@ -307,7 +307,7 @@ hostnames, usernames, emails, API keys or credentials, model outputs, search
 queries, error messages or stack traces, IP addresses, or any personally
 identifiable information.
 
-Events are sent to a relay we operate (`telemetry.flintai.dev`), which forwards
+Events are sent to a relay we operate (`telemetry.switchagents.ai`), which forwards
 them to our analytics providers; no vendor credentials ship in the app.
 
 **Opting out:** turn off *Share usage data* on the first-run notice, or in

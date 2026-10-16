@@ -312,7 +312,7 @@ an anonymous installation counter, not an identity.
 ## 6. Where it is sent
 
 1. **App → our relay.** One plain HTTPS POST per event (OTLP logs format; no
-   batching, no retries, 10-second timeout) to `telemetry.flintai.dev`, an
+   batching, no retries, 10-second timeout) to `telemetry.switchagents.ai`, an
    endpoint we operate. No third-party analytics SDK runs inside the app, and no
    vendor credential is shipped in the app. Released builds cannot be pointed at
    a different endpoint — the override exists only in dev builds.

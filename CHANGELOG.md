@@ -92,6 +92,17 @@ version of their own to them without also giving them a release of their own.
   run as a service installs a release beside the one it runs and keeps the one
   before. Roll back by pointing the values at the previous release.
 
+#### Changed
+- **Usage telemetry goes to `telemetry.switchagents.ai` by default.** The
+  default `TELEMETRY_ENDPOINT` (Helm `switchCore.telemetry.endpoint`) was
+  `https://telemetry.flintai.dev`, an older name for the same relay that is
+  being retired. A deployment that sets the endpoint explicitly is unaffected;
+  one relying on the default moves to the new host on upgrade. Nothing is sent
+  unless `TELEMETRY_ENABLED=true`.
+- **Documentation links point at `docs.switchagents.ai`.** Links in the docs
+  and the synced `docs/official` pages used `docs.flintai.dev`, the older name
+  for the same site. Old links still redirect.
+
 #### Security
 - **An agent icon URL must spell its host plainly.** A link with a backslash,
   or a host with percent-encoding or non-ASCII characters, is refused: browsers
@@ -1708,6 +1719,11 @@ version of their own to them without also giving them a release of their own.
   picker says so and offers to ask again, and a new agent is still created,
   without a generated icon. Agents on servers that leave the setting on look as
   before. Older versions of Console load those images whatever the server says.
+
+#### Changed
+- **Usage data goes to `telemetry.switchagents.ai`.** Console reported to
+  `telemetry.flintai.dev`, an older name for the same relay that is being
+  retired. Only where it is sent changes; what is sent, and the opt-out, do not.
 
 #### Fixed
 - **Signing in to a service through Core works on a server whose gateway and

@@ -444,7 +444,7 @@ class SwitchConfig(BaseSettings):
     # convention `otlp_endpoint` above follows. Defaults to the company relay,
     # which is where Switch Console already reports, so one pipeline carries
     # both. Override to point a development run at a local sink.
-    telemetry_endpoint: str = "https://telemetry.flintai.dev"
+    telemetry_endpoint: str = "https://telemetry.switchagents.ai"
 
     # How long to wait on the relay before giving up on a single event.
     # Telemetry is never worth delaying real work for, and a send that is
