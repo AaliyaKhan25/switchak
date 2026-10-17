@@ -1,31 +1,23 @@
 /**
- * Remove artefacts a crashed or interrupted run left behind: Switch agents named
- * `e2e-*`, Switch rooms named `e2e-*`, and Mattermost channels named `e2e-*`.
+ * Remove artefacts a crashed or interrupted run left behind: Switch agents,
+ * Switch rooms and Mattermost channels whose names start with `e2e-`.
  *
- * Scoped strictly to the `e2e-` prefix — an operator's real agents (`switchdev`
- * and friends) and their rooms are never in scope, and the script prints
- * everything it is about to touch.
+ * Scoped strictly to that prefix — an operator's real agents and their rooms are
+ * never in scope, and the script prints everything it touches. It is also what
+ * a scheduled wipe of a deployed environment runs.
  *
- *     SWITCH_E2E=1 node --experimental-strip-types src/cleanup.ts
+ *     SWITCH_E2E_LANE=fast node --experimental-strip-types src/cleanup.ts
  */
-import { loadEnv } from './env.ts';
-import { MattermostClient } from './mattermost-client.ts';
-import { SwitchClient } from './switch-client.ts';
-
-const PREFIX = 'e2e-';
+import { ARTIFACT_PREFIX } from './core/run.ts';
+import { message, resolveLane } from './core/suite.ts';
 
 export async function cleanup(log: (message: string) => void = console.log): Promise<void> {
-  const env = loadEnv();
-  const switchClient = new SwitchClient({
-    apiUrl: env.switchApiUrl,
-    registrationToken: env.agentRegistrationToken,
-    gatewayAdminEmail: env.gatewayAdminEmail,
-    gatewayAdminPassword: env.gatewayAdminPassword,
-  });
-  const mattermost = new MattermostClient({ url: env.mattermostUrl, token: env.mattermostToken });
+  const lane = await resolveLane('fast');
+  if (!lane.target) throw new Error(`Cannot clean up: ${lane.skip}`);
+  const { env, switchClient, mattermost } = lane.target;
 
   for (const room of await switchClient.listRooms()) {
-    if (!room.name.startsWith(PREFIX)) continue;
+    if (!room.name.startsWith(ARTIFACT_PREFIX)) continue;
     try {
       await switchClient.deleteRoom(room.id);
       log(`deleted room ${room.name} (${room.id})`);
@@ -35,7 +27,7 @@ export async function cleanup(log: (message: string) => void = console.log): Pro
   }
 
   for (const agent of await switchClient.listAgents()) {
-    if (!agent.name.startsWith(PREFIX)) continue;
+    if (!agent.name.startsWith(ARTIFACT_PREFIX)) continue;
     try {
       await switchClient.deleteAgentByName(agent.name);
       log(`deleted agent ${agent.name} (${agent.id})`);
@@ -44,9 +36,13 @@ export async function cleanup(log: (message: string) => void = console.log): Pro
     }
   }
 
-  const team = await mattermost.findTeam(env.mattermostTeam);
+  if (!mattermost || !env.mattermost) {
+    log('no Mattermost configured — skipping channels');
+    return;
+  }
+  const team = await mattermost.findTeam(env.mattermost.team);
   for (const channel of await mattermost.listTeamChannels(team.id)) {
-    if (!channel.name.startsWith(PREFIX)) continue;
+    if (!channel.name.startsWith(ARTIFACT_PREFIX)) continue;
     try {
       await mattermost.archiveChannel(channel.id);
       log(`archived channel ${channel.name} (${channel.id})`);
@@ -54,10 +50,6 @@ export async function cleanup(log: (message: string) => void = console.log): Pro
       log(`could not archive channel ${channel.name}: ${message(error)}`);
     }
   }
-}
-
-function message(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

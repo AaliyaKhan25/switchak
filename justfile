@@ -171,6 +171,14 @@ test *args:
 e2e-follow-ups *args:
     core/tests/e2e/follow_the_conversation/run.sh {{ args }}
 
+# ── End-to-end harness, fast lane, on a throwaway stack ────────────────────────
+# Fresh Postgres and Mattermost, switch-core from this checkout, then the
+# provider-free scenarios in console/tooling-e2e, then teardown. Needs Docker
+# and your local stack stopped. `--keep` leaves it running; arguments after
+# `--` go to vitest. Output: build/e2e/ephemeral.
+e2e-fast *args:
+    console/tooling-e2e/scripts/ephemeral-stack.sh {{ args }}
+
 # ── Run integration tests (real Postgres via testcontainers) ───────────────────
 # DOCKER_HOST is auto-resolved from the active docker context in conftest, so this
 # works under Docker Desktop / OrbStack / colima without extra setup.
