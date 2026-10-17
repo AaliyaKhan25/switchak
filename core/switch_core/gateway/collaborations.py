@@ -802,8 +802,11 @@ async def claim_bridge_identity(
     if bridge is None:
         raise HTTPException(status_code=404, detail="Bridge not found")
 
-    target_user_id = payload.user_id or user.id
-    if target_user_id != user.id and not is_admin:
+    # Read now: provisioning an unseen identity expires everything in this
+    # session, `user` included, and an expired attribute cannot load lazily here.
+    actor_user_id = user.id
+    target_user_id = payload.user_id or actor_user_id
+    if target_user_id != actor_user_id and not is_admin:
         raise HTTPException(
             status_code=403,
             detail="Only an admin may claim a messaging identity for another user",
@@ -864,7 +867,7 @@ async def claim_bridge_identity(
     await record_audit_event(
         session,
         tenant_id=external_user.tenant_id,
-        actor_user_id=user.id,
+        actor_user_id=actor_user_id,
         action=AuditAction.BRIDGE_IDENTITY_CLAIMED,
         target_type="external_user",
         target_id=external_user.id,
