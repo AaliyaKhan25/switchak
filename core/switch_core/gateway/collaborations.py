@@ -802,11 +802,8 @@ async def claim_bridge_identity(
     if bridge is None:
         raise HTTPException(status_code=404, detail="Bridge not found")
 
-    # Read now: provisioning an unseen identity expires everything in this
-    # session, `user` included, and an expired attribute cannot load lazily here.
-    actor_user_id = user.id
-    target_user_id = payload.user_id or actor_user_id
-    if target_user_id != actor_user_id and not is_admin:
+    target_user_id = payload.user_id or user.id
+    if target_user_id != user.id and not is_admin:
         raise HTTPException(
             status_code=403,
             detail="Only an admin may claim a messaging identity for another user",
@@ -853,7 +850,10 @@ async def claim_bridge_identity(
             )
         except ValueError as e:
             raise HTTPException(status_code=409, detail=str(e)) from e
-        session.expire_all()
+        # Provisioning wrote the row in its own session. This session committed
+        # before it and its lookup found nothing, so a fresh query sees the
+        # row; expiring the session instead would also expire `user` and
+        # `bridge`, which cannot lazy-load here.
         external_user = await external_user_store.get_by_external_id(
             session, bridge_id, payload.external_user_id
         )
@@ -867,7 +867,7 @@ async def claim_bridge_identity(
     await record_audit_event(
         session,
         tenant_id=external_user.tenant_id,
-        actor_user_id=actor_user_id,
+        actor_user_id=user.id,
         action=AuditAction.BRIDGE_IDENTITY_CLAIMED,
         target_type="external_user",
         target_id=external_user.id,
