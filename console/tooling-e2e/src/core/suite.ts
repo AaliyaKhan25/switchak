@@ -1,6 +1,13 @@
 import { MattermostClient } from '../clients/mattermost-client.ts';
 import { SwitchClient } from '../clients/switch-client.ts';
-import { laneFrom, loadEnv, type HarnessEnv, type Lane } from './env.ts';
+import {
+  laneFrom,
+  loadEnv,
+  readDotEnvFile,
+  strictFrom,
+  type HarnessEnv,
+  type Lane,
+} from './env.ts';
 
 /**
  * Whether this process runs a lane's suite at all, and the clients it runs with.
@@ -23,14 +30,15 @@ export type LaneResolution = { target: LaneTarget; skip: null } | { target: null
  * suite that never ran.
  */
 export async function resolveLane(lane: Lane): Promise<LaneResolution> {
-  const asked = laneFrom();
+  const file = readDotEnvFile();
+  const asked = laneFrom(process.env, file);
   if (asked !== lane) {
     return {
       target: null,
       skip: asked === null ? 'SWITCH_E2E_LANE is not set' : `SWITCH_E2E_LANE is '${asked}'`,
     };
   }
-  const strict = process.env.SWITCH_E2E_STRICT === '1';
+  const strict = strictFrom(process.env, file);
   const unable = (reason: string): LaneResolution => {
     if (strict) throw new Error(`The ${lane} lane cannot run (SWITCH_E2E_STRICT=1): ${reason}`);
     return { target: null, skip: reason };
@@ -38,7 +46,7 @@ export async function resolveLane(lane: Lane): Promise<LaneResolution> {
 
   let env: HarnessEnv;
   try {
-    env = loadEnv(lane);
+    env = loadEnv(lane, process.env, file);
   } catch (error) {
     return unable(message(error));
   }

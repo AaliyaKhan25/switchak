@@ -30,7 +30,7 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-for tool in docker uv openssl curl jq; do
+for tool in docker uv openssl curl jq lsof; do
   command -v "$tool" >/dev/null || { echo "$tool is required but not on PATH." >&2; exit 1; }
 done
 for port in 5432 8000 8065 8081; do
@@ -43,12 +43,7 @@ done
 rm -rf "$OUT"; mkdir -p "$OUT"
 ENV_FILE="$OUT/stack.env"
 cp "$REPO/.env.example" "$ENV_FILE"
-for key in DB_PASSWORD DB_OWNER_PASSWORD AGENT_REGISTRATION_TOKEN GATEWAY_ADMIN_PASSWORD \
-           MATTERMOST_ADMIN_PASSWORD MATTERMOST_USER_PASSWORD; do
-  sed -i.bak "s|^${key}=.*|${key}=$(openssl rand -hex 24)|" "$ENV_FILE"
-done
-sed -i.bak "s|^SECRET_KEYS=.*|SECRET_KEYS=e2e:$(openssl rand -hex 32)|" "$ENV_FILE"
-rm -f "$ENV_FILE.bak"
+"$REPO/deploy/local/generate-env-secrets.sh" "$ENV_FILE" e2e
 chmod 600 "$ENV_FILE"
 set -a; source "$ENV_FILE"; set +a
 

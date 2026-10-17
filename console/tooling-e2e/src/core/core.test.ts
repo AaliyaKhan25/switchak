@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { olderThanFrom, timestampMs } from '../cleanup.ts';
 import { FAST_SCENARIOS } from '../fast/index.ts';
 import { SCENARIOS as PROVIDER_SCENARIOS } from '../provider/scenarios.ts';
-import { laneFrom, loadEnv, MissingConfigError, type HarnessEnv } from './env.ts';
+import { laneFrom, loadEnv, MissingConfigError, strictFrom, type HarnessEnv } from './env.ts';
 import { assertAllowed, ReadOnlyEnvironmentError } from './guard.ts';
 import { isValidMattermostUsername, RunContext } from './run.ts';
 import {
@@ -45,8 +46,15 @@ describe('configuration', () => {
 
   it('refuses an unknown environment or lane', () => {
     expect(() => loadEnv('fast', { ...BASE, SWITCH_E2E_ENVIRONMENT: 'qa' }, {})).toThrow(/qa/);
-    expect(() => laneFrom({ SWITCH_E2E_LANE: 'slow' })).toThrow(/slow/);
-    expect(laneFrom({})).toBeNull();
+    expect(() => laneFrom({ SWITCH_E2E_LANE: 'slow' }, {})).toThrow(/slow/);
+    expect(laneFrom({}, {})).toBeNull();
+  });
+
+  it('reads the lane and strict mode from .env as well as the environment', () => {
+    expect(laneFrom({}, { SWITCH_E2E_LANE: 'fast' })).toBe('fast');
+    expect(strictFrom({}, { SWITCH_E2E_STRICT: '1' })).toBe(true);
+    expect(loadEnv('fast', BASE, { SWITCH_E2E_STRICT: '1' }).strict).toBe(true);
+    expect(laneFrom({ SWITCH_E2E_LANE: 'provider' }, { SWITCH_E2E_LANE: 'fast' })).toBe('provider');
   });
 });
 
@@ -157,5 +165,22 @@ describe('admission', () => {
       failure: true,
       reason: expect.stringContaining('MATTERMOST_URL'),
     });
+  });
+});
+
+describe('cleanup age floor', () => {
+  it('reads server timestamps with an offset, and refuses ones without', () => {
+    expect(timestampMs('2026-10-16 17:08:52.123456+00:00')).toBe(
+      Date.UTC(2026, 9, 16, 17, 8, 52, 123)
+    );
+    expect(timestampMs('2026-10-16T17:08:52Z')).toBe(Date.UTC(2026, 9, 16, 17, 8, 52));
+    expect(() => timestampMs('2026-10-16 17:08:52')).toThrow(/UTC offset/);
+  });
+
+  it('requires --older-than', () => {
+    expect(olderThanFrom(['--older-than', '120'])).toBe(120);
+    expect(olderThanFrom(['--older-than', '0'])).toBe(0);
+    expect(() => olderThanFrom([])).toThrow(/--older-than/);
+    expect(() => olderThanFrom(['--older-than', '-1'])).toThrow(/--older-than/);
   });
 });

@@ -160,11 +160,26 @@ function reader(source: Source, file: Record<string, string>): (key: string) => 
  * case every end-to-end suite skips, which is what keeps `pnpm -r test` on a
  * developer machine from reaching for a server.
  */
-export function laneFrom(source: Source = process.env): Lane | null {
-  const raw = reader(source, {})('SWITCH_E2E_LANE');
+export function laneFrom(
+  source: Source = process.env,
+  file: Record<string, string> = readDotEnvFile()
+): Lane | null {
+  const raw = reader(source, file)('SWITCH_E2E_LANE');
   if (raw === undefined) return null;
   if (raw === 'fast' || raw === 'provider') return raw;
   throw new Error(`SWITCH_E2E_LANE must be 'fast' or 'provider' — got '${raw}'.`);
+}
+
+/**
+ * Whether a run that cannot go ahead fails rather than skips. Read from the
+ * same sources as everything else, so `.env` and the environment never
+ * disagree about it.
+ */
+export function strictFrom(
+  source: Source = process.env,
+  file: Record<string, string> = readDotEnvFile()
+): boolean {
+  return reader(source, file)('SWITCH_E2E_STRICT') === '1';
 }
 
 /**
@@ -207,7 +222,7 @@ export function loadEnv(
   return {
     lane,
     environment: environmentFrom(required.SWITCH_E2E_ENVIRONMENT as string),
-    strict: get('SWITCH_E2E_STRICT') === '1',
+    strict: strictFrom(source, file),
     keepArtifacts: get('SWITCH_E2E_KEEP') === '1',
     switch: {
       apiUrl: stripTrailingSlash(required.SWITCH_API_URL as string),

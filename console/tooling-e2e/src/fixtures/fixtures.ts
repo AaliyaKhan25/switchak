@@ -22,14 +22,23 @@ import type { NameScope } from '../core/run.ts';
  * room should not hide another.
  */
 export class Fixtures {
+  readonly env: HarnessEnv;
+  readonly names: NameScope;
+  readonly switchClient: SwitchClient;
+  readonly mattermost: MattermostClient | null;
   private readonly cleanups: { label: string; run: () => Promise<void> }[] = [];
 
   constructor(
-    readonly env: HarnessEnv,
-    readonly names: NameScope,
-    readonly switchClient: SwitchClient,
-    readonly mattermost: MattermostClient | null
-  ) {}
+    env: HarnessEnv,
+    names: NameScope,
+    switchClient: SwitchClient,
+    mattermost: MattermostClient | null
+  ) {
+    this.env = env;
+    this.names = names;
+    this.switchClient = switchClient;
+    this.mattermost = mattermost;
+  }
 
   /**
    * Register an agent named for `role` in this scope.
@@ -106,19 +115,21 @@ export class Fixtures {
       agentNames: agents.map((agent) => agent.name),
       userNames: [human.username],
     });
-    this.defer(`room ${name} (${room.id})`, () => this.switchClient.deleteRoom(room.id));
-    if (!room.externalChannelId) {
+    const channelId = room.externalChannelId;
+    // One step, in order: the room first, then its channel only if deleting the
+    // room did not already archive it.
+    this.defer(`room ${name} (${room.id}) and channel ${channelId ?? 'none'}`, async () => {
+      await this.switchClient.deleteRoom(room.id);
+      if (channelId === null) return;
+      const left = await mattermost.getChannel(channelId);
+      if (!left.delete_at) await mattermost.archiveChannel(channelId);
+    });
+    if (channelId === null) {
       throw new Error(
         `Switch room ${room.id} was created without a Mattermost channel — ` +
           `the collaboration bridge did not provision one.`
       );
     }
-    const channelId = room.externalChannelId;
-    // Deleting the room usually takes the channel with it, so archiving is
-    // normally a no-op; it is the safety net when it does not.
-    this.defer(`channel ${channelId}`, async () => {
-      await mattermost.archiveChannel(channelId).catch(() => undefined);
-    });
 
     const channel = await mattermost.getChannel(channelId);
     const bridged: BridgedRoom = { room, channel, human, bots };

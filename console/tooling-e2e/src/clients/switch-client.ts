@@ -26,6 +26,7 @@ export interface RegisteredAgent {
 export interface RoomSummary {
   id: string;
   name: string;
+  createdAt: string;
   bridgeId: string | null;
   bridgeType: string | null;
   archived: boolean;
@@ -40,6 +41,7 @@ export interface RoomDetail extends RoomSummary {
 export interface AgentSummary {
   id: string;
   name: string;
+  createdAt: string;
 }
 
 /**
@@ -102,10 +104,9 @@ function truncate(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max)}…` : text;
 }
 
-interface RequestInit {
+interface SwitchRequest {
   token?: string;
   cookie?: string;
-  headers?: Record<string, string>;
   body?: unknown;
   timeoutMs?: number;
 }
@@ -128,20 +129,19 @@ export class SwitchClient {
 
   // ── plumbing ──────────────────────────────────────────────────────────────
 
-  private async request<T>(method: string, path: string, init: RequestInit = {}): Promise<T> {
+  private async request<T>(method: string, path: string, init: SwitchRequest = {}): Promise<T> {
     return (await this.rawRequest(method, path, init)).parsed as T;
   }
 
   private async rawRequest(
     method: string,
     path: string,
-    init: RequestInit
+    init: SwitchRequest
   ): Promise<{ parsed: unknown; response: Response }> {
     assertAllowed(this.environment, method, path);
     const headers: Record<string, string> = { Accept: 'application/json' };
     if (init.token) headers.Authorization = `Bearer ${init.token}`;
     if (init.cookie) headers.Cookie = init.cookie;
-    Object.assign(headers, init.headers ?? {});
     if (init.body !== undefined) headers['Content-Type'] = 'application/json';
 
     const response = await fetch(`${this.apiUrl}${path}`, {
@@ -290,8 +290,11 @@ export class SwitchClient {
   }
 
   async listAgents(): Promise<AgentSummary[]> {
-    const rows = await this.gateway<{ id: string; name: string }[]>('GET', '/agents');
-    return rows.map((row) => ({ id: row.id, name: row.name }));
+    const rows = await this.gateway<{ id: string; name: string; created_at: string }[]>(
+      'GET',
+      '/agents'
+    );
+    return rows.map((row) => ({ id: row.id, name: row.name, createdAt: row.created_at }));
   }
 
   /** The bridge id of the default collaboration bridge of `type`. */
@@ -530,6 +533,7 @@ export class SwitchClient {
 interface RawRoom {
   id: string;
   name: string;
+  created_at: string;
   bridge_id?: string | null;
   bridge_type?: string | null;
   archived?: boolean;
@@ -552,6 +556,7 @@ function toRoomSummary(row: RawRoom): RoomSummary {
   return {
     id: row.id,
     name: row.name,
+    createdAt: row.created_at,
     bridgeId: row.bridge_id ?? null,
     bridgeType: row.bridge_type ?? null,
     archived: row.archived ?? false,

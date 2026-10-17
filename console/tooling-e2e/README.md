@@ -44,11 +44,14 @@ what `pnpm -r test` and PR CI see. The unit tests (configuration, the read-only
 guard, naming, scenario headers) run either way.
 
 Housekeeping after an interrupted run deletes every `e2e-*` agent and room on
-the Switch server and archives every `e2e-*` Mattermost channel, and nothing
-else. It is also what a scheduled wipe of a deployed environment runs:
+the Switch server and archives every `e2e-*` Mattermost channel older than the
+age you give, and nothing else. The age floor is what lets a scheduled wipe of a
+deployed environment run while a suite is in progress; make it longer than the
+longest run. `0` takes everything, which is only right when nothing else is
+running against the server:
 
 ```bash
-SWITCH_E2E_LANE=fast pnpm cleanup
+SWITCH_E2E_LANE=fast pnpm cleanup --older-than 120
 ```
 
 Typecheck: `pnpm typecheck`.

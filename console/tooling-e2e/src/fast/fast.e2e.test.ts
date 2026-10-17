@@ -44,13 +44,18 @@ describe('fast lane', () => {
       const names = run.scope();
       const fixtures = new Fixtures(env, names, switchClient, mattermost);
       const log = (message: string): void => console.log(`[${scenario.header.id}] ${message}`);
+      let failure: unknown = null;
       try {
         await scenario.run({ env, names, switchClient, mattermost, fixtures, log });
-      } finally {
-        const leftovers = await fixtures.teardown();
-        for (const line of leftovers) log(`teardown: ${line}`);
-        if (!env.keepArtifacts) expect(leftovers, 'teardown left artefacts behind').toEqual([]);
+      } catch (error) {
+        failure = error;
       }
+      const leftovers = await fixtures.teardown();
+      for (const line of leftovers) log(`teardown: ${line}`);
+      // The scenario's own failure is the root cause and is reported as is; a
+      // leak is only the verdict when nothing else went wrong.
+      if (failure !== null) throw failure;
+      if (!env.keepArtifacts) expect(leftovers, 'teardown left artefacts behind').toEqual([]);
     });
   }
 });

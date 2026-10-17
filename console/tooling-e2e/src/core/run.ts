@@ -59,12 +59,14 @@ export class RunContext {
 }
 
 export class NameScope {
+  readonly runId: string;
+  private readonly letter: string;
   private readonly used = new Set<string>();
 
-  constructor(
-    readonly runId: string,
-    private readonly letter: string
-  ) {}
+  constructor(runId: string, letter: string) {
+    this.runId = runId;
+    this.letter = letter;
+  }
 
   /**
    * The name for an agent, room or channel.

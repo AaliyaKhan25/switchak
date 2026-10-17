@@ -28,6 +28,10 @@ export interface MattermostChannel {
   name: string;
   display_name: string;
   team_id: string;
+  /** Epoch milliseconds. */
+  create_at: number;
+  /** Non-zero once the channel is archived. */
+  delete_at?: number;
 }
 
 export interface MattermostUser {
