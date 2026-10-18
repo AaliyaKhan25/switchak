@@ -1,0 +1,226 @@
+name: E2E
+
+# The one definition of an end-to-end run: a lane of console/tooling-e2e against
+# an environment. Called by pr-ci.yml (the fast lane on a throwaway stack, on
+# every PR) and by e2e-scheduled.yml (the provider lane after each merge, the
+# deployed environments nightly), and dispatchable by hand.
+#
+#   lane         fast      provider-free scenarios over plain HTTP
+#                provider  real agent sessions on a headless agent controller
+#   environment  ephemeral a fresh stack on the runner, built from this checkout
+#                dev, staging  an existing deployment, configured by the GitHub
+#                          Environment of that name
+#
+# Fork safety: an ephemeral fast run generates every secret it uses on the
+# runner and reads no repository or environment secret, so it runs the same
+# from a fork PR's read-only token. Everything that needs a secret enters a
+# GitHub Environment, whose protection rules decide which refs may run it:
+#
+#   e2e-provider  secret ANTHROPIC_API_KEY, for the controller's Claude Code
+#   dev, staging  vars SWITCH_API_URL, MATTERMOST_URL, MATTERMOST_TEAM; secrets
+#                 SWITCH_GATEWAY_ADMIN_EMAIL, SWITCH_GATEWAY_ADMIN_PASSWORD,
+#                 SWITCH_AGENT_REGISTRATION_TOKEN, MATTERMOST_TOKEN
+#
+# Runs are strict (SWITCH_E2E_STRICT=1): a scenario that cannot run fails
+# rather than skips, so a deployment without Mattermost configured fails the
+# Mattermost scenario instead of passing without it.
+#
+# Artifacts are uploaded only after the output has been scanned for the run's
+# own secret values and by gitleaks. A scan that fails or does not run means
+# nothing is uploaded.
+
+on:
+  workflow_call:
+    inputs:
+      lane:
+        type: string
+        required: true
+      environment:
+        type: string
+        required: true
+      agent_type:
+        description: Provider for the provider lane
+        type: string
+        required: true
+    outputs:
+      summary:
+        description: One line counting the lane's scenarios by outcome
+        value: ${{ jobs.run.outputs.summary }}
+  workflow_dispatch:
+    inputs:
+      lane:
+        type: choice
+        options: [fast, provider]
+        default: fast
+      environment:
+        type: choice
+        options: [ephemeral, dev, staging]
+        default: ephemeral
+      agent_type:
+        description: Provider for the provider lane
+        type: choice
+        options: [claude-code]
+        default: claude-code
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    name: ${{ inputs.lane }} lane on ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: ${{ inputs.environment != 'ephemeral' && inputs.environment || (inputs.lane == 'provider' && 'e2e-provider' || '') }}
+    # One run at a time against a shared deployment, queued rather than
+    # cancelled: a cancelled run leaves its agents and rooms behind. A throwaway
+    # stack is the runner's own, so ephemeral runs never wait on each other.
+    concurrency:
+      group: ${{ inputs.environment == 'ephemeral' && format('e2e-ephemeral-{0}-{1}', inputs.lane, github.run_id) || format('e2e-{0}', inputs.environment) }}
+      cancel-in-progress: false
+    outputs:
+      summary: ${{ steps.summary.outputs.line }}
+    defaults:
+      run:
+        # Named explicitly for -o pipefail, which the implicit default lacks:
+        # without it a failed suite piped through tee would pass.
+        shell: bash
+    env:
+      OUT: ${{ github.workspace }}/build/e2e/out
+      LANE: ${{ inputs.lane }}
+      TARGET: ${{ inputs.environment }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Check the inputs
+        env:
+          AGENT_TYPE: ${{ inputs.agent_type }}
+        run: |
+          case "$LANE" in fast|provider) ;; *) echo "::error::Unknown lane '$LANE'."; exit 1 ;; esac
+          case "$TARGET" in ephemeral|dev|staging) ;; *) echo "::error::Unknown environment '$TARGET'."; exit 1 ;; esac
+          if [ "$LANE" = provider ] && [ "$TARGET" != ephemeral ]; then
+            echo "::error::The provider lane runs on an ephemeral stack only."; exit 1
+          fi
+          if [ "$LANE" = provider ] && [ "$AGENT_TYPE" != claude-code ]; then
+            echo "::error::CI has credentials for claude-code only, not '$AGENT_TYPE'."; exit 1
+          fi
+
+      - name: Set up uv
+        if: ${{ inputs.environment == 'ephemeral' }}
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+        with:
+          python-version: '3.12'
+          enable-cache: true
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 11.5.3
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: console/.nvmrc
+          cache: pnpm
+          cache-dependency-path: console/pnpm-lock.yaml
+
+      - name: Install dependencies
+        working-directory: console
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Claude Code
+        if: ${{ inputs.lane == 'provider' }}
+        run: npm install -g @anthropic-ai/claude-code@2.1.302
+
+      # Into the controller's environment through --env-file; never into $OUT.
+      - name: Write the provider key file
+        if: ${{ inputs.lane == 'provider' }}
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "::error::The e2e-provider environment has no ANTHROPIC_API_KEY secret."; exit 1
+          fi
+          umask 077
+          printf 'ANTHROPIC_API_KEY=%s\n' "$ANTHROPIC_API_KEY" >"$RUNNER_TEMP/provider.env"
+          echo "SWITCH_E2E_PROVIDER_ENV_FILE=$RUNNER_TEMP/provider.env" >>"$GITHUB_ENV"
+
+      - name: Run the lane on a throwaway stack
+        if: ${{ inputs.environment == 'ephemeral' }}
+        env:
+          SWITCH_E2E_LANE: ${{ inputs.lane }}
+          SWITCH_E2E_AGENT_TYPE: ${{ inputs.agent_type }}
+          E2E_OUT: ${{ env.OUT }}
+        run: console/tooling-e2e/scripts/ephemeral-stack.sh
+
+      - name: Run the lane against ${{ inputs.environment }}
+        if: ${{ inputs.environment != 'ephemeral' }}
+        working-directory: console/tooling-e2e
+        env:
+          SWITCH_E2E_LANE: ${{ inputs.lane }}
+          SWITCH_E2E_ENVIRONMENT: ${{ inputs.environment }}
+          SWITCH_E2E_STRICT: '1'
+          SWITCH_API_URL: ${{ vars.SWITCH_API_URL }}
+          SWITCH_GATEWAY_ADMIN_EMAIL: ${{ secrets.SWITCH_GATEWAY_ADMIN_EMAIL }}
+          SWITCH_GATEWAY_ADMIN_PASSWORD: ${{ secrets.SWITCH_GATEWAY_ADMIN_PASSWORD }}
+          SWITCH_AGENT_REGISTRATION_TOKEN: ${{ secrets.SWITCH_AGENT_REGISTRATION_TOKEN }}
+          MATTERMOST_URL: ${{ vars.MATTERMOST_URL }}
+          MATTERMOST_TOKEN: ${{ secrets.MATTERMOST_TOKEN }}
+          MATTERMOST_TEAM: ${{ vars.MATTERMOST_TEAM }}
+        run: |
+          mkdir -p "$OUT"
+          pnpm exec vitest run --reporter=verbose --reporter=junit --outputFile.junit="$OUT/junit.xml" \
+            2>&1 | tee "$OUT/vitest.log"
+
+      # What interrupted runs left behind. The floor keeps it off a run still in
+      # progress, which is why it can run after every suite.
+      - name: Remove stale harness artefacts from ${{ inputs.environment }}
+        if: ${{ always() && inputs.environment != 'ephemeral' }}
+        working-directory: console/tooling-e2e
+        env:
+          SWITCH_E2E_LANE: ${{ inputs.lane }}
+          SWITCH_E2E_ENVIRONMENT: ${{ inputs.environment }}
+          SWITCH_E2E_STRICT: '1'
+          SWITCH_API_URL: ${{ vars.SWITCH_API_URL }}
+          SWITCH_GATEWAY_ADMIN_EMAIL: ${{ secrets.SWITCH_GATEWAY_ADMIN_EMAIL }}
+          SWITCH_GATEWAY_ADMIN_PASSWORD: ${{ secrets.SWITCH_GATEWAY_ADMIN_PASSWORD }}
+          SWITCH_AGENT_REGISTRATION_TOKEN: ${{ secrets.SWITCH_AGENT_REGISTRATION_TOKEN }}
+          MATTERMOST_URL: ${{ vars.MATTERMOST_URL }}
+          MATTERMOST_TOKEN: ${{ secrets.MATTERMOST_TOKEN }}
+          MATTERMOST_TEAM: ${{ vars.MATTERMOST_TEAM }}
+        run: pnpm cleanup --older-than 180
+
+      - name: Summarise the run
+        id: summary
+        if: ${{ always() }}
+        run: |
+          node --experimental-strip-types console/tooling-e2e/src/ci-summary.ts \
+            "$OUT/junit.xml" "$LANE" "$LANE lane on $TARGET" >>"$GITHUB_STEP_SUMMARY"
+
+      - name: Scan the output for secrets
+        id: scan
+        if: ${{ always() }}
+        env:
+          SWITCH_GATEWAY_ADMIN_PASSWORD: ${{ secrets.SWITCH_GATEWAY_ADMIN_PASSWORD }}
+          SWITCH_AGENT_REGISTRATION_TOKEN: ${{ secrets.SWITCH_AGENT_REGISTRATION_TOKEN }}
+          MATTERMOST_TOKEN: ${{ secrets.MATTERMOST_TOKEN }}
+        run: |
+          [ -d "$OUT" ] || { echo "No output to scan."; exit 1; }
+          if [ "$TARGET" = ephemeral ]; then
+            # The stack script scans for the secrets it generated and the
+            # provider key file, and leaves this file only when none turned up.
+            [ -e "$OUT/.secret-scan-passed" ] || { echo "::error::The stack's own secret scan did not pass."; exit 1; }
+          else
+            printf '%s\n' "$SWITCH_GATEWAY_ADMIN_PASSWORD" "$SWITCH_AGENT_REGISTRATION_TOKEN" "$MATTERMOST_TOKEN" \
+              | console/tooling-e2e/scripts/scan-artifacts.sh "$OUT"
+          fi
+          docker run --rm -v "$OUT:/out:ro" zricethezav/gitleaks:v8.30.1 dir /out --redact --no-banner
+
+      - name: Upload the output
+        if: ${{ always() && steps.scan.outcome == 'success' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: e2e-${{ inputs.lane }}-${{ inputs.environment }}
+          path: ${{ env.OUT }}
+          include-hidden-files: true
+          retention-days: 14

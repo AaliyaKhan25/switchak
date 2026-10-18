@@ -74,6 +74,7 @@ jobs:
       artifacts: ${{ steps.filter.outputs.artifacts }}
       migrations: ${{ steps.filter.outputs.migrations }}
       chart: ${{ steps.filter.outputs.chart }}
+      e2e: ${{ steps.filter.outputs.e2e }}
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -105,6 +106,15 @@ jobs:
             gateway:
               - *shared
               - 'gateway/**'
+            # The server, the stack the fast lane stands up, and the harness.
+            e2e:
+              - *shared
+              - 'core/**'
+              - 'console/tooling-e2e/**'
+              - 'console/pnpm-lock.yaml'
+              - 'deploy/local/**'
+              - '.env.example'
+              - '.github/workflows/e2e.yml'
             # Its own filter, narrower than `backend`, so the push-triggered
             # `migration-heads-on-merge` job below only runs when it can
             # actually find a new head — not on every backend-touching push.
@@ -359,6 +369,19 @@ jobs:
 
       - name: Test (vitest)
         run: npm test
+
+  # Real messages through a real server and Mattermost, on a stack the job
+  # builds from this checkout. Needs no secret, so a fork PR runs it the same.
+  # The provider lane and the deployed environments are e2e-scheduled.yml's.
+  e2e-fast:
+    name: E2E fast lane
+    needs: changes
+    if: ${{ needs.changes.outputs.e2e == 'true' || github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
+    uses: ./.github/workflows/e2e.yml
+    with:
+      lane: fast
+      environment: ephemeral
+      agent_type: claude-code
 
   migration-heads-on-merge:
     name: Migration heads on merge

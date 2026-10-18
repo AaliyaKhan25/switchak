@@ -1,0 +1,77 @@
+name: E2E scheduled
+
+# When the end-to-end runs that are not PR checks happen. What a run does is
+# e2e.yml's; this file only says when, and reports.
+#
+#   after a merge to main  the provider lane on a throwaway stack. Real model
+#                          calls, so not on every PR, and never a required check
+#   nightly                the provider lane again, and the fast lane against
+#                          dev, then one summary notification for the night
+#
+# The fast lane on a throwaway stack is a PR check in pr-ci.yml.
+#
+# The notification goes to the incoming webhook in the repository secret
+# E2E_NOTIFY_WEBHOOK_URL (Slack and Mattermost both accept the payload). Without
+# it the run says so in a warning and sends nothing.
+
+on:
+  schedule:
+    - cron: '41 3 * * *'
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  provider:
+    name: Provider lane
+    uses: ./.github/workflows/e2e.yml
+    with:
+      lane: provider
+      environment: ephemeral
+      agent_type: claude-code
+
+  fast-dev:
+    name: Fast lane on dev
+    if: ${{ github.event_name != 'push' }}
+    uses: ./.github/workflows/e2e.yml
+    with:
+      lane: fast
+      environment: dev
+      agent_type: claude-code
+
+  notify:
+    name: Nightly summary
+    needs: [provider, fast-dev]
+    if: ${{ always() && github.event_name == 'schedule' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send the summary
+        env:
+          WEBHOOK: ${{ secrets.E2E_NOTIFY_WEBHOOK_URL }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          PROVIDER_RESULT: ${{ needs.provider.result }}
+          PROVIDER_SUMMARY: ${{ needs.provider.outputs.summary }}
+          DEV_RESULT: ${{ needs.fast-dev.result }}
+          DEV_SUMMARY: ${{ needs.fast-dev.outputs.summary }}
+        run: |
+          line() {
+            local mark=❌
+            [ "$2" = success ] && mark=✅
+            printf '%s %s — %s\n' "$mark" "$1" "${3:-$2, no scenario summary}"
+          }
+          text="$(printf 'Switch E2E nightly\n%s\n%s\n%s' \
+            "$(line 'Provider lane (ephemeral)' "$PROVIDER_RESULT" "$PROVIDER_SUMMARY")" \
+            "$(line 'Fast lane (dev)' "$DEV_RESULT" "$DEV_SUMMARY")" \
+            "$RUN_URL")"
+          echo "$text"
+          if [ -z "$WEBHOOK" ]; then
+            echo "::warning::E2E_NOTIFY_WEBHOOK_URL is not set; the nightly summary was not sent anywhere."
+            exit 0
+          fi
+          curl -fsS -H 'Content-Type: application/json' -d "$(jq -n --arg text "$text" '{text: $text}')" "$WEBHOOK" >/dev/null

@@ -19,7 +19,12 @@
 # secrets or pick up a stale value from them.
 #
 # Ports 5432, 8000, 8065 and 8081 must be free: stop a local stack first.
-# Everything the run writes goes to build/e2e/ephemeral/ (or $E2E_OUT).
+# Logs and the JUnit report go to build/e2e/ephemeral/ (or $E2E_OUT); the env
+# file, the controller's state and the agent's working directory go to a
+# temporary directory, so the output holds nothing secret by construction.
+# On exit the output is scanned for every secret the run used, and
+# .secret-scan-passed is written there only if none turned up: CI uploads the
+# output only when that file exists.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
@@ -48,17 +53,12 @@ for port in 5432 8000 8065 8081; do
 done
 
 rm -rf "$OUT"; mkdir -p "$OUT"
-ENV_FILE="$OUT/stack.env"
-cp "$REPO/.env.example" "$ENV_FILE"
-"$REPO/deploy/local/generate-env-secrets.sh" "$ENV_FILE" e2e
-if [ "$LANE" = provider ]; then
-  # Agent management, and the key controllers' access tokens are signed with.
-  sed -i.bak -e "s|^FEATURE_FLAGS_ENABLED=.*|FEATURE_FLAGS_ENABLED=agent_management|" \
-             -e "s|^CONTROLLER_TOKEN_SECRET=.*|CONTROLLER_TOKEN_SECRET=$(openssl rand -hex 32)|" "$ENV_FILE"
-  rm -f "$ENV_FILE.bak"
-fi
-chmod 600 "$ENV_FILE"
-set -a; source "$ENV_FILE"; set +a
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/switch-e2e.XXXXXX")"
+chmod 700 "$WORK"
+ENV_FILE="$WORK/stack.env"
+# Every secret the run uses, one per line, for the scan of $OUT on exit.
+SECRETS="$WORK/secrets"
+: >"$SECRETS"
 
 cd "$REPO"
 COMPOSE=(docker compose -p switch-e2e-ephemeral -f deploy/local/docker-compose.yml
@@ -71,15 +71,48 @@ cleanup() {
     [ -n "$CONTROLLER_PID" ] && kill "$CONTROLLER_PID" 2>/dev/null && wait "$CONTROLLER_PID" 2>/dev/null
     [ -n "$SERVER_PID" ] && kill "$SERVER_PID" 2>/dev/null && wait "$SERVER_PID" 2>/dev/null
     "${COMPOSE[@]}" down -v >/dev/null 2>&1 || true
-    rm -f "$ENV_FILE"
   else
     echo "Left running: switch-core :8000 (pid $SERVER_PID), Mattermost :8065${CONTROLLER_PID:+, agent controller (pid $CONTROLLER_PID)}."
-    echo "Secrets for this stack: $ENV_FILE. Tear down with:"
-    echo "  kill $SERVER_PID $CONTROLLER_PID; ${COMPOSE[*]} down -v"
+    echo "Secrets and state for this stack: $WORK. Tear down with:"
+    echo "  kill $SERVER_PID $CONTROLLER_PID; ${COMPOSE[*]} down -v; rm -rf $WORK"
   fi
+  if "$HARNESS/scripts/scan-artifacts.sh" "$OUT" <"$SECRETS"; then
+    : >"$OUT/.secret-scan-passed"
+  else
+    status=1
+  fi
+  [ "$KEEP" = 0 ] && rm -rf "$WORK"
   exit "$status"
 }
 trap cleanup EXIT
+
+cp "$REPO/.env.example" "$ENV_FILE"
+"$REPO/deploy/local/generate-env-secrets.sh" "$ENV_FILE" e2e
+if [ "$LANE" = provider ]; then
+  # Agent management, and the key controllers' access tokens are signed with.
+  sed -i.bak -e "s|^FEATURE_FLAGS_ENABLED=.*|FEATURE_FLAGS_ENABLED=agent_management|" \
+             -e "s|^CONTROLLER_TOKEN_SECRET=.*|CONTROLLER_TOKEN_SECRET=$(openssl rand -hex 32)|" "$ENV_FILE"
+  rm -f "$ENV_FILE.bak"
+fi
+chmod 600 "$ENV_FILE"
+set -a; source "$ENV_FILE"; set +a
+
+# A secret's value, and each part of it, since SECRET_KEYS is `label:key,…`.
+remember_secrets() {
+  local value
+  for value in "$@"; do
+    printf '%s\n' "$value" >>"$SECRETS"
+    tr ',:' '\n\n' <<<"$value" >>"$SECRETS"
+  done
+}
+while IFS='=' read -r key value; do
+  case "$key" in *SECRET*|*PASSWORD*|*TOKEN*|*_KEY|*_KEYS) remember_secrets "$value" ;; esac
+done < <(grep -E '^[A-Z0-9_]+=' "$ENV_FILE")
+if [ -n "${SWITCH_E2E_PROVIDER_ENV_FILE:-}" ] && [ -r "$SWITCH_E2E_PROVIDER_ENV_FILE" ]; then
+  while IFS='=' read -r _ value; do remember_secrets "$value"; done \
+    < <(grep -E '^[A-Za-z0-9_]+=' "$SWITCH_E2E_PROVIDER_ENV_FILE")
+fi
+
 
 echo "Starting a fresh stack (Postgres, Mattermost)…"
 "${COMPOSE[@]}" down -v >/dev/null 2>&1 || true
@@ -115,6 +148,7 @@ MATTERMOST_TOKEN="$(curl -sf -D - -o /dev/null -H 'Content-Type: application/jso
   -d "$(jq -n --arg u "$MATTERMOST_USER" --arg p "$MATTERMOST_USER_PASSWORD" '{login_id: $u, password: $p}')" \
   http://localhost:8065/api/v4/users/login | tr -d '\r' | awk -F': ' 'tolower($1)=="token" {print $2}')"
 [ -n "$MATTERMOST_TOKEN" ] || { echo "could not log in to Mattermost as $MATTERMOST_USER" >&2; exit 1; }
+remember_secrets "$MATTERMOST_TOKEN"
 
 PROVIDER_ENV=()
 if [ "$LANE" = provider ]; then
@@ -122,7 +156,7 @@ if [ "$LANE" = provider ]; then
   (cd "$REPO/console" && pnpm -r --filter './packages/**' run build) >"$OUT/console-build.log" 2>&1 \
     || { echo "console package build failed; see $OUT/console-build.log" >&2; exit 1; }
 
-  JAR="$OUT/gateway.cookies"
+  JAR="$WORK/gateway.cookies"
   curl -sf -c "$JAR" -o /dev/null -H 'Content-Type: application/json' \
     -d "$(jq -n --arg e "$GATEWAY_ADMIN_EMAIL" --arg p "$GATEWAY_ADMIN_PASSWORD" '{email: $e, password: $p}')" \
     http://localhost:8000/gateway/auth/login \
@@ -136,9 +170,10 @@ if [ "$LANE" = provider ]; then
     || { echo "could not create an agent controller (is agent_management on?)" >&2; exit 1; }
   rm -f "$JAR"
   CONTROLLER_ID="$(jq -r .controller_id <<<"$CONTROLLER")"
+  remember_secrets "$(jq -r .credential <<<"$CONTROLLER")"
 
   echo "Starting the agent controller…"
-  CONTROLLER_ARGS=(run --data-dir "$OUT/controller" --controller-id "$CONTROLLER_ID"
+  CONTROLLER_ARGS=(run --data-dir "$WORK/controller" --controller-id "$CONTROLLER_ID"
                    --server http://localhost:8000 --credential-stdin)
   if [ -n "${SWITCH_E2E_PROVIDER_ENV_FILE:-}" ]; then
     CONTROLLER_ARGS+=(--env-file "$SWITCH_E2E_PROVIDER_ENV_FILE")
@@ -163,8 +198,8 @@ if [ "$LANE" = provider ]; then
     exit 1
   fi
 
-  mkdir -p "$OUT/agent-dir"
-  PROVIDER_ENV=(SWITCH_E2E_CONTROLLER_ID="$CONTROLLER_ID" SWITCH_E2E_AGENT_DIR="$OUT/agent-dir")
+  mkdir -p "$WORK/agent-dir"
+  PROVIDER_ENV=(SWITCH_E2E_CONTROLLER_ID="$CONTROLLER_ID" SWITCH_E2E_AGENT_DIR="$WORK/agent-dir")
 fi
 
 echo "Running the $LANE lane…"

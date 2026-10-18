@@ -65,7 +65,9 @@ Typecheck: `pnpm typecheck`.
 | `src/fixtures/` | Throwaway agents and rooms for a scenario, the bridge-readiness probe, teardown |
 | `src/fast/` | Fast-lane scenarios, one file per area, listed in `index.ts` |
 | `src/provider/` | The provider lane: Console credential files, the shared agent and channel, the scenarios, `seed.ts` |
-| `scripts/ephemeral-stack.sh` | The throwaway-stack runner behind `just e2e-fast` |
+| `scripts/ephemeral-stack.sh` | The throwaway-stack runner behind `just e2e-fast` and `just e2e-provider` |
+| `scripts/scan-artifacts.sh` | Fails if a run's output holds one of the secrets the run used |
+| `src/ci-summary.ts` | The CI run summary, read from the JUnit report |
 
 ## Scenarios and their headers
 
@@ -207,6 +209,40 @@ Two things differ from a Console session:
   therefore absorbs the session's start-up time.
 
 The controller's log goes to `build/e2e/ephemeral/controller.log`.
+
+## In CI
+
+`.github/workflows/e2e.yml` defines a run: one lane against one environment
+(`ephemeral`, `dev` or `staging`). Other workflows call it, and it can also be
+dispatched by hand.
+
+| When | Lane | Environment | Required check |
+| --- | --- | --- | --- |
+| Every PR, and every push to main (`pr-ci.yml`) | fast | ephemeral | yes |
+| After a merge to main (`e2e-scheduled.yml`) | provider | ephemeral | no |
+| Nightly (`e2e-scheduled.yml`) | provider; fast | ephemeral; dev | no |
+
+- **Secrets.** An ephemeral fast run generates every secret it uses on the
+  runner, so it works the same on a fork PR. Every other run reads its secrets
+  from a GitHub Environment:
+  - `e2e-provider` holds `ANTHROPIC_API_KEY`;
+  - `dev` and `staging` hold the deployment's URLs as variables and its
+    credentials as secrets.
+
+  The header of `e2e.yml` lists every name. Each environment's protection rules
+  decide which branches may use it.
+- **Concurrency.** Runs against a shared deployment queue behind each other.
+  They are never cancelled, because a cancelled run leaves its artefacts
+  behind. After every deployed run, `pnpm cleanup --older-than 180` removes
+  what interrupted runs left.
+- **Artifacts.** The output directory is uploaded only after it passes two
+  scans: one for the exact secret values the run used (`scan-artifacts.sh`),
+  and gitleaks. On an ephemeral stack, the env file, the controller's state and
+  the agent's directory live outside the output directory, so the output holds
+  only logs and the JUnit report.
+- **Reporting.** Each run writes a scenario table to the job summary. A
+  scheduled night sends one summary to the webhook in the repository secret
+  `E2E_NOTIFY_WEBHOOK_URL`.
 
 ## With a Switch Console session
 
