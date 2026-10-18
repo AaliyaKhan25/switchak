@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { createWriteStream } from 'node:fs';
+import { createWriteStream, existsSync } from 'node:fs';
 import { mkdir, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { Readable } from 'node:stream';
@@ -75,17 +75,21 @@ export async function downloadFile(
 /**
  * The `tar` this machine has. Every platform Console ships on carries one:
  * bsdtar on macOS and on Windows 10 and later (which also reads zip), GNU tar
- * on Linux.
+ * on Linux. On Windows it is always the system bsdtar, never a `tar` found
+ * earlier on PATH: that is usually Git's GNU tar, which reads `C:\…` as a
+ * remote host and cannot open zip.
  */
 export function tarExecutable(env: NodeJS.ProcessEnv = process.env): string {
-  return resolveExecutable('tar', {
-    candidates: [
-      '/usr/bin/tar',
-      '/bin/tar',
-      windowsInstallPath(env, 'SystemRoot', 'System32', 'tar.exe') ?? '',
-    ].filter(Boolean),
-    env,
-  });
+  if (process.platform === 'win32') {
+    const systemTar = windowsInstallPath(env, 'SystemRoot', 'System32', 'tar.exe');
+    if (!systemTar || !existsSync(systemTar)) {
+      throw new Error(
+        `Windows' tar.exe was not found${systemTar ? ` at ${systemTar}` : ' (SystemRoot is unset)'}; it ships with Windows 10 and later.`
+      );
+    }
+    return systemTar;
+  }
+  return resolveExecutable('tar', { candidates: ['/usr/bin/tar', '/bin/tar'], env });
 }
 
 /**

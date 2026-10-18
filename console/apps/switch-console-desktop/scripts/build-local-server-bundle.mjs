@@ -106,8 +106,18 @@ async function download(url, file, integrity) {
   }
 }
 
+// On Windows, the system bsdtar: the runner's PATH puts Git's GNU tar first,
+// which reads `C:\…` as a remote host and cannot open zip.
+const tarCommand = (() => {
+  if (process.platform !== 'win32') return 'tar';
+  if (!process.env.SystemRoot) throw new Error("SystemRoot is unset; cannot find Windows' tar.exe");
+  const systemTar = path.win32.join(process.env.SystemRoot, 'System32', 'tar.exe');
+  if (!existsSync(systemTar)) throw new Error(`Windows' tar.exe was not found at ${systemTar}`);
+  return systemTar;
+})();
+
 function tar(args) {
-  execFileSync('tar', args, { stdio: 'inherit' });
+  execFileSync(tarCommand, args, { stdio: 'inherit' });
 }
 
 async function unpackPinned(archive, destination) {
