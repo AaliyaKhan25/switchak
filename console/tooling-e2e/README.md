@@ -174,14 +174,15 @@ everything `just e2e-fast` does, and also:
 1. turns on `agent_management` and sets `CONTROLLER_TOKEN_SECRET` for the stack;
 2. builds `console/packages` and starts the agent controller
    (`console/packages/agent-controller`) on the host. Its credential comes from
-   `POST /gateway/management/controllers` and goes in on stdin, never to disk;
-3. runs the provider lane with `SWITCH_E2E_CONTROLLER_ID` set. Setup then
-   registers the agent with a registration key the admin mints for the purpose
-   and deletes straight away, because the management API only places agents
-   their caller owns, and the deployment-wide key registers agents to a
-   bootstrap account. Setup places the agent on the controller with
-   `auto_approve: false`, retrying while the controller reports itself not
-   ready, and writes no Switch Console files.
+   `POST /gateway/management/controllers` and goes in on stdin, never to disk.
+   The lane does not start until the controller has connected to Switch; if it
+   exits or never connects, the run stops there and prints the controller log;
+3. runs the provider lane with `SWITCH_E2E_CONTROLLER_ID` set. Setup creates the
+   agent on the controller as the admin (`POST /gateway/management/agents`,
+   `auto_approve: false`), retrying only while the server answers that the
+   controller is offline or has not reported the provider installed and signed
+   in. Any other refusal fails setup at once. Setup writes no Switch Console
+   files.
 
 ```bash
 SWITCH_E2E_AGENT_TYPE=claude-code just e2e-provider
@@ -282,6 +283,9 @@ the room before the greeting proceeds.
 
 Setup finds the manifest, reuses what is in it rather than registering a second
 agent, and deletes it during teardown — so a manifest never outlives its room.
+A manifest missing a field this version records (one written by an older
+harness, say) fails setup with instructions to clean up and seed again, rather
+than being half-used.
 
 ## The provider scenarios
 
@@ -339,6 +343,8 @@ POST   /gateway/rooms                     {name, description, bridge_id, agent_n
                                              Mattermost channel and adds the bot
 DELETE /gateway/rooms/{id}
 DELETE /gateway/agents/by-name/{name}      (admin teardown, no agent key needed)
+POST   /gateway/management/agents          {"name","description","controller_id","desired_state":"running","definition"}
+       -> {"agent_id":"…","name":"…",…}; 409 {"error":{"code":"controller_offline"|"provider_not_installed"|"provider_login_missing",…}} until the controller is ready
 PUT    /gateway/agents/{id}/addressing-policy  {"policy": null} -> anyone may address it
 POST   /gateway/rooms with internal_only: true and no bridge_id -> a room with no channel
 ```

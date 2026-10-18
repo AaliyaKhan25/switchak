@@ -150,6 +150,24 @@ async function answerCard(harness: Harness, card: MattermostPost, option: number
   return sinceMs;
 }
 
+/**
+ * The number a request card gives the option labelled `label`. The card numbers
+ * options in the order the agent supplied them, which need not be the order it
+ * was asked to list them in.
+ */
+export function optionNumber(card: string, label: string): number | null {
+  const match = new RegExp(`(?:^|\\s)(\\d+)\\.\\s+${label}\\b`, 'i').exec(card);
+  return match ? Number(match[1]) : null;
+}
+
+function chosenOption(card: MattermostPost): number {
+  const option = optionNumber(card.message, CHOSEN);
+  if (option === null) {
+    throw new Error(`Request card ${card.id} offers no option '${CHOSEN}': «${card.message}»`);
+  }
+  return option;
+}
+
 /** Post `@agent <text>` and return the moment just before it was posted. */
 async function ask(harness: Harness, text: string): Promise<number> {
   const sinceMs = Date.now() - 1;
@@ -269,7 +287,7 @@ export const question: Scenario = (harness) =>
     // too, so the agent's own reply must be told apart from them either way.
     const answeredAt = prose
       ? await ask(harness, CHOSEN)
-      : await answerCard(harness, asked, CHOICES.indexOf(CHOSEN) + 1);
+      : await answerCard(harness, asked, chosenOption(asked));
     const answer = await expectBotPost(harness, {
       since: answeredAt,
       record,

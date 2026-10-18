@@ -150,6 +150,19 @@ if [ "$LANE" = provider ]; then
   CONTROLLER_PID=$!
   unset CONTROLLER
 
+  # A controller that exits at once (bad credential, missing build, unreadable
+  # --env-file) would otherwise surface two minutes later as a placement timeout.
+  for _ in $(seq 60); do
+    kill -0 "$CONTROLLER_PID" 2>/dev/null || break
+    grep -q "Connected to Switch" "$OUT/controller.log" && break
+    sleep 1
+  done
+  if ! kill -0 "$CONTROLLER_PID" 2>/dev/null || ! grep -q "Connected to Switch" "$OUT/controller.log"; then
+    echo "The agent controller did not connect to Switch; its log ($OUT/controller.log):" >&2
+    tail -n 40 "$OUT/controller.log" >&2
+    exit 1
+  fi
+
   mkdir -p "$OUT/agent-dir"
   PROVIDER_ENV=(SWITCH_E2E_CONTROLLER_ID="$CONTROLLER_ID" SWITCH_E2E_AGENT_DIR="$OUT/agent-dir")
 fi
@@ -158,7 +171,7 @@ echo "Running the $LANE lane…"
 status=0
 (
   cd "$HARNESS"
-  export ${PROVIDER_ENV[@]+"${PROVIDER_ENV[@]}"}
+  if [ ${#PROVIDER_ENV[@]} -gt 0 ]; then export "${PROVIDER_ENV[@]}"; fi
   SWITCH_E2E_LANE="$LANE" \
   SWITCH_E2E_ENVIRONMENT=ephemeral \
   SWITCH_E2E_STRICT=1 \

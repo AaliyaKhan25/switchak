@@ -39,7 +39,9 @@ beforeAll(async () => {
       `  channel  ${harness.channel.name} (${harness.channel.id})`,
       `  room     ${harness.room.name} (${harness.room.id})`,
       '',
-      `  A Switch Console session must now be running for '${harness.agent.name}'.`,
+      lane.target.env.provider.controllerId !== null
+        ? `  The agent controller now runs '${harness.agent.name}'.`
+        : `  A Switch Console session must now be running for '${harness.agent.name}'.`,
       '',
     ].join('\n')
   );

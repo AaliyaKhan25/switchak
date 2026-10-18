@@ -5,15 +5,17 @@ import type {
   MattermostUser,
 } from '../clients/mattermost-client.ts';
 import {
+  managementErrorCode,
   sleep,
-  SwitchHttpError,
+  type AgentRef,
+  type ManagedAgentDefinition,
   type RegisteredAgent,
   type RoomDetail,
   type SwitchClient,
 } from '../clients/switch-client.ts';
 import type { HarnessAgentType, HarnessEnv } from '../core/env.ts';
 import { RunContext } from '../core/run.ts';
-import type { LaneTarget } from '../core/suite.ts';
+import { message, type LaneTarget } from '../core/suite.ts';
 import { waitForBridgeReady } from '../fixtures/fixtures.ts';
 import {
   removeAgentCredentials,
@@ -31,7 +33,12 @@ export interface Harness {
   env: HarnessEnv;
   switch: SwitchClient;
   mattermost: MattermostClient;
-  agent: RegisteredAgent;
+  agent: AgentRef;
+  /**
+   * The agent's own API key, for a Console session to run as. Null for an agent
+   * created on a controller: the controller acts for it, and no key is issued.
+   */
+  agentApiKey: string | null;
   /**
    * A silent second agent in the room, registered with the deployment key and
    * run by nobody. The bridge-readiness probe reads the room through it,
@@ -88,57 +95,28 @@ const PROVIDER_BY_AGENT_TYPE: Record<HarnessAgentType, string> = {
 /** How long to keep asking a controller to take the agent while it comes up. */
 const PLACEMENT_DEADLINE_MS = 120_000;
 
+/** The placement refusals that clear once the controller is up and signed in. */
+const NOT_READY_CODES = new Set([
+  'controller_offline',
+  'provider_not_installed',
+  'provider_login_missing',
+]);
+
 /**
- * Register the agent. For a controller it is registered with a key the admin
- * mints for the purpose and deletes straight after, because the management API
- * only places agents their caller owns, and the deployment-wide key registers
- * them to a bootstrap account.
+ * Create the agent on the controller, owned by the admin, retrying while the
+ * server answers that the controller is not ready yet: it has not connected, or
+ * has not yet reported the provider installed and signed in. Any other refusal
+ * is final. A refused create registers nothing, so repeating it is safe.
  */
-async function registerAgent(
+async function createOnController(
   switchClient: SwitchClient,
   env: HarnessEnv,
   name: string,
   runId: string,
-  forController: boolean
-): Promise<RegisteredAgent> {
-  // `ClaudeCodeOptions` and `OpencodeOptions` agree on the two keys used here
-  // (`auto_session`, `repo_dir`), so the payload is the same for both types.
-  const params = {
-    agentType: env.provider.agentType,
-    name,
-    description: `Switch end-to-end harness agent (run ${runId}). Safe to delete.`,
-    options: {
-      auto_session: true,
-      ...(env.provider.agentRepoDir ? { repo_dir: env.provider.agentRepoDir } : {}),
-    },
-  };
-  if (!forController) {
-    return switchClient.registerKnownAgent({
-      ...params,
-      registrationToken: switchClient.registrationToken,
-    });
-  }
-  const key = await switchClient.createRegistrationKey(`e2e harness run ${runId}`);
-  try {
-    return await switchClient.registerKnownAgent({ ...params, registrationToken: key.key });
-  } finally {
-    await switchClient.deleteApiKey(key.id);
-  }
-}
-
-/**
- * Hand the agent to the controller, retrying while the server answers 409:
- * the controller has not connected yet, or has not yet reported the provider
- * installed and signed in. Any other refusal is final.
- */
-async function placeOnController(
-  switchClient: SwitchClient,
-  env: HarnessEnv,
-  agent: RegisteredAgent,
   controllerId: string
-): Promise<void> {
+): Promise<AgentRef> {
   const provider = PROVIDER_BY_AGENT_TYPE[env.provider.agentType];
-  const definition = {
+  const definition: ManagedAgentDefinition = {
     provider,
     model: provider === 'claude' ? CLAUDE_MODEL : null,
     instructions: AGENT_INSTRUCTIONS,
@@ -149,12 +127,58 @@ async function placeOnController(
   const until = Date.now() + PLACEMENT_DEADLINE_MS;
   for (;;) {
     try {
-      await switchClient.placeAgent({ agentId: agent.id, controllerId, definition });
-      return;
+      return await switchClient.createManagedAgent({
+        name,
+        description: `Switch end-to-end harness agent (run ${runId}). Safe to delete.`,
+        controllerId,
+        definition,
+      });
     } catch (error) {
-      const notReady = error instanceof SwitchHttpError && error.status === 409;
-      if (!notReady || Date.now() > until) throw error;
+      const code = managementErrorCode(error);
+      if (code === null || !NOT_READY_CODES.has(code) || Date.now() > until) throw error;
       await sleep(3_000);
+    }
+  }
+}
+
+/** Register the agent with the deployment key, for a Switch Console session to run as. */
+async function registerForConsole(
+  switchClient: SwitchClient,
+  env: HarnessEnv,
+  name: string,
+  runId: string
+): Promise<RegisteredAgent> {
+  // `ClaudeCodeOptions` and `OpencodeOptions` agree on the two keys used here
+  // (`auto_session`, `repo_dir`), so the payload is the same for both types.
+  return switchClient.registerKnownAgent({
+    agentType: env.provider.agentType,
+    name,
+    description: `Switch end-to-end harness agent (run ${runId}). Safe to delete.`,
+    options: {
+      auto_session: true,
+      ...(env.provider.agentRepoDir ? { repo_dir: env.provider.agentRepoDir } : {}),
+    },
+  });
+}
+
+/**
+ * What a setup has made so far, undone newest first if a later step fails, so a
+ * failed setup does not leave its agents and room behind.
+ */
+class SetupUndo {
+  private readonly steps: { label: string; undo: () => Promise<void> }[] = [];
+
+  add(label: string, undo: () => Promise<void>): void {
+    this.steps.push({ label, undo });
+  }
+
+  async run(log: (message: string) => void): Promise<void> {
+    for (const step of this.steps.reverse()) {
+      try {
+        await step.undo();
+      } catch (error) {
+        log(`setup cleanup: failed to remove ${step.label} — delete it by hand: ${message(error)}`);
+      }
     }
   }
 }
@@ -172,7 +196,7 @@ async function placeOnController(
  * been registered by an earlier process (see {@link HarnessManifest}).
  */
 export async function setupHarness(target: LaneTarget): Promise<Harness> {
-  const { env, switchClient } = target;
+  const { env } = target;
   const mattermost = target.mattermost;
   if (!mattermost || !env.mattermost) {
     throw new Error(
@@ -182,31 +206,61 @@ export async function setupHarness(target: LaneTarget): Promise<Harness> {
   const reused = await readManifest(env.provider.manifestPath);
   if (reused) return reuseHarness(target, mattermost, reused);
 
-  const run = new RunContext();
-  const runId = run.runId;
-  const names = run.scope();
-  const agentName = names.name(ROLE_BY_AGENT_TYPE[env.provider.agentType]);
-
-  const human = await mattermost.me();
-  const bridgeId = await switchClient.defaultBridgeId('mattermost');
   // Resolved even though the room-create path does not need it: it fails fast
   // and clearly when MATTERMOST_TEAM names a team that does not exist.
   await mattermost.findTeam(env.mattermost.team);
 
+  const undo = new SetupUndo();
+  try {
+    const harness = await buildHarness(target, mattermost, undo);
+    await writeManifest(env.provider.manifestPath, harness);
+    return harness;
+  } catch (error) {
+    await undo.run(console.warn);
+    throw error;
+  }
+}
+
+async function buildHarness(
+  target: LaneTarget,
+  mattermost: MattermostClient,
+  undo: SetupUndo
+): Promise<Harness> {
+  const { env, switchClient } = target;
+  const run = new RunContext();
+  const runId = run.runId;
+  const names = run.scope();
+  const agentName = names.name(ROLE_BY_AGENT_TYPE[env.provider.agentType]);
+  const human = await mattermost.me();
+  const bridgeId = await switchClient.defaultBridgeId('mattermost');
   const controllerId = env.provider.controllerId;
-  const agent = await registerAgent(switchClient, env, agentName, runId, controllerId !== null);
+  const deleteByName = (name: string) => () => switchClient.deleteAgentByName(name);
+
+  let agent: AgentRef;
+  let agentApiKey: string | null;
+  if (controllerId !== null) {
+    agent = await createOnController(switchClient, env, agentName, runId, controllerId);
+    agentApiKey = null;
+  } else {
+    const registered = await registerForConsole(switchClient, env, agentName, runId);
+    agent = { id: registered.id, name: registered.name };
+    agentApiKey = registered.apiKey;
+  }
+  // By name, as the admin: an agent run by a controller cannot delete itself
+  // with its own key, which the server refuses while the controller acts for it.
+  undo.add(`agent ${agent.name} (${agent.id})`, deleteByName(agent.name));
 
   // Owner-only by default, and the human the harness posts as is an unclaimed
   // Mattermost identity, so its messages would be refused rather than delivered.
   await switchClient.openAddressing(agent.id);
 
   const witness = await switchClient.registerKnownAgent({
-    registrationToken: switchClient.registrationToken,
     agentType: 'opencode',
     name: names.name('witness'),
     description: `Switch end-to-end harness bridge witness (run ${runId}). Safe to delete.`,
     options: { auto_session: false },
   });
+  undo.add(`agent ${witness.name} (${witness.id})`, deleteByName(witness.name));
 
   // Registration is what mints the bots; wait for them so the room has them
   // as members and a later `@name` mention has something to resolve to.
@@ -220,20 +274,28 @@ export async function setupHarness(target: LaneTarget): Promise<Harness> {
     agentNames: [agent.name, witness.name],
     userNames: [human.username],
   });
+  const channelId = room.externalChannelId;
+  undo.add(`room ${room.name} (${room.id})`, async () => {
+    await switchClient.deleteRoom(room.id);
+    if (channelId === null) return;
+    const left = await mattermost.getChannel(channelId);
+    if (!left.delete_at) await mattermost.archiveChannel(channelId);
+  });
 
-  if (!room.externalChannelId) {
+  if (channelId === null) {
     throw new Error(
       `Switch room ${room.id} was created without a Mattermost channel — ` +
         `the collaboration bridge did not provision one.`
     );
   }
 
-  const channel = await mattermost.getChannel(room.externalChannelId);
+  const channel = await mattermost.getChannel(channelId);
   const harness: Harness = {
     env,
     switch: switchClient,
     mattermost,
     agent,
+    agentApiKey,
     witness,
     bot,
     channel,
@@ -242,33 +304,37 @@ export async function setupHarness(target: LaneTarget): Promise<Harness> {
     runId,
   };
 
-  if (controllerId !== null) {
-    await placeOnController(switchClient, env, agent, controllerId);
-  } else if (env.provider.agentRepoDir) {
+  if (agentApiKey !== null && env.provider.agentRepoDir) {
+    const workingDir = env.provider.agentRepoDir;
     // Provision the agent's identity into that working directory so a Console
     // session started there IS this agent. Without it the operator has to add
     // the agent in Switch Console by hand before the run.
     harness.credentialsPath = await writeAgentCredentials({
-      workingDir: env.provider.agentRepoDir,
-      agent,
+      workingDir,
+      agent: { ...agent, apiKey: agentApiKey },
       apiEndpoint: env.switch.apiUrl,
     });
+    undo.add(`credentials for ${agent.name}`, () =>
+      removeAgentCredentials({ workingDir, agentName: agent.name })
+    );
     // A Claude Code session runs *as* a named definition, so the definition has
     // to be on disk before the console starts one — see the writer's docblock.
     if (env.provider.agentType === 'claude-code') {
       await writeClaudeAgentDefinition({
-        workingDir: env.provider.agentRepoDir,
+        workingDir,
         agentName: agent.name,
         description: `Switch Console end-to-end harness agent (run ${runId}).`,
         instructions: AGENT_INSTRUCTIONS,
         model: CLAUDE_MODEL,
         effort: 'low',
       });
+      undo.add(`Claude definition for ${agent.name}`, () =>
+        removeClaudeAgentDefinition({ workingDir, agentName: agent.name })
+      );
     }
   }
 
   await waitForBridgeReady({ switchClient, mattermost, agent: witness, room, channel, runId });
-  await writeManifest(env.provider.manifestPath, harness);
   return harness;
 }
 
@@ -284,7 +350,8 @@ export async function setupHarness(target: LaneTarget): Promise<Harness> {
  */
 export interface HarnessManifest {
   runId: string;
-  agent: RegisteredAgent;
+  agent: AgentRef;
+  agentApiKey: string | null;
   witness: RegisteredAgent;
   roomId: string;
   channelId: string;
@@ -295,6 +362,7 @@ async function writeManifest(path: string | null, harness: Harness): Promise<voi
   const manifest: HarnessManifest = {
     runId: harness.runId,
     agent: harness.agent,
+    agentApiKey: harness.agentApiKey,
     witness: harness.witness,
     roomId: harness.room.id,
     channelId: harness.channel.id,
@@ -304,11 +372,45 @@ async function writeManifest(path: string | null, harness: Harness): Promise<voi
 
 async function readManifest(path: string | null): Promise<HarnessManifest | null> {
   if (!path) return null;
+  let text: string;
   try {
-    return JSON.parse(await fs.readFile(path, 'utf8')) as HarnessManifest;
-  } catch {
-    return null;
+    text = await fs.readFile(path, 'utf8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw error;
   }
+  const manifest = JSON.parse(text) as Partial<HarnessManifest>;
+  const problems = manifestProblems(manifest);
+  if (problems.length > 0) {
+    throw new Error(
+      `The harness manifest at ${path} is not one this harness wrote (${problems.join('; ')}), ` +
+        `probably from an older version. Delete what it names (pnpm cleanup), remove the ` +
+        `file, and seed again.`
+    );
+  }
+  return manifest as HarnessManifest;
+}
+
+function manifestProblems(manifest: Partial<HarnessManifest>): string[] {
+  const problems: string[] = [];
+  const isAgent = (value: unknown, withKey: boolean): boolean => {
+    if (typeof value !== 'object' || value === null) return false;
+    const agent = value as Record<string, unknown>;
+    return (
+      typeof agent.id === 'string' &&
+      typeof agent.name === 'string' &&
+      (!withKey || typeof agent.apiKey === 'string')
+    );
+  };
+  if (typeof manifest.runId !== 'string') problems.push('no runId');
+  if (!isAgent(manifest.agent, false)) problems.push('no agent');
+  if (manifest.agentApiKey !== null && typeof manifest.agentApiKey !== 'string') {
+    problems.push('no agentApiKey');
+  }
+  if (!isAgent(manifest.witness, true)) problems.push('no witness');
+  if (typeof manifest.roomId !== 'string') problems.push('no roomId');
+  if (typeof manifest.channelId !== 'string') problems.push('no channelId');
+  return problems;
 }
 
 /**
@@ -327,6 +429,7 @@ async function reuseHarness(
     switch: switchClient,
     mattermost,
     agent: manifest.agent,
+    agentApiKey: manifest.agentApiKey,
     witness: manifest.witness,
     bot: await mattermost.waitForBotUser(manifest.agent.name, 30_000),
     channel: await mattermost.getChannel(manifest.channelId),
@@ -366,10 +469,16 @@ export async function waitForSession(harness: Harness, deadlineMs = 120_000): Pr
     if (last && READY_STATUSES.has(last)) return last;
     await sleep(5_000);
   }
+  const remedy =
+    harness.env.provider.controllerId !== null
+      ? `The agent controller (${harness.env.provider.controllerId}) did not start a session ` +
+        `for it: check the controller's log, and that the provider CLI is installed and ` +
+        `signed in for the user running the controller.`
+      : `Start a Switch Console session for this agent (or start its auto-session watcher) ` +
+        `and re-run — see README.md.`;
   throw new Error(
     `Switch reports agent '${harness.agent.name}' as '${last ?? 'unknown'}' in room ` +
-      `${harness.room.name} after ${deadlineMs}ms, not live or dormant. Start a Switch Console ` +
-      `session for this agent (or start its auto-session watcher) and re-run — see README.md.`
+      `${harness.room.name} after ${deadlineMs}ms, not live or dormant. ${remedy}`
   );
 }
 
@@ -391,50 +500,45 @@ export async function teardownHarness(
     return;
   }
 
+  const attempt = async (label: string, step: () => Promise<void>): Promise<void> => {
+    try {
+      await step();
+    } catch (error) {
+      log(`teardown: failed to remove ${label} — delete it by hand: ${message(error)}`);
+    }
+  };
+  const { env, agent, witness, room, channel } = harness;
+
   // Before anything is deleted: a manifest that outlives its agent sends the
   // next run at a room that is gone.
-  if (harness.env.provider.manifestPath) {
-    await fs.rm(harness.env.provider.manifestPath, { force: true }).catch(() => undefined);
+  const manifestPath = env.provider.manifestPath;
+  if (manifestPath) {
+    await attempt(`manifest ${manifestPath}`, () => fs.rm(manifestPath, { force: true }));
   }
 
-  if (harness.env.provider.agentRepoDir) {
-    await removeAgentCredentials({
-      workingDir: harness.env.provider.agentRepoDir,
-      agentName: harness.agent.name,
-    }).catch(() => undefined);
-    await removeClaudeAgentDefinition({
-      workingDir: harness.env.provider.agentRepoDir,
-      agentName: harness.agent.name,
-    }).catch(() => undefined);
-  }
-
-  try {
-    await harness.switch.deleteRoom(harness.room.id);
-  } catch (error) {
-    log(
-      `teardown: failed to delete room ${harness.room.id} — ` +
-        `${error instanceof Error ? error.message : String(error)}`
+  const workingDir = env.provider.agentRepoDir;
+  if (workingDir && harness.agentApiKey !== null) {
+    await attempt(`credentials for ${agent.name}`, () =>
+      removeAgentCredentials({ workingDir, agentName: agent.name })
+    );
+    await attempt(`Claude definition for ${agent.name}`, () =>
+      removeClaudeAgentDefinition({ workingDir, agentName: agent.name })
     );
   }
 
+  // Deleting the room usually archives its channel; the archive is the safety
+  // net when it does not.
+  await attempt(`room ${room.name} (${room.id}) and channel ${channel.id}`, async () => {
+    await harness.switch.deleteRoom(room.id);
+    const left = await harness.mattermost.getChannel(channel.id);
+    if (!left.delete_at) await harness.mattermost.archiveChannel(channel.id);
+  });
+
   // By name, as the admin: an agent run by a controller cannot delete itself
   // with its own key, which the server refuses while the controller acts for it.
-  for (const agent of [harness.agent, harness.witness]) {
-    try {
-      await harness.switch.deleteAgentByName(agent.name);
-    } catch (error) {
-      log(
-        `teardown: failed to delete agent ${agent.name} (${agent.id}) — ` +
-          `delete it by hand: ${error instanceof Error ? error.message : String(error)}`
-      );
-    }
-  }
-
-  // Deleting the room usually takes the channel with it; archive is a no-op
-  // then, and the safety net when it does not.
-  try {
-    await harness.mattermost.archiveChannel(harness.channel.id);
-  } catch {
-    // Already gone — nothing to report.
+  for (const each of [agent, witness]) {
+    await attempt(`agent ${each.name} (${each.id})`, () =>
+      harness.switch.deleteAgentByName(each.name)
+    );
   }
 }

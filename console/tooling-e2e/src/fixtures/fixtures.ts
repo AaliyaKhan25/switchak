@@ -53,7 +53,6 @@ export class Fixtures {
   ): Promise<RegisteredAgent> {
     const name = this.names.name(role);
     const agent = await this.switchClient.registerKnownAgent({
-      registrationToken: this.switchClient.registrationToken,
       agentType: options.agentType ?? 'opencode',
       name,
       description: `Switch end-to-end harness agent (run ${this.names.runId}). Safe to delete.`,
@@ -205,12 +204,15 @@ export interface BridgedRoom {
 /**
  * Block until a plain channel message actually reaches Switch.
  *
- * This is not belt-and-braces. The Mattermost adapter delivers inbound posts off
- * the *agent bot's own websocket*, and that socket is opened on a background
- * thread after the bot account is created — the server log shows
+ * This is not belt-and-braces. The Mattermost adapter reads inbound posts off
+ * its bots' websockets, and each bot's socket is opened on a background thread
+ * after the bot account is created — the server log shows
  * `Websocket authentification OK` arriving after the room already exists. A
- * message posted in that window is silently dropped, which shows up later as a
- * scenario that times out for no visible reason.
+ * message posted before any bot in the channel is listening is silently
+ * dropped, which shows up later as a scenario that times out for no visible
+ * reason. A post is handled whichever bot's socket it arrives on (the adapter
+ * dedupes by post id), so one bot's socket being up is enough for the room to
+ * hear a message: the probe may read through any agent in the room.
  *
  * The probe is deliberately **unaddressed**: it proves Mattermost → Switch
  * delivery without putting an `@agent` mention on the wire, so it cannot spawn a

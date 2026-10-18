@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isStartMarker, requestHandle } from './scenarios.ts';
+import { isStartMarker, optionNumber, requestHandle } from './scenarios.ts';
 
 describe('interruption admission', () => {
   it('requires the command marker, not an acknowledgement or refusal', () => {
@@ -18,5 +18,13 @@ describe('request cards', () => {
     );
     expect(requestHandle('**Permission** · request `R42` Run `echo hi`?')).toBe('R42');
     expect(requestHandle('SWITCH_E2E_OK')).toBeNull();
+  });
+
+  it('reads the number the card gives an option, in the order the agent sent them', () => {
+    const card = '**Questions** · request `A1` Which color?\n1. Green\n2. red\n3. blue';
+    expect(optionNumber(card, 'green')).toBe(1);
+    expect(optionNumber(card, 'blue')).toBe(3);
+    expect(optionNumber('request `A1` Which color? 1. red 2. green', 'green')).toBe(2);
+    expect(optionNumber(card, 'purple')).toBeNull();
   });
 });

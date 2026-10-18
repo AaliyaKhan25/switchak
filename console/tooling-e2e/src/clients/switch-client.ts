@@ -17,9 +17,12 @@ import { assertAllowed } from '../core/guard.ts';
  * modelled here; see README.md for the verified request/response shapes.
  */
 
-export interface RegisteredAgent {
+export interface AgentRef {
   id: string;
   name: string;
+}
+
+export interface RegisteredAgent extends AgentRef {
   apiKey: string;
 }
 
@@ -109,6 +112,20 @@ export class SwitchHttpError extends Error {
   }
 }
 
+/**
+ * The reason code of a management API refusal (`{"error": {"code": …}}`), or
+ * null when the error is not one.
+ */
+export function managementErrorCode(error: unknown): string | null {
+  if (!(error instanceof SwitchHttpError)) return null;
+  try {
+    const parsed = JSON.parse(error.body) as { error?: { code?: unknown } };
+    return typeof parsed.error?.code === 'string' ? parsed.error.code : null;
+  } catch {
+    return null;
+  }
+}
+
 function truncate(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max)}…` : text;
 }
@@ -123,7 +140,7 @@ interface SwitchRequest {
 export class SwitchClient {
   private readonly apiUrl: string;
   /** The deployment-wide registration key; agents it registers belong to a bootstrap account. */
-  readonly registrationToken: string;
+  private readonly registrationToken: string;
   private readonly adminEmail: string;
   private readonly adminPassword: string;
   private readonly environment: Environment;
@@ -274,39 +291,32 @@ export class SwitchClient {
   }
 
   /**
-   * `POST /gateway/api-keys` — a registration key belonging to the signed-in
-   * admin. Agents registered with it are owned by the admin, which the
-   * management API requires of an agent it is asked to place on a controller;
-   * agents registered with the deployment-wide key belong to a bootstrap
-   * account instead.
-   */
-  async createRegistrationKey(label: string): Promise<{ id: string; key: string }> {
-    const body = await this.gateway<{ id: string; key: string }>('POST', '/api-keys', { label });
-    return { id: body.id, key: body.key };
-  }
-
-  async deleteApiKey(keyId: string): Promise<void> {
-    await this.gateway('DELETE', `/api-keys/${keyId}`);
-  }
-
-  /**
-   * `PUT /gateway/management/agents/{id}` — place an agent the admin owns on a
-   * controller and set it running. The controller then runs its sessions.
+   * `POST /gateway/management/agents` — register an agent owned by the signed-in
+   * admin and place it on a controller, which then runs its sessions. The
+   * server checks the placement before registering anything, so a refusal
+   * leaves nothing behind and the call can simply be repeated.
    *
-   * Answers 409 until the controller has connected and reported the provider
-   * installed and signed in; the caller retries on {@link SwitchHttpError}
-   * status 409 while the controller comes up.
+   * Refused with 409 until the controller has connected and reported the
+   * provider installed and signed in; see {@link managementErrorCode}.
    */
-  async placeAgent(params: {
-    agentId: string;
+  async createManagedAgent(params: {
+    name: string;
+    description: string;
     controllerId: string;
     definition: ManagedAgentDefinition;
-  }): Promise<void> {
-    await this.gateway('PUT', `/management/agents/${params.agentId}`, {
-      controller_id: params.controllerId,
-      desired_state: 'running',
-      definition: params.definition,
-    });
+  }): Promise<AgentRef> {
+    const view = await this.gateway<{ agent_id: string; name: string }>(
+      'POST',
+      '/management/agents',
+      {
+        name: params.name,
+        description: params.description,
+        controller_id: params.controllerId,
+        desired_state: 'running',
+        definition: params.definition,
+      }
+    );
+    return { id: view.agent_id, name: view.name };
   }
 
   /**
@@ -408,8 +418,6 @@ export class SwitchClient {
    * be added to a channel.
    */
   async registerKnownAgent(params: {
-    /** {@link registrationToken}, or a personal key from {@link createRegistrationKey}. */
-    registrationToken: string;
     agentType: 'opencode' | 'codex' | 'claude-code' | 'antigravity' | 'cursor';
     name: string;
     description: string;
@@ -419,7 +427,7 @@ export class SwitchClient {
       'POST',
       '/agents/register-known',
       {
-        token: params.registrationToken,
+        token: this.registrationToken,
         body: {
           agent_type: params.agentType,
           name: params.name,
