@@ -27,6 +27,7 @@ import { ClaimIdentityModal } from '@renderer/features/switch-servers/ClaimIdent
 import { ConnectChatModal } from '@renderer/features/switch-servers/ConnectChatModal';
 import { ConnectMessagingAppModal } from '@renderer/features/switch-servers/ConnectMessagingAppModal';
 import { CreateRoomModal } from '@renderer/features/switch-servers/CreateRoomModal';
+import { DeleteAccountModal } from '@renderer/features/switch-servers/delete-account-modal';
 import { DeleteServerModal } from '@renderer/features/switch-servers/DeleteServerModal';
 import { DisconnectMessagingAppModal } from '@renderer/features/switch-servers/DisconnectMessagingAppModal';
 import { RenameServerModal } from '@renderer/features/switch-servers/RenameServerModal';
@@ -95,6 +96,7 @@ export const modalRegistry = {
     dismissOnOutsideClick: false,
   }),
   deleteServerModal: createModal(DeleteServerModal, { size: 'sm' }),
+  deleteAccountModal: createModal(DeleteAccountModal, { size: 'sm', dismissOnOutsideClick: false }),
   createRoomModal: createModal(CreateRoomModal, { size: 'lg', dismissOnOutsideClick: false }),
   connectMessagingAppModal: createModal(ConnectMessagingAppModal, {
     size: 'md',

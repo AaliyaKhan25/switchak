@@ -1230,6 +1230,8 @@ async def run(config: SwitchConfig, process_id: str) -> None:
             gateway_app=gateway_app,
             protocol=protocol,
         )
+        # What deleting an account needs of it: revoking the person's machines.
+        gateway_app.state.controller_revoker = management.service
         # Before the bridge serves: until Core knows which agents a controller
         # runs, their own keys would be let in and their presence misread.
         await management.load_bindings()
@@ -1299,6 +1301,7 @@ async def run(config: SwitchConfig, process_id: str) -> None:
     )
     if config.service_connections_enabled:
         protocol.service_broker = service_broker
+    protocol.install_service = install_service
 
     snapshot_reporter = SnapshotReporter(
         telemetry=telemetry,
@@ -1494,29 +1497,40 @@ async def run(config: SwitchConfig, process_id: str) -> None:
     server = uvicorn.Server(server_config)
 
     loop = asyncio.get_event_loop()
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(
-            sig,
-            lambda: asyncio.create_task(
-                _shutdown(
-                    server,
-                    draining.set,
-                    lambda: _release_process(
-                        ownership, shared_connections, management, process_lease
-                    ),
-                    _DRAIN_SECONDS if config.core_replicas > 1 else 0.0,
-                    connections.controllers,
-                    client_lifecycle,
-                    collab_lifecycle,
-                    connector_lifecycle,
-                    provisioning,
-                    discord_gateway,
-                    teams_app,
-                    telegram_app,
-                    telegram_app_task,
-                )
-            ),
+
+    def _begin_shutdown() -> None:
+        asyncio.create_task(
+            _shutdown(
+                server,
+                draining.set,
+                lambda: _release_process(
+                    ownership, shared_connections, management, process_lease
+                ),
+                _DRAIN_SECONDS if config.core_replicas > 1 else 0.0,
+                connections.controllers,
+                client_lifecycle,
+                collab_lifecycle,
+                connector_lifecycle,
+                provisioning,
+                discord_gateway,
+                teams_app,
+                telegram_app,
+                telegram_app_task,
+            )
         )
+
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            loop.add_signal_handler(sig, _begin_shutdown)
+        except NotImplementedError:
+            # Windows' event loops take no signal handlers. Ctrl-C still
+            # arrives as SIGINT through the signal module, outside the loop,
+            # so it is handed back to the loop; SIGTERM is never delivered
+            # there, a stop being a process kill instead.
+            signal.signal(
+                sig,
+                lambda _signum, _frame: loop.call_soon_threadsafe(_begin_shutdown),
+            )
 
     await server.serve()
 
