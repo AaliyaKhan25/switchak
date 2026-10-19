@@ -7,6 +7,8 @@ name: E2E
 #
 #   lane         fast      provider-free scenarios over plain HTTP
 #                provider  real agent sessions on a headless agent controller
+#                browser   the gateway UI in headless Chromium; on ephemeral the
+#                          UI is built from this checkout
 #   environment  ephemeral a fresh stack on the runner, built from this checkout
 #                dev, staging  an existing deployment, configured by the GitHub
 #                          Environment of that name
@@ -17,7 +19,8 @@ name: E2E
 # GitHub Environment, whose protection rules decide which refs may run it:
 #
 #   e2e-provider  secret ANTHROPIC_API_KEY, for the controller's Claude Code
-#   dev, staging  vars SWITCH_API_URL, MATTERMOST_URL, MATTERMOST_TEAM; secrets
+#   dev, staging  vars SWITCH_API_URL, MATTERMOST_URL, MATTERMOST_TEAM, and
+#                 SWITCH_GATEWAY_UI_URL for the browser lane; secrets
 #                 SWITCH_GATEWAY_ADMIN_EMAIL, SWITCH_GATEWAY_ADMIN_PASSWORD,
 #                 SWITCH_AGENT_REGISTRATION_TOKEN, MATTERMOST_TOKEN
 #
@@ -50,7 +53,7 @@ on:
     inputs:
       lane:
         type: choice
-        options: [fast, provider]
+        options: [fast, provider, browser]
         default: fast
       environment:
         type: choice
@@ -96,7 +99,7 @@ jobs:
         env:
           AGENT_TYPE: ${{ inputs.agent_type }}
         run: |
-          case "$LANE" in fast|provider) ;; *) echo "::error::Unknown lane '$LANE'."; exit 1 ;; esac
+          case "$LANE" in fast|provider|browser) ;; *) echo "::error::Unknown lane '$LANE'."; exit 1 ;; esac
           case "$TARGET" in ephemeral|dev|staging) ;; *) echo "::error::Unknown environment '$TARGET'."; exit 1 ;; esac
           if [ "$LANE" = provider ] && [ "$TARGET" != ephemeral ]; then
             echo "::error::The provider lane runs on an ephemeral stack only."; exit 1
@@ -127,6 +130,11 @@ jobs:
       - name: Install dependencies
         working-directory: console
         run: pnpm install --frozen-lockfile
+
+      - name: Install Chromium
+        if: ${{ inputs.lane == 'browser' }}
+        working-directory: console/tooling-e2e
+        run: pnpm exec playwright install --with-deps chromium
 
       - name: Install Claude Code
         if: ${{ inputs.lane == 'provider' }}
@@ -167,19 +175,23 @@ jobs:
           MATTERMOST_URL: ${{ vars.MATTERMOST_URL }}
           MATTERMOST_TOKEN: ${{ secrets.MATTERMOST_TOKEN }}
           MATTERMOST_TEAM: ${{ vars.MATTERMOST_TEAM }}
+          SWITCH_GATEWAY_UI_URL: ${{ vars.SWITCH_GATEWAY_UI_URL }}
           SWITCH_E2E_SECRETS_FILE: ${{ runner.temp }}/issued-secrets
+          SWITCH_E2E_OUTPUT_DIR: ${{ env.OUT }}
         run: |
           mkdir -p "$OUT"
           pnpm exec vitest run --reporter=verbose --reporter=junit --outputFile.junit="$OUT/junit.xml" \
             2>&1 | tee "$OUT/vitest.log"
 
-      # What interrupted runs left behind. The floor keeps it off a run still in
-      # progress, which is why it can run after every suite.
+      # What interrupted runs left behind, whichever lane made it; cleanup
+      # resolves as the fast lane, which needs nothing a lane adds. The floor
+      # keeps it off a run still in progress, which is why it can run after
+      # every suite.
       - name: Remove stale harness artefacts from ${{ inputs.environment }}
         if: ${{ always() && inputs.environment != 'ephemeral' }}
         working-directory: console/tooling-e2e
         env:
-          SWITCH_E2E_LANE: ${{ inputs.lane }}
+          SWITCH_E2E_LANE: fast
           SWITCH_E2E_ENVIRONMENT: ${{ inputs.environment }}
           SWITCH_E2E_STRICT: '1'
           SWITCH_API_URL: ${{ vars.SWITCH_API_URL }}

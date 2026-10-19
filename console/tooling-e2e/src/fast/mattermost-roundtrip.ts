@@ -24,7 +24,7 @@ export const mattermostRoundtrip: FastScenario = {
       'GET /agents/{agent_id}/notifications',
       'POST /agents/{agent_id}/message',
     ],
-    needsProvider: false,
+    lane: 'fast',
     environments: WRITABLE,
     owner: 'platform',
     requires: ['mattermost'],

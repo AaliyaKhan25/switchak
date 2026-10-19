@@ -5,8 +5,9 @@ name: E2E scheduled
 #
 #   after a merge to main  the provider lane on a throwaway stack. Real model
 #                          calls, so not on every PR, and never a required check
-#   nightly                the provider lane again, and the fast lane against
-#                          dev, then one summary notification for the night
+#   nightly                the provider lane again, the fast and browser lanes
+#                          against dev, then one summary notification for the
+#                          night
 #
 # A failed run after a merge is reported too, since the lane is not a required
 # check and nothing else would surface it before the night; a passing one is
@@ -54,9 +55,18 @@ jobs:
       environment: dev
       agent_type: claude-code
 
+  browser-dev:
+    name: Browser lane on dev
+    if: ${{ github.event_name != 'push' }}
+    uses: ./.github/workflows/e2e.yml
+    with:
+      lane: browser
+      environment: dev
+      agent_type: claude-code
+
   notify:
     name: Report
-    needs: [provider, fast-dev]
+    needs: [provider, fast-dev, browser-dev]
     if: ${{ always() && github.event_name != 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     steps:
@@ -68,6 +78,8 @@ jobs:
           PROVIDER_SUMMARY: ${{ needs.provider.outputs.summary }}
           DEV_RESULT: ${{ needs.fast-dev.result }}
           DEV_SUMMARY: ${{ needs.fast-dev.outputs.summary }}
+          BROWSER_RESULT: ${{ needs.browser-dev.result }}
+          BROWSER_SUMMARY: ${{ needs.browser-dev.outputs.summary }}
         run: |
           if [ "$GITHUB_EVENT_NAME" = push ] && [ "$PROVIDER_RESULT" = success ]; then
             echo "The provider lane passed after the merge; nothing to report."
@@ -83,9 +95,10 @@ jobs:
               "$(line 'Provider lane (ephemeral)' "$PROVIDER_RESULT" "$PROVIDER_SUMMARY")" \
               "$RUN_URL")"
           else
-            text="$(printf 'Switch E2E nightly\n%s\n%s\n%s' \
+            text="$(printf 'Switch E2E nightly\n%s\n%s\n%s\n%s' \
               "$(line 'Provider lane (ephemeral)' "$PROVIDER_RESULT" "$PROVIDER_SUMMARY")" \
               "$(line 'Fast lane (dev)' "$DEV_RESULT" "$DEV_SUMMARY")" \
+              "$(line 'Browser lane (dev)' "$BROWSER_RESULT" "$BROWSER_SUMMARY")" \
               "$RUN_URL")"
           fi
           echo "$text"

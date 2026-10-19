@@ -14,7 +14,7 @@ export const operationsFrontDoor: FastScenario = {
       'list_rooms',
       'read_context',
     ],
-    needsProvider: false,
+    lane: 'fast',
     environments: WRITABLE,
     owner: 'platform',
     requires: [],

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { BROWSER_SCENARIOS } from '../browser/index.ts';
 import type { ScenarioHeader } from '../core/scenario.ts';
 import { FAST_SCENARIOS } from '../fast/index.ts';
 import { SCENARIOS as PROVIDER_SCENARIOS } from '../provider/scenarios.ts';
@@ -10,7 +11,9 @@ import {
   type ServerSurface,
 } from './gate.ts';
 
-const HEADERS = [...FAST_SCENARIOS, ...PROVIDER_SCENARIOS].map((scenario) => scenario.header);
+const HEADERS = [...FAST_SCENARIOS, ...PROVIDER_SCENARIOS, ...BROWSER_SCENARIOS].map(
+  (scenario) => scenario.header
+);
 
 describe('coverage gate', () => {
   it('accounts for every operation and gateway route the server has', () => {
@@ -31,7 +34,7 @@ function header(id: string, covers: string[]): ScenarioHeader {
   return {
     id,
     covers,
-    needsProvider: false,
+    lane: 'fast',
     environments: ['ephemeral'],
     owner: 'platform',
     requires: [],

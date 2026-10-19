@@ -176,6 +176,13 @@ e2e-fast *args:
 e2e-provider *args:
     SWITCH_E2E_LANE=provider console/tooling-e2e/scripts/ephemeral-stack.sh {{ args }}
 
+# ── End-to-end harness, browser lane, on a throwaway stack ─────────────────────
+# As e2e-fast, plus the gateway UI built from gateway/ and served on :4173, then
+# the browser scenarios in headless Chromium (installed by Playwright on first
+# run). Screenshots of failed pages: build/e2e/ephemeral/screenshots.
+e2e-browser *args:
+    SWITCH_E2E_LANE=browser console/tooling-e2e/scripts/ephemeral-stack.sh {{ args }}
+
 # ── Regenerate the server surface the E2E coverage gate reads ─────────────────
 # Every agent operation and gateway route, written to
 # console/tooling-e2e/surface/server-surface.json. CI fails when it is stale;

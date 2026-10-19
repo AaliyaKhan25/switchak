@@ -1,8 +1,8 @@
 # `@switch-console/tooling-e2e`
 
 End-to-end tests for Switch: **real messages through a real Switch server**, and
-through a real Mattermost bridge where a scenario crosses one. One package, two
-runner modes:
+through a real Mattermost bridge where a scenario crosses one. One package,
+three lanes:
 
 - **The fast lane** needs no provider, no Switch Console and no LLM key. The
   harness plays every participant over plain HTTP: it registers throwaway
@@ -12,6 +12,10 @@ runner modes:
 - **The provider lane** needs a real agent session (Switch Console or its
   sidecar) attending the room, and checks what that session does: answering,
   asking a question, asking for approval, being interrupted.
+- **The browser lane** drives the gateway UI in headless Chromium against the
+  same server: signing in, every page in the navigation rail, a room opened
+  from the list, signing out. A page that renders but is broken (an uncaught
+  error, a request the server failed, an error banner) fails it.
 
 Nothing here talks to Switch Console directly. If a scenario passes, an operator
 doing the same thing by hand would have seen the same result.
@@ -28,6 +32,11 @@ just e2e-fast --keep                # leave the stack running afterwards
 just e2e-fast -- -t mattermost      # arguments after -- go to vitest
 ```
 
+`just e2e-browser` does the same for the browser lane. It also builds the
+gateway UI from `gateway/` and serves it on :4173 with `vite preview`, whose
+proxy sends `/gateway` requests to the server as nginx does in a deployment.
+On first run Playwright installs its Chromium.
+
 Its log, JUnit report and the stack's per-run secrets go to `build/e2e/ephemeral/`.
 The repository's own `.env` is never read or written.
 
@@ -37,6 +46,7 @@ from this directory:
 ```bash
 SWITCH_E2E_LANE=fast pnpm test
 SWITCH_E2E_LANE=provider pnpm test
+SWITCH_E2E_LANE=browser SWITCH_GATEWAY_UI_URL=http://localhost:5173 pnpm test   # just gateway-dev
 ```
 
 With `SWITCH_E2E_LANE` unset every end-to-end scenario is skipped, which is
@@ -65,7 +75,8 @@ Typecheck: `pnpm typecheck`.
 | `src/fixtures/` | Throwaway agents and rooms for a scenario, the bridge-readiness probe, teardown |
 | `src/fast/` | Fast-lane scenarios, one file per area, listed in `index.ts` |
 | `src/provider/` | The provider lane: Console credential files, the shared agent and channel, the scenarios, `seed.ts` |
-| `scripts/ephemeral-stack.sh` | The throwaway-stack runner behind `just e2e-fast` and `just e2e-provider` |
+| `src/browser/` | The browser lane: the gateway UI driver (`gateway-ui.ts`) and the scenarios, listed in `index.ts` |
+| `scripts/ephemeral-stack.sh` | The throwaway-stack runner behind `just e2e-fast`, `just e2e-provider` and `just e2e-browser` |
 | `scripts/scan-artifacts.sh` | Fails if a run's output holds one of the secrets the run used |
 | `src/ci-summary.ts` | The CI run summary, read from the JUnit report |
 | `src/gate/` | The coverage gate |
@@ -74,13 +85,13 @@ Typecheck: `pnpm typecheck`.
 
 ## Scenarios and their headers
 
-Every scenario, in either lane, carries a header:
+Every scenario, in any lane, carries a header:
 
 ```ts
 {
-  id: 'addressed-delivery',                 // kebab-case, unique across both lanes
+  id: 'addressed-delivery',                 // kebab-case, unique across every lane
   covers: ['POST /agents/{agent_id}/message', 'list_rooms'],
-  needsProvider: false,                     // true puts it in the provider lane
+  lane: 'fast',                             // 'fast', 'provider' or 'browser'
   environments: ['ephemeral', 'local', 'dev', 'staging'],
   owner: 'platform',                        // a team or role, never a person
   requires: ['mattermost'],                 // what must be configured
@@ -119,6 +130,25 @@ passed or not. A teardown that leaves something behind fails the scenario.
 If `mattermost-roundtrip` passes and a provider-lane scenario fails, the fault
 is in the agent session, not in Switch, the bridge or the harness.
 
+### Browser lane
+
+Each scenario gets a fresh browser context, signed out. What it needs in the
+server it creates over HTTP through the same fixtures as the fast lane. Beyond
+its own assertions, a scenario fails on anything that went wrong on its pages:
+an uncaught page error, a console error, a `/gateway` request the server
+answered with a 5xx (or any 4xx once signed in), or an error banner. A failed
+scenario's last page is saved under `screenshots/` in the output directory.
+
+| Scenario | What it drives |
+| --- | --- |
+| `gateway-sign-in` | The login form signs the admin in, and the app opens on the rooms list. |
+| `gateway-every-page` | Every link in the navigation rail opens its page without an error. It follows the rail, so a page added there is visited without this changing. |
+| `gateway-room-from-list` | A room made over the API is listed, and its page opens from the list. |
+| `gateway-sign-out` | Signing out returns to the login form, and the app stays there. |
+
+None runs against `prod`: a page may write on load, and the browser goes
+around the clients' read-only guard.
+
 ## Naming, isolation and the read-only guard
 
 Everything the harness creates is named `e2e-<runId><scope>-<role>`: the run,
@@ -143,7 +173,7 @@ beside this file. Never commit one. `just e2e-fast` sets all of them itself.
 
 | Variable | Required | Meaning |
 | --- | --- | --- |
-| `SWITCH_E2E_LANE` | to run anything | `fast` or `provider`. Unset, every end-to-end scenario skips. |
+| `SWITCH_E2E_LANE` | to run anything | `fast`, `provider` or `browser`. Unset, every end-to-end scenario skips. |
 | `SWITCH_E2E_ENVIRONMENT` | yes | `ephemeral`, `local`, `dev`, `staging` or `prod`. Decides which scenarios run, and makes `prod` read-only. |
 | `SWITCH_API_URL` | yes | Switch origin — serves both `/agents/…` and `/gateway/…`. |
 | `SWITCH_GATEWAY_ADMIN_EMAIL` | yes | Gateway admin account. |
@@ -156,6 +186,8 @@ beside this file. Never commit one. `just e2e-fast` sets all of them itself.
 | `SWITCH_E2E_KEEP` | no | `1` leaves agents, rooms and channels behind for inspection. |
 | `SWITCH_E2E_SERVER_LOG` | no | The server's log, written with `LOG_FORMAT=json`. When set, a scenario fails if the server logged an error while it ran. The stack script sets it. |
 | `SWITCH_E2E_SECRETS_FILE` | no | File to append each credential the server issues during the run to (agent keys, gateway sessions), for CI's scan of the output. The stack script and `e2e.yml` set it. |
+| `SWITCH_GATEWAY_UI_URL` | browser lane | Where the gateway UI is served. Its `/gateway` requests must reach `SWITCH_API_URL`. `just e2e-browser` sets it. |
+| `SWITCH_E2E_OUTPUT_DIR` | no | Where the browser lane saves screenshots of failed pages. The stack script and `e2e.yml` set it. |
 | `SWITCH_E2E_AGENT_DIR` | provider lane | Working directory of the session under test. When set, the agent's credentials are written into it (see below) and it is sent to Switch as the agent's `repo_dir`. |
 | `SWITCH_E2E_MANIFEST` | provider lane | File the setup records its agent and room in, so a second process can reuse them. See "Seeding first". |
 | `SWITCH_E2E_REPLY_TIMEOUT_MS` | provider lane | How long a scenario waits for the agent (default 5 min). |
@@ -305,14 +337,14 @@ dispatched by hand.
 | --- | --- | --- | --- |
 | Every PR, and every push to main (`pr-ci.yml`) | fast | ephemeral | yes |
 | After a merge to main (`e2e-scheduled.yml`) | provider | ephemeral | no |
-| Nightly (`e2e-scheduled.yml`) | provider; fast | ephemeral; dev | no |
+| Nightly (`e2e-scheduled.yml`) | provider; fast; browser | ephemeral; dev; dev | no |
 
 - **Secrets.** An ephemeral fast run generates every secret it uses on the
   runner, so it works the same on a fork PR. Every other run reads its secrets
   from a GitHub Environment:
   - `e2e-provider` holds `ANTHROPIC_API_KEY`;
-  - `dev` and `staging` hold the deployment's URLs as variables and its
-    credentials as secrets.
+  - `dev` and `staging` hold the deployment's URLs as variables (the browser
+    lane also needs `SWITCH_GATEWAY_UI_URL`) and its credentials as secrets.
 
   The header of `e2e.yml` lists every name. Each environment's protection rules
   decide which branches may use it.

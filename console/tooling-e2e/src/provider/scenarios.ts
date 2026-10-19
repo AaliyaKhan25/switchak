@@ -433,7 +433,7 @@ function providerHeader(
   return {
     id,
     covers,
-    needsProvider: true,
+    lane: 'provider',
     environments: PROVIDER_ENVIRONMENTS,
     owner: 'console',
     requires: ['mattermost', ...requires],

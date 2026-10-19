@@ -5,6 +5,7 @@
 #
 #   just e2e-fast                 the fast lane (no provider, no Console)
 #   just e2e-provider             the provider lane, on a headless agent controller
+#   just e2e-browser              the browser lane: the gateway UI in headless Chromium
 #   just e2e-fast --keep          leave the stack running afterwards
 #   just e2e-fast -- <vitest args> pass arguments through to vitest
 #
@@ -18,7 +19,11 @@
 # own .env is never read or written, so this cannot rotate a developer's live
 # secrets or pick up a stale value from them.
 #
-# Ports 5432, 8000, 8065 and 8081 must be free: stop a local stack first.
+# The browser lane also builds the gateway UI from gateway/ and serves it with
+# `vite preview` on :4173, whose proxy sends its /gateway requests to :8000 as
+# nginx does in a deployment, and installs Playwright's Chromium.
+#
+# Ports 4173, 5432, 8000, 8065 and 8081 must be free: stop a local stack first.
 # Logs and the JUnit report go to build/e2e/ephemeral/ (or $E2E_OUT); the env
 # file, the controller's state and the agent's working directory go to a
 # temporary directory, so the output holds nothing secret by construction.
@@ -45,7 +50,7 @@ done
 for tool in docker uv openssl curl jq lsof; do
   command -v "$tool" >/dev/null || { echo "$tool is required but not on PATH." >&2; exit 1; }
 done
-for port in 5432 8000 8065 8081; do
+for port in 4173 5432 8000 8065 8081; do
   if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
     echo "Port $port is in use. Stop your local stack first ('just down', and any 'just run')." >&2
     exit 1
@@ -65,6 +70,7 @@ COMPOSE=(docker compose -p switch-e2e-ephemeral -f deploy/local/docker-compose.y
          --env-file "$ENV_FILE" --project-directory .)
 SERVER_PID=""
 CONTROLLER_PID=""
+UI_PID=""
 cleanup() {
   local status=$?
   # Every step runs whatever the one before it did: a process that exits
@@ -72,13 +78,14 @@ cleanup() {
   # of $WORK.
   set +e
   if [ "$KEEP" = 0 ]; then
+    [ -n "$UI_PID" ] && kill "$UI_PID" 2>/dev/null && wait "$UI_PID" 2>/dev/null
     [ -n "$CONTROLLER_PID" ] && kill "$CONTROLLER_PID" 2>/dev/null && wait "$CONTROLLER_PID" 2>/dev/null
     [ -n "$SERVER_PID" ] && kill "$SERVER_PID" 2>/dev/null && wait "$SERVER_PID" 2>/dev/null
     "${COMPOSE[@]}" down -v >/dev/null 2>&1 || true
   else
-    echo "Left running: switch-core :8000 (pid $SERVER_PID), Mattermost :8065${CONTROLLER_PID:+, agent controller (pid $CONTROLLER_PID)}."
+    echo "Left running: switch-core :8000 (pid $SERVER_PID), Mattermost :8065${CONTROLLER_PID:+, agent controller (pid $CONTROLLER_PID)}${UI_PID:+, gateway UI :4173 (pid $UI_PID)}."
     echo "Secrets and state for this stack: $WORK. Tear down with:"
-    echo "  kill $SERVER_PID $CONTROLLER_PID; ${COMPOSE[*]} down -v; rm -rf $WORK"
+    echo "  kill $SERVER_PID $CONTROLLER_PID $UI_PID; ${COMPOSE[*]} down -v; rm -rf $WORK"
   fi
   if "$HARNESS/scripts/scan-artifacts.sh" "$OUT" <"$SECRETS"; then
     : >"$OUT/.secret-scan-passed"
@@ -215,11 +222,28 @@ if [ "$LANE" = provider ]; then
   PROVIDER_ENV=(SWITCH_E2E_CONTROLLER_ID="$CONTROLLER_ID" SWITCH_E2E_AGENT_DIR="$WORK/agent-dir")
 fi
 
+BROWSER_ENV=()
+if [ "$LANE" = browser ]; then
+  echo "Building the gateway UI…"
+  (cd "$REPO/gateway" && npm ci --no-audit --no-fund && npm run build) >"$OUT/gateway-build.log" 2>&1 \
+    || { echo "gateway UI build failed; see $OUT/gateway-build.log" >&2; exit 1; }
+  (cd "$HARNESS" && pnpm exec playwright install chromium) >"$OUT/playwright-install.log" 2>&1 \
+    || { echo "installing Playwright's Chromium failed; see $OUT/playwright-install.log" >&2; exit 1; }
+  (cd "$REPO/gateway" && exec node_modules/.bin/vite preview --host 127.0.0.1 --port 4173 --strictPort) \
+    >"$OUT/gateway-ui.log" 2>&1 &
+  UI_PID=$!
+  for _ in $(seq 30); do curl -sf localhost:4173/ >/dev/null && break; sleep 1; done
+  curl -sf localhost:4173/ >/dev/null \
+    || { echo "the gateway UI did not come up; see $OUT/gateway-ui.log" >&2; exit 1; }
+  BROWSER_ENV=(SWITCH_GATEWAY_UI_URL=http://127.0.0.1:4173 SWITCH_E2E_OUTPUT_DIR="$OUT")
+fi
+
 echo "Running the $LANE lane…"
 status=0
 (
   cd "$HARNESS"
   if [ ${#PROVIDER_ENV[@]} -gt 0 ]; then export "${PROVIDER_ENV[@]}"; fi
+  if [ ${#BROWSER_ENV[@]} -gt 0 ]; then export "${BROWSER_ENV[@]}"; fi
   # The credentials the harness is issued, for the scan on exit.
   export SWITCH_E2E_SECRETS_FILE="$SECRETS"
   # What the server logs, so a scenario during which it logs an error fails.
@@ -241,5 +265,6 @@ status=0
 if [ "$status" != 0 ]; then
   echo "The $LANE lane failed. switch-core log: $OUT/switch-core.log" >&2
   [ "$LANE" = provider ] && echo "Agent controller log: $OUT/controller.log" >&2
+  [ "$LANE" = browser ] && echo "Screenshots of failed pages: $OUT/screenshots" >&2
 fi
 exit "$status"

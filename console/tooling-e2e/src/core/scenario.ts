@@ -4,7 +4,7 @@ import type { Environment, HarnessEnv, Lane } from './env.ts';
  * The machine-readable header every scenario carries, in either lane.
  *
  * It is what lets tooling answer questions about the suite without running it:
- * which lane a scenario belongs to (`needsProvider`), where it may run
+ * which lane a scenario belongs to (`lane`), where it may run
  * (`environments`), who to ask when it breaks (`owner`), and what it exercises
  * (`covers`), which is what the coverage gate reads.
  */
@@ -18,8 +18,11 @@ export interface ScenarioHeader {
    * own parameter names (e.g. `POST /agents/{agent_id}/message`).
    */
   covers: readonly string[];
-  /** `true` puts the scenario in the provider lane: it needs a real agent session. */
-  needsProvider: boolean;
+  /**
+   * The lane it runs in: `fast` (plain HTTP), `provider` (a real agent
+   * session) or `browser` (the gateway UI in a headless browser).
+   */
+  lane: Lane;
   /**
    * Where it may run. A scenario that changes server-global state (a feature
    * flag) lists only `ephemeral`. One that writes anything never lists `prod`.
@@ -34,8 +37,9 @@ export interface ScenarioHeader {
 /**
  * `mattermost`: a Mattermost and a human token on it are configured.
  * `agent-dir`: the provider session's working directory is on this machine.
+ * `gateway-ui`: the address of a gateway UI served against this Switch server.
  */
-export type Prerequisite = 'mattermost' | 'agent-dir';
+export type Prerequisite = 'mattermost' | 'agent-dir' | 'gateway-ui';
 
 const OPERATION = /^[a-z][a-z0-9_]*$/;
 const ROUTE = /^(GET|POST|PUT|PATCH|DELETE) \/\S*$/;
@@ -53,7 +57,7 @@ export function headerProblems(header: ScenarioHeader): string[] {
   }
   if (header.environments.length === 0) problems.push('environments is empty');
   if (header.owner.trim() === '') problems.push('owner is empty');
-  if (header.needsProvider && header.environments.includes('prod')) {
+  if (header.lane === 'provider' && header.environments.includes('prod')) {
     problems.push('a provider scenario writes to the room, so it cannot list prod');
   }
   return problems;
@@ -73,10 +77,6 @@ export function assertValidHeaders(headers: readonly ScenarioHeader[]): void {
   }
 }
 
-export function laneOf(header: ScenarioHeader): Lane {
-  return header.needsProvider ? 'provider' : 'fast';
-}
-
 /**
  * Whether a scenario runs here, and if not, whether that is a failure.
  *
@@ -88,8 +88,8 @@ export function laneOf(header: ScenarioHeader): Lane {
 export type Admission = { run: true } | { run: false; reason: string; failure: boolean };
 
 export function admit(header: ScenarioHeader, env: HarnessEnv): Admission {
-  if (laneOf(header) !== env.lane) {
-    return { run: false, reason: `belongs to the ${laneOf(header)} lane`, failure: false };
+  if (header.lane !== env.lane) {
+    return { run: false, reason: `belongs to the ${header.lane} lane`, failure: false };
   }
   if (!header.environments.includes(env.environment)) {
     return {
@@ -115,6 +115,8 @@ function satisfied(prerequisite: Prerequisite, env: HarnessEnv): boolean {
       return env.mattermost !== null;
     case 'agent-dir':
       return env.provider.agentRepoDir !== null;
+    case 'gateway-ui':
+      return env.gatewayUiUrl !== null;
   }
 }
 
@@ -124,5 +126,7 @@ function describePrerequisite(prerequisite: Prerequisite): string {
       return 'Mattermost (MATTERMOST_URL, MATTERMOST_TOKEN, MATTERMOST_TEAM)';
     case 'agent-dir':
       return 'the session working directory (SWITCH_E2E_AGENT_DIR)';
+    case 'gateway-ui':
+      return 'a gateway UI (SWITCH_GATEWAY_UI_URL)';
   }
 }

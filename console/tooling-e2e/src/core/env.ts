@@ -16,9 +16,11 @@ import { fileURLToPath } from 'node:url';
  * that cross the bridge): no provider, no Console, no LLM key. It is the lane
  * that can gate pull requests, because it carries no secrets a fork lacks.
  * `provider` needs a real agent session attending the room, driven by Switch
- * Console or its sidecar.
+ * Console or its sidecar. `browser` drives the gateway UI in a headless
+ * Chromium against the same server: a smoke test of what an operator sees,
+ * which no HTTP-level scenario can see break.
  */
-export type Lane = 'fast' | 'provider';
+export type Lane = 'fast' | 'provider' | 'browser';
 
 /**
  * What the target is. Scenarios declare which they may run against.
@@ -99,6 +101,13 @@ export interface HarnessEnv {
   secretsFile: string | null;
   /** The server's JSON log, when the harness can read it; see `ServerLog`. */
   serverLog: string | null;
+  /**
+   * The gateway UI, served against `switch.apiUrl` (its `/gateway` requests
+   * reach that server). Only the browser lane reads it.
+   */
+  gatewayUiUrl: string | null;
+  /** Where the browser lane saves a screenshot of a page that failed, if anywhere. */
+  outputDir: string | null;
   switch: SwitchEnv;
   /** `null` when no Mattermost is configured; scenarios that need one then skip or fail. */
   mattermost: MattermostEnv | null;
@@ -176,8 +185,8 @@ export function laneFrom(
 ): Lane | null {
   const raw = reader(source, file)('SWITCH_E2E_LANE');
   if (raw === undefined) return null;
-  if (raw === 'fast' || raw === 'provider') return raw;
-  throw new Error(`SWITCH_E2E_LANE must be 'fast' or 'provider' — got '${raw}'.`);
+  if (raw === 'fast' || raw === 'provider' || raw === 'browser') return raw;
+  throw new Error(`SWITCH_E2E_LANE must be 'fast', 'provider' or 'browser' — got '${raw}'.`);
 }
 
 /**
@@ -236,6 +245,8 @@ export function loadEnv(
     keepArtifacts: get('SWITCH_E2E_KEEP') === '1',
     secretsFile: get('SWITCH_E2E_SECRETS_FILE') ?? null,
     serverLog: get('SWITCH_E2E_SERVER_LOG') ?? null,
+    gatewayUiUrl: optionalUrl(get('SWITCH_GATEWAY_UI_URL')),
+    outputDir: get('SWITCH_E2E_OUTPUT_DIR') ?? null,
     switch: {
       apiUrl: stripTrailingSlash(required.SWITCH_API_URL as string),
       gatewayAdminEmail: required.SWITCH_GATEWAY_ADMIN_EMAIL as string,
@@ -296,6 +307,10 @@ function questionModeFrom(raw: string | undefined): QuestionMode {
   throw new Error(`SWITCH_E2E_QUESTION_MODE must be 'numbered' or 'prose' — got '${raw}'.`);
 }
 
+function optionalUrl(raw: string | undefined): string | null {
+  return raw === undefined ? null : stripTrailingSlash(raw);
+}
+
 export function stripTrailingSlash(url: string): string {
   return url.endsWith('/') ? url.slice(0, -1) : url;
 }
@@ -309,5 +324,6 @@ export function describeEnv(env: HarnessEnv): string {
   const mattermost = env.mattermost
     ? `mattermost=${env.mattermost.url} team=${env.mattermost.team}`
     : 'mattermost=none';
-  return `lane=${env.lane} environment=${env.environment} switch=${env.switch.apiUrl} ${mattermost}`;
+  const ui = env.lane === 'browser' ? ` gateway-ui=${env.gatewayUiUrl ?? 'none'}` : '';
+  return `lane=${env.lane} environment=${env.environment} switch=${env.switch.apiUrl} ${mattermost}${ui}`;
 }

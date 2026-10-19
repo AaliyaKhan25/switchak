@@ -2,19 +2,14 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { BROWSER_SCENARIOS } from '../browser/index.ts';
 import { olderThanFrom, timestampMs } from '../cleanup.ts';
 import { FAST_SCENARIOS } from '../fast/index.ts';
 import { SCENARIOS as PROVIDER_SCENARIOS } from '../provider/scenarios.ts';
 import { laneFrom, loadEnv, MissingConfigError, strictFrom, type HarnessEnv } from './env.ts';
 import { assertAllowed, ReadOnlyEnvironmentError } from './guard.ts';
 import { isValidMattermostUsername, RunContext } from './run.ts';
-import {
-  admit,
-  assertValidHeaders,
-  headerProblems,
-  laneOf,
-  type ScenarioHeader,
-} from './scenario.ts';
+import { admit, assertValidHeaders, headerProblems, type ScenarioHeader } from './scenario.ts';
 import { IssuedSecrets } from './secrets.ts';
 
 const BASE = {
@@ -106,7 +101,7 @@ describe('run naming', () => {
 const header = (overrides: Partial<ScenarioHeader> = {}): ScenarioHeader => ({
   id: 'some-scenario',
   covers: ['list_rooms', 'POST /agents/{agent_id}/message'],
-  needsProvider: false,
+  lane: 'fast',
   environments: ['ephemeral', 'dev'],
   owner: 'platform',
   requires: [],
@@ -129,7 +124,7 @@ describe('scenario headers', () => {
   });
 
   it('keeps provider scenarios off prod', () => {
-    expect(headerProblems(header({ needsProvider: true, environments: ['prod'] }))).toHaveLength(1);
+    expect(headerProblems(header({ lane: 'provider', environments: ['prod'] }))).toHaveLength(1);
   });
 
   it('refuses a duplicated id', () => {
@@ -139,9 +134,11 @@ describe('scenario headers', () => {
   it('holds for every scenario in the suite, with ids unique across lanes', () => {
     const fast = FAST_SCENARIOS.map((scenario) => scenario.header);
     const provider = PROVIDER_SCENARIOS.map((scenario) => scenario.header);
-    expect(() => assertValidHeaders([...fast, ...provider])).not.toThrow();
-    expect(fast.every((h) => laneOf(h) === 'fast')).toBe(true);
-    expect(provider.every((h) => laneOf(h) === 'provider')).toBe(true);
+    const browser = BROWSER_SCENARIOS.map((scenario) => scenario.header);
+    expect(() => assertValidHeaders([...fast, ...provider, ...browser])).not.toThrow();
+    expect(fast.every((h) => h.lane === 'fast')).toBe(true);
+    expect(provider.every((h) => h.lane === 'provider')).toBe(true);
+    expect(browser.every((h) => h.lane === 'browser')).toBe(true);
   });
 });
 
@@ -151,7 +148,7 @@ describe('admission', () => {
   });
 
   it('passes over the other lane and unlisted environments without failing', () => {
-    expect(admit(header({ needsProvider: true }), env())).toMatchObject({
+    expect(admit(header({ lane: 'provider' }), env())).toMatchObject({
       run: false,
       failure: false,
     });
