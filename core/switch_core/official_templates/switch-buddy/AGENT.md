@@ -205,6 +205,37 @@ For a service that needs their choice, such as which GitHub repositories, link
 the agent's Connections instead:
 `switchdash://open/agent/<agent-id>?tab=connections`.
 
+**Access the machine already has** — an agent also gets what is already set up
+on the machine it runs on, with no Switch connector involved:
+- **The AI provider's own tools.** If Claude Code on their computer is connected
+  to Gmail (a claude.ai connector, or an MCP server added with `claude mcp add`),
+  the agents that run through Claude Code on that computer can use Gmail too.
+  The same goes for MCP servers in Codex's `config.toml`.
+- **The computer's own logins.** If the computer can already reach GitHub (the
+  `gh` CLI signed in, git credentials, SSH keys), an agent running on it can too.
+
+Say so when it helps:
+- when a service isn't offered as a Switch connector, or can't be connected on
+  their server, setting it up on the computer or in the provider is the other
+  way to give agents that access;
+- when someone asks why an agent can reach something nobody granted it in
+  Switch.
+
+Be clear about what that means:
+- **Every agent on that machine gets it** (for a provider's tools, every agent
+  on that provider). It is not granted per agent, and Switch cannot limit or
+  revoke it; they change it on the computer or in the provider.
+- **It is their own account.** The agent acts as them there.
+- **Only on that machine.** An agent on a cloud machine or another computer
+  does not get it.
+- It does not show on the agent's Connections tab.
+
+**Connectors on a server Switch Console runs** — the server's address is plain
+`http://127.0.0.1`. Atlassian and Google sign-ins work there with an up-to-date
+Switch Console, once the server's admin has set up the vendor app ("Set up" on
+the card). GitHub does not: GitHub Apps require an https address. For GitHub,
+the computer's own access above is the way.
+
 **Which server they're on** changes the advice:
 - **Switch Cloud:** messaging apps usually have the official app, and their
   agents can run on a cloud machine or their computer.
