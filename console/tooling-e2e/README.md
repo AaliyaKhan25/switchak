@@ -154,6 +154,7 @@ beside this file. Never commit one. `just e2e-fast` sets all of them itself.
 | `MATTERMOST_TEAM` | for Mattermost scenarios | Team **slug** (e.g. `switch`), not its display name. |
 | `SWITCH_E2E_STRICT` | no | `1` turns every "cannot run" into a failure. CI sets it. |
 | `SWITCH_E2E_KEEP` | no | `1` leaves agents, rooms and channels behind for inspection. |
+| `SWITCH_E2E_SERVER_LOG` | no | The server's log, written with `LOG_FORMAT=json`. When set, a scenario fails if the server logged an error while it ran. The stack script sets it. |
 | `SWITCH_E2E_SECRETS_FILE` | no | File to append each credential the server issues during the run to (agent keys, gateway sessions), for CI's scan of the output. The stack script and `e2e.yml` set it. |
 | `SWITCH_E2E_AGENT_DIR` | provider lane | Working directory of the session under test. When set, the agent's credentials are written into it (see below) and it is sent to Switch as the agent's `repo_dir`. |
 | `SWITCH_E2E_MANIFEST` | provider lane | File the setup records its agent and room in, so a second process can reuse them. See "Seeding first". |
@@ -213,6 +214,30 @@ Two things differ from a Console session:
   therefore absorbs the session's start-up time.
 
 The controller's log goes to `build/e2e/ephemeral/controller.log`.
+
+## Server health and errors
+
+A scenario can pass every assertion while the server logs an error and carries
+on: an event loop that catches one bad event, say. Two checks catch that.
+
+- **Readiness.** `GET /health/ready` must answer 200 before a lane runs. Not
+  ready means the lane cannot run: it skips, or fails under
+  `SWITCH_E2E_STRICT=1`. Each lane's last test asks again, so a run that
+  leaves the server unready fails.
+- **No errors logged.** With `SWITCH_E2E_SERVER_LOG` set, the harness reads the
+  server's JSON log after each scenario. The scenario fails if anything was
+  logged at error level or above, including output that bypassed logging,
+  between its start and 1.5 s after its end.
+  - The check goes by time, because the work a scenario sets off runs on
+    background tasks that carry no request id.
+  - Each harness request carries `X-Request-Id: e2e-<run><scope>-<n>`, which
+    the server stamps on every line it logs while serving the request. Each
+    error is reported as coming from this scenario's request, another request,
+    or background work.
+
+  The stack script starts switch-core with `LOG_FORMAT=json` and sets the
+  variable. Against a deployed environment the log is in its log backend, so
+  the check is off, and the run's header says so.
 
 ## Coverage gate
 

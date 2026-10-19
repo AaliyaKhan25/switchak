@@ -62,6 +62,11 @@ export async function resolveLane(lane: Lane): Promise<LaneResolution> {
   } catch (error) {
     return unable(`Switch server at ${env.switch.apiUrl} is unreachable: ${message(error)}`);
   }
+  try {
+    await switchClient.ready();
+  } catch (error) {
+    return unable(`Switch server at ${env.switch.apiUrl} is not ready: ${message(error)}`);
+  }
 
   let mattermost: MattermostClient | null = null;
   if (env.mattermost) {

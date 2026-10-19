@@ -90,6 +90,14 @@ export class NameScope {
     return name;
   }
 
+  /**
+   * `e2e-<runId><scope>`: the prefix of every request id this scope's requests
+   * carry, which is how a server log line names the scenario it came from.
+   */
+  get tag(): string {
+    return `${ARTIFACT_PREFIX}${this.runId}${this.letter}`;
+  }
+
   /** A marker string unique to this scope, for grepping a transcript. */
   marker(label: string): string {
     return `SWITCH_E2E_${label.toUpperCase()}_${this.runId.toUpperCase()}${this.letter.toUpperCase()}`;

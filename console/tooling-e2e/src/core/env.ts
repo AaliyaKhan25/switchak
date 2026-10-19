@@ -97,6 +97,8 @@ export interface HarnessEnv {
   keepArtifacts: boolean;
   /** Where to record the credentials the server issues during the run; see `IssuedSecrets`. */
   secretsFile: string | null;
+  /** The server's JSON log, when the harness can read it; see `ServerLog`. */
+  serverLog: string | null;
   switch: SwitchEnv;
   /** `null` when no Mattermost is configured; scenarios that need one then skip or fail. */
   mattermost: MattermostEnv | null;
@@ -233,6 +235,7 @@ export function loadEnv(
     strict: strictFrom(source, file),
     keepArtifacts: get('SWITCH_E2E_KEEP') === '1',
     secretsFile: get('SWITCH_E2E_SECRETS_FILE') ?? null,
+    serverLog: get('SWITCH_E2E_SERVER_LOG') ?? null,
     switch: {
       apiUrl: stripTrailingSlash(required.SWITCH_API_URL as string),
       gatewayAdminEmail: required.SWITCH_GATEWAY_ADMIN_EMAIL as string,

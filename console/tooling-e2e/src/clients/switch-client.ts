@@ -147,6 +147,8 @@ export class SwitchClient {
   private readonly environment: Environment;
   private readonly issued: IssuedSecrets;
   private gatewayCookie: string | null = null;
+  private requestTag: string | null = null;
+  private requestCount = 0;
 
   constructor(env: SwitchEnv, environment: Environment, issued: IssuedSecrets) {
     this.apiUrl = env.apiUrl;
@@ -159,6 +161,21 @@ export class SwitchClient {
 
   // ── plumbing ──────────────────────────────────────────────────────────────
 
+  /**
+   * Tag every request from now on with `X-Request-Id: <tag>-<n>`, which the
+   * server stamps on each log line it writes while serving it. `null` stops.
+   */
+  tagRequests(tag: string | null): void {
+    this.requestTag = tag;
+    this.requestCount = 0;
+  }
+
+  private requestId(): Record<string, string> {
+    if (this.requestTag === null) return {};
+    this.requestCount += 1;
+    return { 'X-Request-Id': `${this.requestTag}-${this.requestCount}` };
+  }
+
   private async request<T>(method: string, path: string, init: SwitchRequest = {}): Promise<T> {
     return (await this.rawRequest(method, path, init)).parsed as T;
   }
@@ -169,7 +186,7 @@ export class SwitchClient {
     init: SwitchRequest
   ): Promise<{ parsed: unknown; response: Response }> {
     assertAllowed(this.environment, method, path);
-    const headers: Record<string, string> = { Accept: 'application/json' };
+    const headers: Record<string, string> = { Accept: 'application/json', ...this.requestId() };
     if (init.token) headers.Authorization = `Bearer ${init.token}`;
     if (init.cookie) headers.Cookie = init.cookie;
     if (init.body !== undefined) headers['Content-Type'] = 'application/json';
@@ -199,7 +216,7 @@ export class SwitchClient {
     assertAllowed(this.environment, method, path);
     const response = await fetch(`${this.apiUrl}${path}`, {
       method,
-      headers: { Accept: 'application/json' },
+      headers: { Accept: 'application/json', ...this.requestId() },
       redirect: 'manual',
       signal: AbortSignal.timeout(30_000),
     });
@@ -214,6 +231,15 @@ export class SwitchClient {
       '/feature-flags'
     );
     return new Set(body.flags.filter((flag) => flag.enabled).map((flag) => flag.key));
+  }
+
+  /**
+   * `GET /health/ready`: whether the server reports itself ready to serve. It
+   * answers 503 with the failing checks when it is not, which this throws as a
+   * {@link SwitchHttpError} carrying them.
+   */
+  async ready(): Promise<void> {
+    await this.request('GET', '/health/ready', { timeoutMs: 10_000 });
   }
 
   /** `GET /health` — the reachability probe the suite skips on. */

@@ -1,6 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { describeEnv } from '../core/env.ts';
+import { ARTIFACT_PREFIX } from '../core/run.ts';
 import { admit, assertValidHeaders } from '../core/scenario.ts';
+import { describeErrors, describeServerLogCheck, ScenarioObserver } from '../core/server-log.ts';
 import { resolveLane, type LaneResolution } from '../core/suite.ts';
 import { setupHarness, teardownHarness, waitForSession, type Harness } from './harness.ts';
 import { formatResultsTable, SCENARIOS, type ScenarioResult } from './scenarios.ts';
@@ -34,6 +36,7 @@ beforeAll(async () => {
       '',
       `Provider lane run ${harness.runId}`,
       `  ${describeEnv(lane.target.env)}`,
+      `  ${describeServerLogCheck(lane.target.env.serverLog)}`,
       `  agent    ${harness.agent.name} (${harness.agent.id})`,
       `  bot      @${harness.bot.username} (${harness.bot.id})`,
       `  channel  ${harness.channel.name} (${harness.channel.id})`,
@@ -72,8 +75,14 @@ describe('provider lane', () => {
         return context.skip(admission.reason);
       }
       const h = harness!;
+      const observer = new ScenarioObserver(
+        lane.target.env.serverLog,
+        h.switch,
+        `${ARTIFACT_PREFIX}${h.runId}-${scenario.header.id}`
+      );
       const result = await scenario.run(h);
       results.push(result);
+      const serverErrors = await observer.finish();
       if (!result.ok) {
         console.log(
           `${result.name} transcript:\n` +
@@ -83,6 +92,18 @@ describe('provider lane', () => {
         );
       }
       expect(result.ok, result.details).toBe(true);
+      if (serverErrors !== null) {
+        expect(
+          serverErrors,
+          `the server logged errors while this ran:\n  ${describeErrors(serverErrors, observer.tag)}\n`
+        ).toEqual([]);
+      }
     });
   }
+
+  // Last, so it sees whatever the run left the server in.
+  it('the server is still ready after the run', async (context) => {
+    if (!lane.target) return context.skip(lane.skip);
+    await lane.target.switchClient.ready();
+  });
 });

@@ -136,7 +136,10 @@ uv run --project core alembic -c core/alembic.ini upgrade head >"$OUT/migrate.lo
   || { echo "migrations failed; see $OUT/migrate.log" >&2; exit 1; }
 
 echo "Starting switch-core from this checkout…"
-GATEWAY_COOKIE_SECURE=false uv run --project core python -m switch_core.main \
+# JSON, so the harness can read back what the server logged during each
+# scenario (SWITCH_E2E_SERVER_LOG): one record per line, timed to the
+# millisecond. `jq -r '"\(.timestamp) \(.status) \(.message)"'` reads it.
+GATEWAY_COOKIE_SECURE=false LOG_FORMAT=json uv run --project core python -m switch_core.main \
   >"$OUT/switch-core.log" 2>&1 &
 SERVER_PID=$!
 for _ in $(seq 120); do curl -sf localhost:8000/health >/dev/null && break; sleep 1; done
@@ -219,6 +222,8 @@ status=0
   if [ ${#PROVIDER_ENV[@]} -gt 0 ]; then export "${PROVIDER_ENV[@]}"; fi
   # The credentials the harness is issued, for the scan on exit.
   export SWITCH_E2E_SECRETS_FILE="$SECRETS"
+  # What the server logs, so a scenario during which it logs an error fails.
+  export SWITCH_E2E_SERVER_LOG="$OUT/switch-core.log"
   SWITCH_E2E_LANE="$LANE" \
   SWITCH_E2E_ENVIRONMENT=ephemeral \
   SWITCH_E2E_STRICT=1 \
