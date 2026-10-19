@@ -1,10 +1,25 @@
+import { platformLogoMarkdown } from '@renderer/features/chats/ui/platform-logo';
+
+/** The messaging apps the welcome names, each with its logo. */
+const PLATFORMS: { type: string; name: string }[] = [
+  { type: 'slack', name: 'Slack' },
+  { type: 'teams', name: 'Microsoft Teams' },
+  { type: 'mattermost', name: 'Mattermost' },
+  { type: 'telegram', name: 'Telegram' },
+];
+
+function platformList(): string {
+  const named = PLATFORMS.map(({ type, name }) => platformLogoMarkdown(type, name));
+  return `${named.slice(0, -1).join(', ')} and ${named.at(-1)}`;
+}
+
 /**
- * The first message switch-buddy posts in its Welcome chat: who it is, what it
- * can do, and two tips. Written here, posted as the buddy, so it is there the
- * moment the chat opens rather than after the buddy's first session starts.
+ * The first message switch-buddy posts in its Welcome chat: who it is, that
+ * Switch brings agents to the messaging apps a team already uses, and what it
+ * can help with. Written here, posted as the buddy, so it is there the moment
+ * the chat opens rather than after the buddy's first session starts.
  *
- * The tips give the buddy's name in words, not as an @mention: posted by the
- * buddy, a mention of itself would be read as addressing it.
+ * The apps' logos are drawn by Console's chat; the Welcome chat is read there.
  */
 export function buddyWelcomeMessage({
   firstName,
@@ -15,22 +30,15 @@ export function buddyWelcomeMessage({
 }): string {
   return [
     `Hi${firstName ? ` ${firstName}` : ''}, I’m **${agentName}**, your assistant for everything Switch. 👋`,
-    'Switch brings your team to work with your agents, and I’m the first one.',
+    '',
+    `Switch brings your agents to where your team already works: ${platformList()}. Your team talks to agents in the channels they already use, and people and agents work together in shared rooms.`,
     '',
     'I can help you:',
-    '- 🤖 Create agents',
-    '- 🏠 Make rooms',
+    '- 🔌 Connect your team’s chat app',
+    '- 🤖 Create agents and bring them into your channels',
+    '- 🏠 Set up rooms where your team and agents work together',
     '- 💬 Answer anything about Switch',
-    '- 🧑‍💻 Any task, from researching a topic to writing a document',
     '',
-    'Some tips:',
-    '',
-    '**👫 If you want your team to talk to me**',
-    '- In my Agent settings, set “Who can talk to your agent” to “Anyone”.',
-    '- Then invite your team members to the channel I’m in.',
-    '',
-    '**➕ If you want to add me to another channel**',
-    '- Go to the channel where you want me.',
-    `- Type \`/invite-agent\` followed by my name, ${agentName}.`,
+    'Tell me which app your team uses, and I’ll walk you through connecting it.',
   ].join('\n');
 }
