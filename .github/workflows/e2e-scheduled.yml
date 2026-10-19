@@ -8,9 +8,13 @@ name: E2E scheduled
 #   nightly                the provider lane again, and the fast lane against
 #                          dev, then one summary notification for the night
 #
+# A failed run after a merge is reported too, since the lane is not a required
+# check and nothing else would surface it before the night; a passing one is
+# not, to keep the channel to one message a night.
+#
 # The fast lane on a throwaway stack is a PR check in pr-ci.yml.
 #
-# The notification goes to the incoming webhook in the repository secret
+# Notifications go to the incoming webhook in the repository secret
 # E2E_NOTIFY_WEBHOOK_URL (Slack and Mattermost both accept the payload). Without
 # it the run says so in a warning and sends nothing.
 
@@ -19,9 +23,14 @@ on:
     - cron: '41 3 * * *'
   push:
     branches: [main]
-    paths-ignore:
-      - 'docs/**'
-      - '**/*.md'
+    # Everything but documentation. The Switch skill is Markdown, but it is the
+    # system context every real agent session runs with, so a change to it can
+    # change whether the agent replies at all: later entries win.
+    paths:
+      - '**'
+      - '!docs/**'
+      - '!**/*.md'
+      - 'console/packages/plugins/src/switch-skill/SKILL.md'
   workflow_dispatch:
 
 permissions:
@@ -46,9 +55,9 @@ jobs:
       agent_type: claude-code
 
   notify:
-    name: Nightly summary
+    name: Report
     needs: [provider, fast-dev]
-    if: ${{ always() && github.event_name == 'schedule' }}
+    if: ${{ always() && github.event_name != 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     steps:
       - name: Send the summary
@@ -60,18 +69,28 @@ jobs:
           DEV_RESULT: ${{ needs.fast-dev.result }}
           DEV_SUMMARY: ${{ needs.fast-dev.outputs.summary }}
         run: |
+          if [ "$GITHUB_EVENT_NAME" = push ] && [ "$PROVIDER_RESULT" = success ]; then
+            echo "The provider lane passed after the merge; nothing to report."
+            exit 0
+          fi
           line() {
             local mark=❌
             [ "$2" = success ] && mark=✅
             printf '%s %s — %s\n' "$mark" "$1" "${3:-$2, no scenario summary}"
           }
-          text="$(printf 'Switch E2E nightly\n%s\n%s\n%s' \
-            "$(line 'Provider lane (ephemeral)' "$PROVIDER_RESULT" "$PROVIDER_SUMMARY")" \
-            "$(line 'Fast lane (dev)' "$DEV_RESULT" "$DEV_SUMMARY")" \
-            "$RUN_URL")"
+          if [ "$GITHUB_EVENT_NAME" = push ]; then
+            text="$(printf 'Switch E2E after merging %s\n%s\n%s' "${GITHUB_SHA:0:9}" \
+              "$(line 'Provider lane (ephemeral)' "$PROVIDER_RESULT" "$PROVIDER_SUMMARY")" \
+              "$RUN_URL")"
+          else
+            text="$(printf 'Switch E2E nightly\n%s\n%s\n%s' \
+              "$(line 'Provider lane (ephemeral)' "$PROVIDER_RESULT" "$PROVIDER_SUMMARY")" \
+              "$(line 'Fast lane (dev)' "$DEV_RESULT" "$DEV_SUMMARY")" \
+              "$RUN_URL")"
+          fi
           echo "$text"
           if [ -z "$WEBHOOK" ]; then
-            echo "::warning::E2E_NOTIFY_WEBHOOK_URL is not set; the nightly summary was not sent anywhere."
+            echo "::warning::E2E_NOTIFY_WEBHOOK_URL is not set; this report was not sent anywhere."
             exit 0
           fi
           curl -fsS -H 'Content-Type: application/json' -d "$(jq -n --arg text "$text" '{text: $text}')" "$WEBHOOK" >/dev/null

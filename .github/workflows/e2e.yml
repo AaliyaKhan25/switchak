@@ -167,6 +167,7 @@ jobs:
           MATTERMOST_URL: ${{ vars.MATTERMOST_URL }}
           MATTERMOST_TOKEN: ${{ secrets.MATTERMOST_TOKEN }}
           MATTERMOST_TEAM: ${{ vars.MATTERMOST_TEAM }}
+          SWITCH_E2E_SECRETS_FILE: ${{ runner.temp }}/issued-secrets
         run: |
           mkdir -p "$OUT"
           pnpm exec vitest run --reporter=verbose --reporter=junit --outputFile.junit="$OUT/junit.xml" \
@@ -188,6 +189,7 @@ jobs:
           MATTERMOST_URL: ${{ vars.MATTERMOST_URL }}
           MATTERMOST_TOKEN: ${{ secrets.MATTERMOST_TOKEN }}
           MATTERMOST_TEAM: ${{ vars.MATTERMOST_TEAM }}
+          SWITCH_E2E_SECRETS_FILE: ${{ runner.temp }}/issued-secrets
         run: pnpm cleanup --older-than 180
 
       - name: Summarise the run
@@ -207,12 +209,17 @@ jobs:
         run: |
           [ -d "$OUT" ] || { echo "No output to scan."; exit 1; }
           if [ "$TARGET" = ephemeral ]; then
-            # The stack script scans for the secrets it generated and the
-            # provider key file, and leaves this file only when none turned up.
+            # The stack script scans for the secrets it generated, the provider
+            # key file and every credential the server issued the harness, and
+            # leaves this file only when none turned up.
             [ -e "$OUT/.secret-scan-passed" ] || { echo "::error::The stack's own secret scan did not pass."; exit 1; }
           else
-            printf '%s\n' "$SWITCH_GATEWAY_ADMIN_PASSWORD" "$SWITCH_AGENT_REGISTRATION_TOKEN" "$MATTERMOST_TOKEN" \
-              | console/tooling-e2e/scripts/scan-artifacts.sh "$OUT"
+            # The environment's own secrets, and every credential the server
+            # issued the harness during the run (agent keys, gateway sessions),
+            # which stay valid on a shared deployment after the run ends.
+            { printf '%s\n' "$SWITCH_GATEWAY_ADMIN_PASSWORD" "$SWITCH_AGENT_REGISTRATION_TOKEN" "$MATTERMOST_TOKEN"
+              cat "$RUNNER_TEMP/issued-secrets" 2>/dev/null || true
+            } | console/tooling-e2e/scripts/scan-artifacts.sh "$OUT"
           fi
           docker run --rm -v "$OUT:/out:ro" zricethezav/gitleaks:v8.30.1 dir /out --redact --no-banner
 

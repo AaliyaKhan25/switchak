@@ -1,3 +1,6 @@
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { olderThanFrom, timestampMs } from '../cleanup.ts';
 import { FAST_SCENARIOS } from '../fast/index.ts';
@@ -12,6 +15,7 @@ import {
   laneOf,
   type ScenarioHeader,
 } from './scenario.ts';
+import { IssuedSecrets } from './secrets.ts';
 
 const BASE = {
   SWITCH_API_URL: 'http://switch.invalid/',
@@ -182,5 +186,22 @@ describe('cleanup age floor', () => {
     expect(olderThanFrom(['--older-than', '0'])).toBe(0);
     expect(() => olderThanFrom([])).toThrow(/--older-than/);
     expect(() => olderThanFrom(['--older-than', '-1'])).toThrow(/--older-than/);
+  });
+});
+
+describe('issued secrets', () => {
+  it('appends each credential on its own line, and records nothing without a file', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'e2e-secrets-'));
+    try {
+      const file = path.join(dir, 'issued');
+      const issued = new IssuedSecrets(file);
+      issued.record('agent-key-0123456789');
+      issued.record('');
+      issued.record('cookie-value-abcdef');
+      expect(readFileSync(file, 'utf8')).toBe('agent-key-0123456789\ncookie-value-abcdef\n');
+      expect(() => new IssuedSecrets(null).record('ignored-value')).not.toThrow();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

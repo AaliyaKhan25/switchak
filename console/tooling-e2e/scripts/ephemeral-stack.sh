@@ -67,6 +67,10 @@ SERVER_PID=""
 CONTROLLER_PID=""
 cleanup() {
   local status=$?
+  # Every step runs whatever the one before it did: a process that exits
+  # non-zero on SIGTERM must not skip the teardown, the scan or the removal
+  # of $WORK.
+  set +e
   if [ "$KEEP" = 0 ]; then
     [ -n "$CONTROLLER_PID" ] && kill "$CONTROLLER_PID" 2>/dev/null && wait "$CONTROLLER_PID" 2>/dev/null
     [ -n "$SERVER_PID" ] && kill "$SERVER_PID" 2>/dev/null && wait "$SERVER_PID" 2>/dev/null
@@ -98,9 +102,15 @@ chmod 600 "$ENV_FILE"
 set -a; source "$ENV_FILE"; set +a
 
 # A secret's value, and each part of it, since SECRET_KEYS is `label:key,…`.
+# One layer of surrounding quotes is dropped, as the env file's reader drops it:
+# the logs hold the bare value.
 remember_secrets() {
   local value
   for value in "$@"; do
+    case "$value" in
+      \"*\") value="${value#\"}"; value="${value%\"}" ;;
+      \'*\') value="${value#\'}"; value="${value%\'}" ;;
+    esac
     printf '%s\n' "$value" >>"$SECRETS"
     tr ',:' '\n\n' <<<"$value" >>"$SECRETS"
   done
@@ -207,6 +217,8 @@ status=0
 (
   cd "$HARNESS"
   if [ ${#PROVIDER_ENV[@]} -gt 0 ]; then export "${PROVIDER_ENV[@]}"; fi
+  # The credentials the harness is issued, for the scan on exit.
+  export SWITCH_E2E_SECRETS_FILE="$SECRETS"
   SWITCH_E2E_LANE="$LANE" \
   SWITCH_E2E_ENVIRONMENT=ephemeral \
   SWITCH_E2E_STRICT=1 \

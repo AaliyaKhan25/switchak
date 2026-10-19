@@ -151,6 +151,7 @@ beside this file. Never commit one. `just e2e-fast` sets all of them itself.
 | `MATTERMOST_TEAM` | for Mattermost scenarios | Team **slug** (e.g. `switch`), not its display name. |
 | `SWITCH_E2E_STRICT` | no | `1` turns every "cannot run" into a failure. CI sets it. |
 | `SWITCH_E2E_KEEP` | no | `1` leaves agents, rooms and channels behind for inspection. |
+| `SWITCH_E2E_SECRETS_FILE` | no | File to append each credential the server issues during the run to (agent keys, gateway sessions), for CI's scan of the output. The stack script and `e2e.yml` set it. |
 | `SWITCH_E2E_AGENT_DIR` | provider lane | Working directory of the session under test. When set, the agent's credentials are written into it (see below) and it is sent to Switch as the agent's `repo_dir`. |
 | `SWITCH_E2E_MANIFEST` | provider lane | File the setup records its agent and room in, so a second process can reuse them. See "Seeding first". |
 | `SWITCH_E2E_REPLY_TIMEOUT_MS` | provider lane | How long a scenario waits for the agent (default 5 min). |
@@ -236,13 +237,17 @@ dispatched by hand.
   behind. After every deployed run, `pnpm cleanup --older-than 180` removes
   what interrupted runs left.
 - **Artifacts.** The output directory is uploaded only after it passes two
-  scans: one for the exact secret values the run used (`scan-artifacts.sh`),
-  and gitleaks. On an ephemeral stack, the env file, the controller's state and
+  scans. The first (`scan-artifacts.sh`) looks for the exact secret values the
+  run used: the ones it was configured with, plus every credential the server
+  issued the harness during the run (agent API keys, gateway sessions). The
+  harness records the issued ones in `SWITCH_E2E_SECRETS_FILE`. The second is
+  gitleaks. A file the first scan cannot read fails it. On an ephemeral stack, the env file, the controller's state and
   the agent's directory live outside the output directory, so the output holds
   only logs and the JUnit report.
-- **Reporting.** Each run writes a scenario table to the job summary. A
-  scheduled night sends one summary to the webhook in the repository secret
-  `E2E_NOTIFY_WEBHOOK_URL`.
+- **Reporting.** Each run writes a scenario table to the job summary. Reports
+  go to the webhook in the repository secret `E2E_NOTIFY_WEBHOOK_URL`:
+  - one summary each night;
+  - a report when the provider lane fails after a merge.
 
 ## With a Switch Console session
 

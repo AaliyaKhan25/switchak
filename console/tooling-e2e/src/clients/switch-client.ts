@@ -1,5 +1,6 @@
 import type { Environment, SwitchEnv } from '../core/env.ts';
 import { assertAllowed } from '../core/guard.ts';
+import type { IssuedSecrets } from '../core/secrets.ts';
 
 /**
  * Thin client for the two Switch HTTP surfaces the harness talks to, both served
@@ -144,14 +145,16 @@ export class SwitchClient {
   private readonly adminEmail: string;
   private readonly adminPassword: string;
   private readonly environment: Environment;
+  private readonly issued: IssuedSecrets;
   private gatewayCookie: string | null = null;
 
-  constructor(env: SwitchEnv, environment: Environment) {
+  constructor(env: SwitchEnv, environment: Environment, issued: IssuedSecrets) {
     this.apiUrl = env.apiUrl;
     this.registrationToken = env.agentRegistrationToken;
     this.adminEmail = env.gatewayAdminEmail;
     this.adminPassword = env.gatewayAdminPassword;
     this.environment = environment;
+    this.issued = issued;
   }
 
   // ── plumbing ──────────────────────────────────────────────────────────────
@@ -220,6 +223,7 @@ export class SwitchClient {
           'authenticates with a session cookie, not a bearer token.'
       );
     }
+    this.issued.record(cookie.slice('switch_auth='.length));
     this.gatewayCookie = cookie;
     return cookie;
   }
@@ -436,6 +440,7 @@ export class SwitchClient {
         },
       }
     );
+    this.issued.record(body.api_key);
     return { id: body.id, name: params.name, apiKey: body.api_key };
   }
 

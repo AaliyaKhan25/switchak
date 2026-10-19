@@ -28,9 +28,20 @@ if [ ! -s "$PATTERNS" ]; then
   exit 2
 fi
 
-if LEAKS="$(grep -rlF -f "$PATTERNS" -- "$DIR")"; then
-  echo "scan-artifacts: these files contain a secret value from this run; nothing will be uploaded:" >&2
-  sed 's/^/  /' <<<"$LEAKS" >&2
-  exit 1
-fi
+# grep exits 1 for no match, but 2 for a read error even when it also matched,
+# so only 1 passes: a file the scan could not read is not a file known clean.
+set +e
+LEAKS="$(grep -rlF -f "$PATTERNS" -- "$DIR")"
+status=$?
+set -e
+case "$status" in
+  0)
+    echo "scan-artifacts: these files contain a secret value from this run; nothing will be uploaded:" >&2
+    sed 's/^/  /' <<<"$LEAKS" >&2
+    exit 1 ;;
+  1) ;;
+  *)
+    echo "scan-artifacts: grep failed (exit $status) under $DIR; refusing to pass the scan" >&2
+    exit 2 ;;
+esac
 echo "scan-artifacts: $(grep -c '' "$PATTERNS") secret values, none found under $DIR."

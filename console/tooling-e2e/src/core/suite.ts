@@ -8,6 +8,7 @@ import {
   type HarnessEnv,
   type Lane,
 } from './env.ts';
+import { IssuedSecrets } from './secrets.ts';
 
 /**
  * Whether this process runs a lane's suite at all, and the clients it runs with.
@@ -51,7 +52,11 @@ export async function resolveLane(lane: Lane): Promise<LaneResolution> {
     return unable(message(error));
   }
 
-  const switchClient = new SwitchClient(env.switch, env.environment);
+  const switchClient = new SwitchClient(
+    env.switch,
+    env.environment,
+    new IssuedSecrets(env.secretsFile)
+  );
   try {
     await switchClient.health();
   } catch (error) {
