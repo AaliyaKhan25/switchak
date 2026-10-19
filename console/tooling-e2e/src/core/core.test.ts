@@ -2,6 +2,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { AGENTIC_SCENARIO_DIR, loadAgenticScenarios } from '../agentic/scenario-file.ts';
 import { BROWSER_SCENARIOS } from '../browser/index.ts';
 import { olderThanFrom, timestampMs } from '../cleanup.ts';
 import { FAST_SCENARIOS } from '../fast/index.ts';
@@ -135,7 +136,8 @@ describe('scenario headers', () => {
     const fast = FAST_SCENARIOS.map((scenario) => scenario.header);
     const provider = PROVIDER_SCENARIOS.map((scenario) => scenario.header);
     const browser = BROWSER_SCENARIOS.map((scenario) => scenario.header);
-    expect(() => assertValidHeaders([...fast, ...provider, ...browser])).not.toThrow();
+    const agentic = loadAgenticScenarios(AGENTIC_SCENARIO_DIR).map((scenario) => scenario.header);
+    expect(() => assertValidHeaders([...fast, ...provider, ...browser, ...agentic])).not.toThrow();
     expect(fast.every((h) => h.lane === 'fast')).toBe(true);
     expect(provider.every((h) => h.lane === 'provider')).toBe(true);
     expect(browser.every((h) => h.lane === 'browser')).toBe(true);

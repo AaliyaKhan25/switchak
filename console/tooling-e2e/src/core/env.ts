@@ -18,12 +18,14 @@ import { fileURLToPath } from 'node:url';
  * `provider` needs a real agent session attending the room, driven by Switch
  * Console or its sidecar. `browser` drives the gateway UI in a headless
  * Chromium against the same server: a smoke test of what an operator sees,
- * which no HTTP-level scenario can see break.
+ * which no HTTP-level scenario can see break. `agentic` runs the same real
+ * session as `provider`, but a model plays the human from a scenario file and
+ * another model judges the conversation.
  */
-export type Lane = 'fast' | 'provider' | 'browser';
+export type Lane = 'fast' | 'provider' | 'browser' | 'agentic';
 
 /** Every lane: the one list anything that takes a lane by name checks against. */
-export const LANES: readonly Lane[] = ['fast', 'provider', 'browser'];
+export const LANES: readonly Lane[] = ['fast', 'provider', 'browser', 'agentic'];
 
 export function isLane(raw: string): raw is Lane {
   return (LANES as readonly string[]).includes(raw);
@@ -93,6 +95,26 @@ export interface ProviderEnv {
   controllerId: string | null;
 }
 
+/**
+ * Settings only the agentic lane reads. Each is null when unset, and the lane's
+ * scenarios then need it (`agentic-models`): a model is never picked for a run
+ * that did not name one, and a run never spends without a limit.
+ */
+export interface AgenticEnv {
+  /** Exact model id that plays the human. */
+  driverModel: string | null;
+  /** Exact model id that judges the conversation. */
+  judgeModel: string | null;
+  /** What the lane may spend, driver, judge and agent together, in USD. */
+  budgetUsd: number | null;
+  /**
+   * A file of provider keys (`ANTHROPIC_API_KEY=…`), the one the agent
+   * controller is handed too. Without it, the driver and judge use the
+   * Claude Code CLI's own sign-in.
+   */
+  providerEnvFile: string | null;
+}
+
 export interface HarnessEnv {
   lane: Lane;
   environment: Environment;
@@ -119,6 +141,7 @@ export interface HarnessEnv {
   /** `null` when no Mattermost is configured; scenarios that need one then skip or fail. */
   mattermost: MattermostEnv | null;
   provider: ProviderEnv;
+  agentic: AgenticEnv;
 }
 
 const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -274,6 +297,12 @@ export function loadEnv(
       questionMode: questionModeFrom(get('SWITCH_E2E_QUESTION_MODE')),
       controllerId: get('SWITCH_E2E_CONTROLLER_ID') ?? null,
     },
+    agentic: {
+      driverModel: get('SWITCH_E2E_DRIVER_MODEL') ?? null,
+      judgeModel: get('SWITCH_E2E_JUDGE_MODEL') ?? null,
+      budgetUsd: budgetFrom(get('SWITCH_E2E_AGENTIC_BUDGET_USD')),
+      providerEnvFile: get('SWITCH_E2E_PROVIDER_ENV_FILE') ?? null,
+    },
   };
 }
 
@@ -312,6 +341,17 @@ function questionModeFrom(raw: string | undefined): QuestionMode {
   if (raw === undefined || raw === 'numbered') return 'numbered';
   if (raw === 'prose') return 'prose';
   throw new Error(`SWITCH_E2E_QUESTION_MODE must be 'numbered' or 'prose' — got '${raw}'.`);
+}
+
+function budgetFrom(raw: string | undefined): number | null {
+  if (raw === undefined) return null;
+  const budget = Number(raw);
+  if (!Number.isFinite(budget) || budget <= 0) {
+    throw new Error(
+      `SWITCH_E2E_AGENTIC_BUDGET_USD must be a positive number of dollars — got '${raw}'.`
+    );
+  }
+  return budget;
 }
 
 function optionalUrl(raw: string | undefined): string | null {

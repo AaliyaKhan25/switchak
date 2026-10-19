@@ -7,6 +7,8 @@ name: E2E
 #
 #   lane         fast      provider-free scenarios over plain HTTP
 #                provider  real agent sessions on a headless agent controller
+#                agentic   the provider lane's setup, driven by scenario files: a
+#                          model plays the human, another judges the result
 #                browser   the gateway UI in headless Chromium; on ephemeral the
 #                          UI is built from this checkout
 #   environment  ephemeral a fresh stack on the runner, built from this checkout
@@ -53,7 +55,7 @@ on:
     inputs:
       lane:
         type: choice
-        options: [fast, provider, browser]
+        options: [fast, provider, browser, agentic]
         default: fast
       environment:
         type: choice
@@ -73,7 +75,7 @@ jobs:
     name: ${{ inputs.lane }} lane on ${{ inputs.environment }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    environment: ${{ inputs.environment != 'ephemeral' && inputs.environment || (inputs.lane == 'provider' && 'e2e-provider' || '') }}
+    environment: ${{ inputs.environment != 'ephemeral' && inputs.environment || ((inputs.lane == 'provider' || inputs.lane == 'agentic') && 'e2e-provider' || '') }}
     # One run at a time against a shared deployment, queued rather than
     # cancelled: a cancelled run leaves its agents and rooms behind. A throwaway
     # stack is the runner's own, so ephemeral runs never wait on each other.
@@ -101,10 +103,11 @@ jobs:
         run: |
           case "$LANE" in fast|provider|browser) ;; *) echo "::error::Unknown lane '$LANE'."; exit 1 ;; esac
           case "$TARGET" in ephemeral|dev|staging) ;; *) echo "::error::Unknown environment '$TARGET'."; exit 1 ;; esac
-          if [ "$LANE" = provider ] && [ "$TARGET" != ephemeral ]; then
-            echo "::error::The provider lane runs on an ephemeral stack only."; exit 1
+          case "$LANE" in provider|agentic) REAL_SESSION=1 ;; *) REAL_SESSION=0 ;; esac
+          if [ "$REAL_SESSION" = 1 ] && [ "$TARGET" != ephemeral ]; then
+            echo "::error::The $LANE lane runs on an ephemeral stack only."; exit 1
           fi
-          if [ "$LANE" = provider ] && [ "$AGENT_TYPE" != claude-code ]; then
+          if [ "$REAL_SESSION" = 1 ] && [ "$AGENT_TYPE" != claude-code ]; then
             echo "::error::CI has credentials for claude-code only, not '$AGENT_TYPE'."; exit 1
           fi
 
@@ -137,12 +140,12 @@ jobs:
         run: pnpm exec playwright install --with-deps chromium
 
       - name: Install Claude Code
-        if: ${{ inputs.lane == 'provider' }}
+        if: ${{ inputs.lane == 'provider' || inputs.lane == 'agentic' }}
         run: npm install -g @anthropic-ai/claude-code@2.1.302
 
       # Into the controller's environment through --env-file; never into $OUT.
       - name: Write the provider key file
-        if: ${{ inputs.lane == 'provider' }}
+        if: ${{ inputs.lane == 'provider' || inputs.lane == 'agentic' }}
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
@@ -159,6 +162,12 @@ jobs:
           SWITCH_E2E_LANE: ${{ inputs.lane }}
           SWITCH_E2E_AGENT_TYPE: ${{ inputs.agent_type }}
           E2E_OUT: ${{ env.OUT }}
+          # The agentic lane's models, by exact id, and what one run may spend
+          # (driver, judge and agent together). Pinned here, so changing them
+          # is a reviewed change; a model the key cannot use fails the run.
+          SWITCH_E2E_DRIVER_MODEL: claude-sonnet-5
+          SWITCH_E2E_JUDGE_MODEL: claude-sonnet-5
+          SWITCH_E2E_AGENTIC_BUDGET_USD: '2'
         run: console/tooling-e2e/scripts/ephemeral-stack.sh
 
       - name: Run the lane against ${{ inputs.environment }}

@@ -72,6 +72,15 @@ export interface AgentSummary {
  *                "attachments": [] } }
  * ```
  */
+/** One row of `GET /gateway/tenants/{tenant_id}/usage`: an amount per metric, client and model. */
+export interface UsageTotal {
+  metric: string;
+  clientId: string;
+  clientName: string | null;
+  model: string;
+  amount: number;
+}
+
 export interface AgentEvent {
   type: string;
   room_id?: string;
@@ -407,6 +416,44 @@ export class SwitchClient {
       '/agents'
     );
     return rows.map((row) => ({ id: row.id, name: row.name, createdAt: row.created_at }));
+  }
+
+  /** `GET /gateway/auth/session` — the workspace this admin session is bound to. */
+  async tenantId(): Promise<string> {
+    const state = await this.gateway<{ state: string; tenant: { id: string } | null }>(
+      'GET',
+      '/auth/session'
+    );
+    if (state.tenant === null) {
+      throw new Error(
+        `The gateway admin's session is bound to no workspace (state '${state.state}').`
+      );
+    }
+    return state.tenant.id;
+  }
+
+  /**
+   * `GET /gateway/tenants/{tenant_id}/usage` — what each client spent, per
+   * metric and model, over `[since, until)`. Counted in whole UTC hours.
+   */
+  async usage(tenantId: string, since: Date, until: Date): Promise<UsageTotal[]> {
+    const query = `since=${encodeURIComponent(since.toISOString())}&until=${encodeURIComponent(until.toISOString())}`;
+    const rows = await this.gateway<
+      {
+        metric: string;
+        client_id: string;
+        client_name: string | null;
+        model: string;
+        amount: number;
+      }[]
+    >('GET', `/tenants/${tenantId}/usage?${query}`);
+    return rows.map((row) => ({
+      metric: row.metric,
+      clientId: row.client_id,
+      clientName: row.client_name,
+      model: row.model,
+      amount: row.amount,
+    }));
   }
 
   /** The bridge id of the default collaboration bridge of `type`. */

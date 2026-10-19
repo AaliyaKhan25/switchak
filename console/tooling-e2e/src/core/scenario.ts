@@ -38,8 +38,9 @@ export interface ScenarioHeader {
  * `mattermost`: a Mattermost and a human token on it are configured.
  * `agent-dir`: the provider session's working directory is on this machine.
  * `gateway-ui`: the address of a gateway UI served against this Switch server.
+ * `agentic-models`: the driver and judge models, and the spending limit.
  */
-export type Prerequisite = 'mattermost' | 'agent-dir' | 'gateway-ui';
+export type Prerequisite = 'mattermost' | 'agent-dir' | 'gateway-ui' | 'agentic-models';
 
 const OPERATION = /^[a-z][a-z0-9_]*$/;
 const ROUTE = /^(GET|POST|PUT|PATCH|DELETE) \/\S*$/;
@@ -57,8 +58,11 @@ export function headerProblems(header: ScenarioHeader): string[] {
   }
   if (header.environments.length === 0) problems.push('environments is empty');
   if (header.owner.trim() === '') problems.push('owner is empty');
-  if (header.lane === 'provider' && header.environments.includes('prod')) {
-    problems.push('a provider scenario writes to the room, so it cannot list prod');
+  if (
+    (header.lane === 'provider' || header.lane === 'agentic') &&
+    header.environments.includes('prod')
+  ) {
+    problems.push(`a ${header.lane} scenario writes to the room, so it cannot list prod`);
   }
   return problems;
 }
@@ -117,6 +121,12 @@ function satisfied(prerequisite: Prerequisite, env: HarnessEnv): boolean {
       return env.provider.agentRepoDir !== null;
     case 'gateway-ui':
       return env.gatewayUiUrl !== null;
+    case 'agentic-models':
+      return (
+        env.agentic.driverModel !== null &&
+        env.agentic.judgeModel !== null &&
+        env.agentic.budgetUsd !== null
+      );
   }
 }
 
@@ -128,5 +138,7 @@ function describePrerequisite(prerequisite: Prerequisite): string {
       return 'the session working directory (SWITCH_E2E_AGENT_DIR)';
     case 'gateway-ui':
       return 'a gateway UI (SWITCH_GATEWAY_UI_URL)';
+    case 'agentic-models':
+      return 'the driver and judge models and a spending limit (SWITCH_E2E_DRIVER_MODEL, SWITCH_E2E_JUDGE_MODEL, SWITCH_E2E_AGENTIC_BUDGET_USD)';
   }
 }

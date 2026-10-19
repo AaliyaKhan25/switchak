@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { isStartMarker, optionNumber, requestHandle } from './scenarios.ts';
+import type { MattermostPost } from '../clients/mattermost-client.ts';
+import {
+  isRuntimeStatusPost,
+  isStartMarker,
+  optionNumber,
+  requestHandle,
+  turnStateOf,
+} from './scenarios.ts';
 
 describe('interruption admission', () => {
   it('requires the command marker, not an acknowledgement or refusal', () => {
@@ -8,6 +15,27 @@ describe('interruption admission', () => {
     expect(isStartMarker('I cannot post 200 separate messages.')).toBe(false);
     expect(isStartMarker('Working on it… · 0s')).toBe(false);
     expect(isStartMarker('I will write SWITCH_INTERRUPT_STARTED')).toBe(false);
+  });
+});
+
+describe('turn status cards', () => {
+  const post = (message: string) => ({ message }) as MattermostPost;
+
+  it('reads where the turn got to from the heading, and treats the card as Switch talking', () => {
+    expect(turnStateOf(post('**Working… 12s** · [Console](https://example.invalid)'))).toBe(
+      'running'
+    );
+    expect(turnStateOf(post('**Turn complete.**'))).toBe('completed');
+    expect(turnStateOf(post('**Worked for 1m 4s. 3 tool calls.**'))).toBe('completed');
+    expect(turnStateOf(post('**Turn interrupted. Worked for 9s.**'))).toBe('interrupted');
+    expect(turnStateOf(post('**Turn ended with an error.**\nsomething'))).toBe('error');
+    expect(isRuntimeStatusPost(post('**Working… 0s**'))).toBe(true);
+  });
+
+  it("leaves the agent's own words alone, bold or not", () => {
+    expect(turnStateOf(post('Working on the date bug now.'))).toBe(null);
+    expect(turnStateOf(post('**Note:** the turn is complete.'))).toBe(null);
+    expect(isRuntimeStatusPost(post('Here is the plan.'))).toBe(false);
   });
 });
 

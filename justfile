@@ -183,6 +183,14 @@ e2e-provider *args:
 e2e-browser *args:
     SWITCH_E2E_LANE=browser console/tooling-e2e/scripts/ephemeral-stack.sh {{ args }}
 
+# ── End-to-end harness, agentic lane, on a throwaway stack ─────────────────────
+# As e2e-provider, then the scenario files in console/tooling-e2e/agentic: a
+# driver model plays the human, a judge model grades the conversation. Needs
+# SWITCH_E2E_DRIVER_MODEL, SWITCH_E2E_JUDGE_MODEL (exact model ids) and
+# SWITCH_E2E_AGENTIC_BUDGET_USD. Spends real model calls, up to that limit.
+e2e-agentic *args:
+    SWITCH_E2E_LANE=agentic console/tooling-e2e/scripts/ephemeral-stack.sh {{ args }}
+
 # ── Regenerate the server surface the E2E coverage gate reads ─────────────────
 # Every agent operation and gateway route, written to
 # console/tooling-e2e/surface/server-surface.json. CI fails when it is stale;

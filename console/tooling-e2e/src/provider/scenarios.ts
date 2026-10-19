@@ -76,8 +76,32 @@ const RUNTIME_STATUS_MARKERS = [
   'interrupted my current turn',
 ];
 
+/**
+ * Where a turn has got to, as the session renderer heads its status card with
+ * it: one post per turn, edited in place from `Working…` to how the turn ended
+ * (`TURN_STATE` in core/switch_core/bridges/collaboration/session/renderers).
+ */
+export type TurnState = 'queued' | 'running' | 'completed' | 'interrupted' | 'error';
+
+const TURN_STATE_HEADINGS: readonly [TurnState, string][] = [
+  ['queued', 'Queued.'],
+  ['running', 'Working…'],
+  ['completed', 'Turn complete.'],
+  // A completed turn whose duration is known says how long it ran instead.
+  ['completed', 'Worked for '],
+  ['interrupted', 'Turn interrupted.'],
+  ['error', 'Turn ended with an error.'],
+];
+
+/** The state a turn status card reports, or null when the post is not one. */
+export function turnStateOf(post: MattermostPost): TurnState | null {
+  const heading = /^\*\*([^*]+)\*\*/.exec(post.message.trimStart())?.[1] ?? '';
+  return TURN_STATE_HEADINGS.find(([, text]) => heading.startsWith(text))?.[0] ?? null;
+}
+
 /** Whether a post is Switch narrating the session rather than the agent speaking. */
 export function isRuntimeStatusPost(post: MattermostPost): boolean {
+  if (turnStateOf(post) !== null) return true;
   const text = post.message.toLowerCase();
   return RUNTIME_STATUS_MARKERS.some((marker) => text.includes(marker));
 }

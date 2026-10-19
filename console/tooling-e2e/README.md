@@ -2,7 +2,7 @@
 
 End-to-end tests for Switch: **real messages through a real Switch server**, and
 through a real Mattermost bridge where a scenario crosses one. One package,
-three lanes:
+four lanes:
 
 - **The fast lane** needs no provider, no Switch Console and no LLM key. The
   harness plays every participant over plain HTTP: it registers throwaway
@@ -16,6 +16,10 @@ three lanes:
   same server: signing in, every page in the navigation rail, a room opened
   from the list, signing out. A page that renders but is broken (an uncaught
   error, a request the server failed, an error banner) fails it.
+- **The agentic lane** runs the provider lane's real session, but the
+  conversations come from scenario files: a model plays the human, and another
+  model grades the result against a rubric. Adding a scenario is adding a
+  file. See "The agentic lane" below.
 
 Nothing here talks to Switch Console directly. If a scenario passes, an operator
 doing the same thing by hand would have seen the same result.
@@ -76,6 +80,8 @@ Typecheck: `pnpm typecheck`.
 | `src/fast/` | Fast-lane scenarios, one file per area, listed in `index.ts` |
 | `src/provider/` | The provider lane: Console credential files, the shared agent and channel, the scenarios, `seed.ts` |
 | `src/browser/` | The browser lane: the gateway UI driver (`gateway-ui.ts`) and the scenarios, listed in `index.ts` |
+| `src/agentic/` | The agentic lane: scenario files' format, the driver and judge, model calls, spend |
+| `agentic/` | The agentic scenarios, one YAML file each |
 | `scripts/ephemeral-stack.sh` | The throwaway-stack runner behind `just e2e-fast`, `just e2e-provider` and `just e2e-browser` |
 | `scripts/scan-artifacts.sh` | Fails if a run's output holds one of the secrets the run used |
 | `src/ci-summary.ts` | The CI run summary, read from the JUnit report |
@@ -192,6 +198,9 @@ beside this file. Never commit one. `just e2e-fast` sets all of them itself.
 | `SWITCH_E2E_SECRETS_FILE` | no | File to append each credential the server issues during the run to (agent keys, gateway sessions), for CI's scan of the output. The stack script and `e2e.yml` set it. |
 | `SWITCH_GATEWAY_UI_URL` | browser lane | Where the gateway UI is served. Its `/gateway` requests must reach `SWITCH_API_URL`. `just e2e-browser` sets it. |
 | `SWITCH_E2E_OUTPUT_DIR` | no | Where the browser lane saves screenshots of failed pages. The stack script and `e2e.yml` set it. |
+| `SWITCH_E2E_DRIVER_MODEL` | agentic lane | Exact model id that plays the human, e.g. `claude-sonnet-5`. |
+| `SWITCH_E2E_JUDGE_MODEL` | agentic lane | Exact model id that grades the conversation. |
+| `SWITCH_E2E_AGENTIC_BUDGET_USD` | agentic lane | What one run may spend, driver, judge and agent together. The run stops once it is reached. |
 | `SWITCH_E2E_AGENT_DIR` | provider lane | Working directory of the session under test. When set, the agent's credentials are written into it (see below) and it is sent to Switch as the agent's `repo_dir`. |
 | `SWITCH_E2E_MANIFEST` | provider lane | File the setup records its agent and room in, so a second process can reuse them. See "Seeding first". |
 | `SWITCH_E2E_REPLY_TIMEOUT_MS` | provider lane | How long a scenario waits for the agent (default 5 min). |
@@ -199,7 +208,7 @@ beside this file. Never commit one. `just e2e-fast` sets all of them itself.
 | `SWITCH_E2E_AGENT_TYPE` | provider lane | `opencode` (default), `claude-code`, `codex`, `antigravity` or `cursor` — which provider's runtime is under test. |
 | `SWITCH_E2E_QUESTION_MODE` | provider lane | `numbered` (default) or `prose`; see the `question` row below. |
 | `SWITCH_E2E_CONTROLLER_ID` | provider lane | An agent controller to run the agent on. `just e2e-provider` sets it. Unset, a Switch Console session is expected instead. |
-| `SWITCH_E2E_PROVIDER_ENV_FILE` | `just e2e-provider` | A file of provider keys, handed to the controller as `--env-file`. Leave it unset to use the CLI's own sign-in. |
+| `SWITCH_E2E_PROVIDER_ENV_FILE` | `just e2e-provider`, `just e2e-agentic` | A file of provider keys, handed to the controller as `--env-file`, and to the agentic lane's driver and judge. Leave it unset to use the CLI's own sign-in. |
 
 Mattermost is all or nothing: none of its three variables means "no Mattermost
 here"; some of them is reported as a mistake.
@@ -250,6 +259,69 @@ Two things differ from a Console session:
   therefore absorbs the session's start-up time.
 
 The controller's log goes to `build/e2e/ephemeral/controller.log`.
+
+## The agentic lane
+
+`just e2e-agentic` sets up what `just e2e-provider` does (one agent on a
+headless controller, one Mattermost channel), then plays each file in
+`agentic/` against it:
+
+```yaml
+id: summarise-the-channel        # kebab-case, the file's own name
+owner: platform
+covers: [read_context, post_message]
+persona: |                       # who the driver plays
+  A team member back from a day off, catching up.
+goal: |                          # what they want; the driver stops once they have it
+  Learn what was decided about the weekly sync and who is doing what next.
+setup_messages:                  # posted first, not addressed to the agent (optional)
+  - Should we move the weekly sync to Thursday afternoons?
+opening: Just got back. What was decided above about the weekly sync?
+max_turns: 2                     # human messages, the opening included (1 to 6)
+rubric:                          # what the judge checks, each on its own
+  - id: names-the-decision
+    criterion: The agent says the sync moves to Wednesday at 10:00.
+```
+
+- **The driver** is a model playing the human. After each reply it writes the
+  next message from the persona, the goal and the conversation so far, or
+  stops once the goal is met. The opening is sent as written, so every run
+  starts the same way.
+- **The agent** answers in its real session. A reply is finished when Switch's
+  status card for the turn says the turn ended.
+- **The judge** is a second model. It reads the transcript, including the
+  setup messages, and grades each rubric criterion with a reason. It never
+  sees the persona, so it grades what was said, not what was meant.
+
+What fails a scenario is what can be decided without a model: the agent did
+not reply, its turn ended in an error, the server logged an error, or the run
+reached its spending limit. **The judge's verdicts do not fail a scenario.**
+They are printed per criterion and written, with the transcript and the spend,
+to `agentic/<id>.json` in the output directory. A model's grade is evidence to
+read until it has a record of agreeing with people.
+
+Both models are named by exact id, and an answer from any other model is
+refused rather than counted. Their calls go through the Claude Code CLI with
+its own system prompt, tools, MCP servers and settings all switched off, from
+an empty directory, so a developer's setup cannot leak in.
+
+**Spend** is measured, not estimated from a guess:
+
+- the driver and judge calls report their own cost;
+- the agent's session is priced from the tokens Switch records for it per
+  model (`GET /gateway/tenants/{tenant_id}/usage`), at the list prices in
+  `src/agentic/spend.ts`. A model with no price there stops the run rather
+  than counting as free.
+
+The run stops before any call that would start beyond
+`SWITCH_E2E_AGENTIC_BUDGET_USD`, and its last test fails if the total went
+over. CI pins the models and a $2 limit in `e2e.yml`.
+
+What a run costs, measured over four runs of the three scenarios here with
+Sonnet 5 in every role: $0.21 to $0.33 a run, about $0.08 a scenario. The
+agent's session is nearly nine tenths of it ($0.045 to $0.21 a scenario,
+most where it calls tools); the driver and judge together are about $0.01 a
+scenario.
 
 ## Server health and errors
 
@@ -342,6 +414,7 @@ dispatched by hand.
 | Every PR, and every push to main (`pr-ci.yml`) | fast | ephemeral | yes |
 | After a merge to main (`e2e-scheduled.yml`) | provider | ephemeral | no |
 | Nightly (`e2e-scheduled.yml`) | provider; fast; browser | ephemeral; dev; dev | no |
+| By hand only, for now (`e2e.yml`, dispatch) | agentic | ephemeral | no |
 
 - **Secrets.** An ephemeral fast run generates every secret it uses on the
   runner, so it works the same on a fork PR. Every other run reads its secrets

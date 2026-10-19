@@ -6,6 +6,7 @@
 #   just e2e-fast                 the fast lane (no provider, no Console)
 #   just e2e-provider             the provider lane, on a headless agent controller
 #   just e2e-browser              the browser lane: the gateway UI in headless Chromium
+#   just e2e-agentic              the agentic lane: scenario files, a driver and a judge model
 #   just e2e-fast --keep          leave the stack running afterwards
 #   just e2e-fast -- <vitest args> pass arguments through to vitest
 #
@@ -36,6 +37,10 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 HARNESS="$REPO/console/tooling-e2e"
 OUT="${E2E_OUT:-$REPO/build/e2e/ephemeral}"
 LANE="${SWITCH_E2E_LANE:-fast}"
+# The agentic lane runs on the provider lane's setup: a real session on an
+# agent controller.
+NEEDS_CONTROLLER=0
+case "$LANE" in provider|agentic) NEEDS_CONTROLLER=1 ;; esac
 KEEP=0
 VITEST_ARGS=()
 while [ $# -gt 0 ]; do
@@ -99,7 +104,7 @@ trap cleanup EXIT
 
 cp "$REPO/.env.example" "$ENV_FILE"
 "$REPO/deploy/local/generate-env-secrets.sh" "$ENV_FILE" e2e
-if [ "$LANE" = provider ]; then
+if [ "$NEEDS_CONTROLLER" = 1 ]; then
   # Agent management, and the key controllers' access tokens are signed with.
   sed -i.bak -e "s|^FEATURE_FLAGS_ENABLED=.*|FEATURE_FLAGS_ENABLED=agent_management|" \
              -e "s|^CONTROLLER_TOKEN_SECRET=.*|CONTROLLER_TOKEN_SECRET=$(openssl rand -hex 32)|" "$ENV_FILE"
@@ -171,7 +176,7 @@ MATTERMOST_TOKEN="$(curl -sf -D - -o /dev/null -H 'Content-Type: application/jso
 remember_secrets "$MATTERMOST_TOKEN"
 
 PROVIDER_ENV=()
-if [ "$LANE" = provider ]; then
+if [ "$NEEDS_CONTROLLER" = 1 ]; then
   echo "Building the agent controller…"
   (cd "$REPO/console" && pnpm -r --filter './packages/**' run build) >"$OUT/console-build.log" 2>&1 \
     || { echo "console package build failed; see $OUT/console-build.log" >&2; exit 1; }
@@ -235,7 +240,7 @@ if [ "$LANE" = browser ]; then
   for _ in $(seq 30); do curl -sf localhost:4173/ >/dev/null && break; sleep 1; done
   curl -sf localhost:4173/ >/dev/null \
     || { echo "the gateway UI did not come up; see $OUT/gateway-ui.log" >&2; exit 1; }
-  BROWSER_ENV=(SWITCH_GATEWAY_UI_URL=http://127.0.0.1:4173 SWITCH_E2E_OUTPUT_DIR="$OUT")
+  BROWSER_ENV=(SWITCH_GATEWAY_UI_URL=http://127.0.0.1:4173)
 fi
 
 echo "Running the $LANE lane…"
@@ -248,6 +253,8 @@ status=0
   export SWITCH_E2E_SECRETS_FILE="$SECRETS"
   # What the server logs, so a scenario during which it logs an error fails.
   export SWITCH_E2E_SERVER_LOG="$OUT/switch-core.log"
+  # Screenshots of failed pages, and agentic transcripts and verdicts.
+  export SWITCH_E2E_OUTPUT_DIR="$OUT"
   SWITCH_E2E_LANE="$LANE" \
   SWITCH_E2E_ENVIRONMENT=ephemeral \
   SWITCH_E2E_STRICT=1 \
@@ -264,7 +271,7 @@ status=0
 
 if [ "$status" != 0 ]; then
   echo "The $LANE lane failed. switch-core log: $OUT/switch-core.log" >&2
-  [ "$LANE" = provider ] && echo "Agent controller log: $OUT/controller.log" >&2
+  [ "$NEEDS_CONTROLLER" = 1 ] && echo "Agent controller log: $OUT/controller.log" >&2
   [ "$LANE" = browser ] && echo "Screenshots of failed pages: $OUT/screenshots" >&2
 fi
 exit "$status"
