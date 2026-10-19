@@ -298,6 +298,24 @@ def _ephemeral(text: str) -> dict[str, Any]:
     return {"ephemeral_text": text, "skip_slack_parsing": True}
 
 
+def _close_loop(loop: asyncio.AbstractEventLoop) -> None:
+    """Cancel what is still running on `loop`, then close it.
+
+    A socket's `websockets` connection runs a keepalive task beside it that
+    outlives the socket's own coroutine. A loop dropped with that task still
+    pending is reported as "Task was destroyed but it is pending!" whenever it
+    is collected, at ERROR, in the middle of whatever the server is doing.
+    """
+    pending = asyncio.all_tasks(loop)
+    for task in pending:
+        task.cancel()
+    if pending:
+        loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+    loop.run_until_complete(loop.shutdown_asyncgens())
+    loop.close()
+    asyncio.set_event_loop(None)
+
+
 class MattermostAdapter(PlatformAdapter):
     display_name: ClassVar[str] = "Mattermost"
     docs_slug: ClassVar[str | None] = "mattermost"
@@ -2211,23 +2229,32 @@ class MattermostAdapter(PlatformAdapter):
                 return
             backoff = 2
             while not stopped.is_set():
+                # `init_websocket` is synchronous: it runs the thread's current
+                # loop until the socket closes, so each connection gets a loop
+                # of its own, closed with it.
+                ws_loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(ws_loop)
                 try:
-                    ws_loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(ws_loop)
-                    ws_loop.run_until_complete(driver.init_websocket(_handler))
+                    driver.init_websocket(_handler)
                 except Exception as e:
-                    if stopped.is_set():
-                        break
-                    logger.debug(
-                        "WebSocket for %s disconnected: %s, retrying in %ds",
-                        name,
-                        e,
-                        backoff,
-                    )
-                    stopped.wait(backoff)
-                    backoff = min(backoff * 2, 30)
+                    reason = str(e)
+                    backoff_next = min(backoff * 2, 30)
                 else:
-                    backoff = 2
+                    # It returns only once an established connection closed.
+                    reason = "connection closed"
+                    backoff, backoff_next = 2, 2
+                finally:
+                    _close_loop(ws_loop)
+                if stopped.is_set():
+                    break
+                logger.debug(
+                    "WebSocket for %s disconnected: %s, retrying in %ds",
+                    name,
+                    reason,
+                    backoff,
+                )
+                stopped.wait(backoff)
+                backoff = backoff_next
 
         ws_thread = threading.Thread(
             target=_run_ws, daemon=True, name=f"mm-ws-{agent_name}"

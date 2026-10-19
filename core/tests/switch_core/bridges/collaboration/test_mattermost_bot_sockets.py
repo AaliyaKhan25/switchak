@@ -33,8 +33,15 @@ class _Bot:
     def login(self) -> None:
         return None
 
-    async def init_websocket(self, handler: Any) -> None:
+    def init_websocket(self, handler: Any) -> asyncio.AbstractEventLoop:
+        """As `mattermostdriver.Driver.init_websocket`: synchronous, running
+        the thread's current event loop until the socket closes."""
         self.websocket = object()
+        loop = asyncio.get_event_loop()
+        loop.run_until_complete(self._connect(handler))
+        return loop
+
+    async def _connect(self, handler: Any) -> None:
         self.connects += 1
         while not self.disconnected.is_set():
             await asyncio.sleep(0.01)
@@ -101,3 +108,44 @@ def test_removing_an_agent_closes_its_socket_for_good() -> None:
     assert bot.disconnected.is_set()
     assert not alive
     assert bot.connects == 1
+
+
+class _BotWithKeepalive(_Bot):
+    """A bot driver whose socket, like the `websockets` connection under
+    `mattermostdriver`, runs a keepalive task beside it that outlives the
+    socket's own coroutine unless something cancels it."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.keepalive: asyncio.Task[None] | None = None
+        self.loop: asyncio.AbstractEventLoop | None = None
+
+    async def _connect(self, handler: Any) -> None:
+        self.loop = asyncio.get_running_loop()
+        self.keepalive = asyncio.create_task(asyncio.sleep(3600))
+        await super()._connect(handler)
+
+
+def test_a_closed_socket_leaves_no_task_pending_on_its_loop() -> None:
+    """A loop dropped with a task still pending on it is reported by asyncio
+    as `Task was destroyed but it is pending!` whenever the loop is collected,
+    an error logged in the middle of whatever the server is doing then."""
+    bridge = _bridge(_agent("switchdev", "Switch Dev"))
+    adapter, _ = _mattermost_identity_adapter(bridge, [], "full_name")
+    bot = _BotWithKeepalive()
+    adapter._create_driver = lambda **_kwargs: bot  # type: ignore[assignment,method-assign,return-value]
+
+    async def go() -> None:
+        adapter._main_loop = asyncio.get_running_loop()
+        before = set(threading.enumerate())
+        await adapter.create_agent_identity("switchdev", "a Switch agent")
+        thread = _socket_thread("switchdev", before)
+        await _until(lambda: bot.connects == 1)
+        await adapter.remove_agent_identity("switchdev")
+        await asyncio.to_thread(thread.join, 5)
+        assert not thread.is_alive()
+
+    _run(go())
+
+    assert bot.keepalive is not None and bot.keepalive.cancelled()
+    assert bot.loop is not None and bot.loop.is_closed()
