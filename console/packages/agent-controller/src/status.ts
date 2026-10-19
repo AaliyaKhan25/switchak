@@ -17,6 +17,7 @@ import {
   type Assignment,
   type Platform,
   type ProcessState,
+  isProvider,
   PROTOCOL_VERSION,
   type Provider,
   PROVIDERS,
@@ -216,6 +217,9 @@ export function providerStatusFrom(
  * A provider as last checked: its status, its CLI, the login Switch gave the
  * machine when that is what agents use, and why a given login is not used.
  */
+/** Provider checks made elsewhere, for {@link ProviderStatuses.seed}: each status and where its CLI was found. */
+export type ProviderSeed = { status: ProviderStatus; path: string | null }[];
+
 type ProviderEntry = {
   status: ProviderStatus;
   path: string | null;
@@ -253,6 +257,44 @@ export class ProviderStatuses {
       onChange: () => void;
     }
   ) {}
+
+  /**
+   * Takes provider checks made before this controller started (Switch
+   * Console's, as onboarding opens) as its own, so its first report already
+   * carries them rather than waiting on checks of its own.
+   *
+   * Only what no login given to the machine could change: a provider signed
+   * in on its own, or not installed. Any other is checked here as usual, and
+   * so is one already checked here or checked longer ago than the TTL.
+   */
+  seed(seeds: ProviderSeed): void {
+    let changed = false;
+    for (const { status, path } of seeds) {
+      if (!isProvider(status.provider) || this.entries.has(status.provider)) continue;
+      const own = status.auth === 'ok' && status.auth_source === 'local';
+      if (!own && status.installed) continue;
+      const at = Date.parse(status.checked_at);
+      if (!Number.isFinite(at) || this.deps.now() - at >= PROVIDER_TTL_MS) continue;
+      this.entries.set(status.provider, {
+        status,
+        path,
+        at,
+        login: null,
+        problem: null,
+        sequence: 0,
+      });
+      changed = true;
+    }
+    if (changed) this.deps.onChange();
+  }
+
+  /** Every check made so far, with where each provider's CLI was found: what `seed` takes. */
+  results(): ProviderSeed {
+    return PROVIDERS.flatMap((provider) => {
+      const entry = this.entries.get(provider);
+      return entry ? [{ status: entry.status, path: entry.path }] : [];
+    });
+  }
 
   /** Checks one provider now, its own login first, then one given to the machine. */
   async check(provider: Provider): Promise<ProviderStatus> {

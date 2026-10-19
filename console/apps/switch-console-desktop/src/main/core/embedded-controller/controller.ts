@@ -1,12 +1,14 @@
 import { homedir } from 'node:os';
+import { machineProvider } from '@main/core/managed-agents/owned-machines';
 import { getServer } from '@main/core/switch-servers/servers-store';
 import type {
   EmbeddedControllerOverview,
   MachineDetailsChange,
 } from '@shared/core/embedded-controller/embedded-controller';
+import type { MachineProvider } from '@shared/core/managed-agents/managed-agents';
 import { createRPCController } from '@shared/lib/ipc/rpc';
 import { defaultWorkspacePath, serverWorkspacesDir } from './controller-files';
-import { embeddedControllerService } from './embedded-controllers';
+import { embeddedControllerService, providerPrecheck } from './embedded-controllers';
 
 /** "Run managed agents on this computer", per Switch server. */
 export const embeddedControllerController = createRPCController({
@@ -27,6 +29,19 @@ export const embeddedControllerController = createRPCController({
   /** Checks every provider on this computer again now, and reports it to the server. */
   recheckProviders: (serverId: string): Promise<void> =>
     embeddedControllerService.recheckProviders(serverId),
+
+  /**
+   * Checks this computer's providers now, ahead of any controller, for the
+   * one started later to take; as onboarding opens. Returns at once.
+   */
+  precheckProviders: (): void => providerPrecheck.start(),
+
+  /**
+   * What that check has found so far, as a machine's providers read; null
+   * when it was not started in this session.
+   */
+  precheckedProviders: async (): Promise<MachineProvider[] | null> =>
+    (await providerPrecheck.results())?.map(machineProvider) ?? null,
 
   /** Renames this computer as a machine and/or changes its description, on the server. */
   updateDetails: (params: { serverId: string; changes: MachineDetailsChange }): Promise<void> =>

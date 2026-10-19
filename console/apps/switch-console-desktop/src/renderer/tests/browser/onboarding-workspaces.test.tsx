@@ -36,6 +36,7 @@ vi.mock('@renderer/lib/ipc', () => ({
       listJoinableWorkspaces,
       switchCloud: () => Promise.resolve(null),
     },
+    embeddedController: { precheckProviders: () => {} },
   },
   events: { on: () => () => {}, emit: () => {} },
 }));

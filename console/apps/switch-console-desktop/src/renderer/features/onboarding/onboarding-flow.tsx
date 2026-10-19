@@ -12,6 +12,7 @@ import { switchServersStore } from '@renderer/features/switch-servers/switch-ser
 import { useSwitchCloud } from '@renderer/features/switch-servers/use-switch-cloud';
 import { workspacesStore } from '@renderer/features/workspaces/workspaces-store';
 import { describeFailure } from '@renderer/lib/errors/describe-failure';
+import { rpc } from '@renderer/lib/ipc';
 import { useNavigate } from '@renderer/lib/layout/navigation-provider';
 import { report } from '@renderer/lib/telemetry/report';
 import { WizardChromeProvider } from '@renderer/lib/ui/wizard-frame';
@@ -97,6 +98,12 @@ function funnelPath(page: OnboardingPage): RendererTelemetryEvents['onboarding_p
 export const OnboardingFlow = observer(function OnboardingFlow() {
   const { navigate } = useNavigate();
   const page = onboardingStore.page;
+  // switch-buddy runs on this computer at the end, whatever server is chosen:
+  // its providers are checked now, while the person signs in, so the buddy's
+  // page knows what is signed in by the time it opens.
+  useEffect(() => {
+    void rpc.embeddedController.precheckProviders();
+  }, []);
   // Every page as it opens, so the last one an install reports is where it
   // stopped.
   useEffect(() => {

@@ -27,9 +27,15 @@ vi.hoisted(() => {
   } as unknown as typeof window.electronAPI;
 });
 
+const precheckProviders = vi.hoisted(() => vi.fn());
+
 vi.mock('@renderer/lib/ipc', () => ({
   events: { on: () => () => {} },
-  rpc: { remoteHosts: { listHosts }, switchServers: { switchCloud } },
+  rpc: {
+    remoteHosts: { listHosts },
+    switchServers: { switchCloud },
+    embeddedController: { precheckProviders },
+  },
 }));
 
 vi.mock('@renderer/features/switch-servers/switch-servers-store', () => ({
@@ -201,6 +207,12 @@ async function type(input: HTMLInputElement, value: string): Promise<void> {
 }
 
 describe('the first-run flow', () => {
+  it("checks this computer's providers as it opens, for switch-buddy at the end", async () => {
+    precheckProviders.mockClear();
+    await renderFlow();
+    expect(precheckProviders).toHaveBeenCalledTimes(1);
+  });
+
   it('asks how to run Switch once you get started, without the remote host path', async () => {
     const el = await renderFlow();
 
