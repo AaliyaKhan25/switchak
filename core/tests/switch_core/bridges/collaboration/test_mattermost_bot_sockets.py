@@ -13,7 +13,14 @@ import threading
 from collections.abc import Callable
 from typing import Any
 
-from switch_core.bridges.collaboration.mattermost.adapter import MattermostAdapter
+from websockets.asyncio.client import ClientConnection, connect
+from websockets.asyncio.server import ServerConnection, serve
+
+from switch_core.bridges.collaboration.mattermost.adapter import (
+    MattermostAdapter,
+    _BotSocketConnection,
+    _close_loop,
+)
 from tests.switch_core.bridges.collaboration.test_bridge_agent_display_names import (
     _agent,
     _bridge,
@@ -149,3 +156,56 @@ def test_a_closed_socket_leaves_no_task_pending_on_its_loop() -> None:
 
     assert bot.keepalive is not None and bot.keepalive.cancelled()
     assert bot.loop is not None and bot.loop.is_closed()
+
+
+def test_closing_a_socket_loop_closes_the_connection_left_open_on_it() -> None:
+    """mattermostdriver keeps its connection in a local variable and leaves it
+    open when the socket stops, so the loop's closing has to close it, or its
+    file descriptor lasts until the garbage collector finds it."""
+    server_saw_close = threading.Event()
+    listening = threading.Event()
+    port: list[int] = []
+    stop_server = threading.Event()
+
+    def serve_forever() -> None:
+        async def handler(connection: ServerConnection) -> None:
+            await connection.wait_closed()
+            server_saw_close.set()
+
+        async def main() -> None:
+            async with serve(handler, "127.0.0.1", 0) as server:
+                port.append(next(iter(server.sockets)).getsockname()[1])
+                listening.set()
+                await asyncio.to_thread(stop_server.wait, 10)
+
+        asyncio.run(main())
+
+    server_thread = threading.Thread(target=serve_forever, daemon=True)
+    server_thread.start()
+    assert listening.wait(5)
+
+    opened: list[ClientConnection] = []
+
+    def socket_thread() -> None:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+        async def open_and_return() -> None:
+            opened.append(
+                await connect(
+                    f"ws://127.0.0.1:{port[0]}",
+                    create_connection=_BotSocketConnection,
+                    close_timeout=2,
+                )
+            )
+
+        loop.run_until_complete(open_and_return())
+        _close_loop(loop)
+
+    thread = threading.Thread(target=socket_thread)
+    thread.start()
+    thread.join(10)
+    stop_server.set()
+
+    assert opened and opened[0].transport.is_closing()
+    assert server_saw_close.wait(5)

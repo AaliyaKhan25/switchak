@@ -7,6 +7,7 @@ import logging
 import re
 import threading
 import uuid
+import weakref
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
@@ -27,6 +28,7 @@ from mattermostdriver.exceptions import (
     ResourceNotFound,
 )
 from pydantic import field_validator
+from websockets.asyncio.client import ClientConnection
 
 from switch_core.bridges.collaboration.adapter import (
     ActivityMark,
@@ -98,6 +100,10 @@ _MAX_BOT_ICON_BYTES = 5 * 1024 * 1024
 # to wait for ever, so a server that accepts the connection and never answers
 # would hold the call, and anything waiting on it, indefinitely.
 _MM_REQUEST_TIMEOUT_SECONDS = 10.0
+# How long a bot socket's closing handshake may take before the connection is
+# dropped: it runs on the socket's own thread, between one connection and the
+# next.
+_MM_SOCKET_CLOSE_TIMEOUT_SECONDS = 2.0
 
 # Mattermost channel types a bot can be *added* to: open and private channels.
 # Membership of a DM ("D") or group DM ("G") is a property of the conversation
@@ -298,14 +304,34 @@ def _ephemeral(text: str) -> dict[str, Any]:
     return {"ephemeral_text": text, "skip_slack_parsing": True}
 
 
+class _BotSocketConnection(ClientConnection):
+    """A bot socket's `websockets` connection, remembered so `_close_loop` can
+    close it: mattermostdriver holds it in a local variable and leaves it open
+    when its loop stops, so its transport and file descriptor would otherwise
+    last until the garbage collector found them."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        _BOT_SOCKET_CONNECTIONS.add(self)
+
+
+_BOT_SOCKET_CONNECTIONS: weakref.WeakSet[_BotSocketConnection] = weakref.WeakSet()
+
+
 def _close_loop(loop: asyncio.AbstractEventLoop) -> None:
-    """Cancel what is still running on `loop`, then close it.
+    """Close the connections opened on `loop`, cancel what is still running on
+    it, then close it.
 
     A socket's `websockets` connection runs a keepalive task beside it that
     outlives the socket's own coroutine. A loop dropped with that task still
     pending is reported as "Task was destroyed but it is pending!" whenever it
     is collected, at ERROR, in the middle of whatever the server is doing.
     """
+    connections = [c for c in list(_BOT_SOCKET_CONNECTIONS) if c.loop is loop]
+    if connections:
+        loop.run_until_complete(
+            asyncio.gather(*(c.close() for c in connections), return_exceptions=True)
+        )
     pending = asyncio.all_tasks(loop)
     for task in pending:
         task.cancel()
@@ -2890,6 +2916,10 @@ class MattermostAdapter(PlatformAdapter):
             "port": port,
             "verify": self._config.verify_tls,
             "request_timeout": _MM_REQUEST_TIMEOUT_SECONDS,
+            "websocket_kw_args": {
+                "create_connection": _BotSocketConnection,
+                "close_timeout": _MM_SOCKET_CLOSE_TIMEOUT_SECONDS,
+            },
         }
         if token:
             opts["token"] = token
