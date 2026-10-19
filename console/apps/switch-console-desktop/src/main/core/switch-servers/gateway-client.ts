@@ -45,6 +45,7 @@ import {
   gitHubConnectionSchema,
   gitHubFlowSchema,
 } from '@shared/core/switch-servers/github-connection';
+import { isHttpsOrLoopback } from '@shared/core/switch-servers/loopback';
 import type {
   SlackOwnAppSetup,
   SlackTokensChecked,
@@ -3375,8 +3376,8 @@ export async function startGitHubConnection(
   server: SwitchServer,
   input: { port: number; state: string; completion_secret: string }
 ) {
-  if (new URL(server.gatewayUrl).protocol !== 'https:')
-    throw new Error('GitHub connections require HTTPS.');
+  if (!isHttpsOrLoopback(new URL(server.gatewayUrl)))
+    throw new Error('GitHub connections require HTTPS, unless the server is on this computer.');
   const value = z.object({ id: z.string().regex(/^[A-Za-z0-9_-]{43}$/), url: z.string() }).parse(
     await (
       await gatewayFetch(server, '/provider-connections/github/flows', {
@@ -3459,8 +3460,8 @@ export async function startServiceConnection(
   service: string,
   input: { port: number; state: string; completion_secret: string }
 ): Promise<ServiceFlowStart> {
-  if (new URL(server.gatewayUrl).protocol !== 'https:')
-    throw new Error('Service connections require HTTPS.');
+  if (!isHttpsOrLoopback(new URL(server.gatewayUrl)))
+    throw new Error('Service connections require HTTPS, unless the server is on this computer.');
   const value = serviceFlowStartSchema.parse(
     await (
       await gatewayFetch(server, serviceFlows(service), {
@@ -3476,7 +3477,7 @@ export async function startServiceConnection(
     !url.username &&
     !url.password &&
     (value.mode === 'core'
-      ? url.protocol === 'https:' &&
+      ? isHttpsOrLoopback(url) &&
         [server.gatewayUrl, server.apiUrl].some((own) => new URL(own).origin === url.origin) &&
         url.pathname === `/gateway${serviceFlows(service)}/authorize` &&
         url.searchParams.get('state') === value.id
@@ -3804,10 +3805,7 @@ export async function giveMachineLogin(
   // The login is sealed, but the key it was sealed to came from this server:
   // over plain HTTP anyone in between could have handed over their own.
   const gateway = new URL(server.gatewayUrl);
-  if (
-    gateway.protocol !== 'https:' &&
-    !['localhost', '127.0.0.1', '[::1]'].includes(gateway.hostname)
-  )
+  if (!isHttpsOrLoopback(gateway))
     throw new Error('Giving a machine a provider login requires HTTPS.');
   const res = await managementFetch(
     server,
