@@ -140,6 +140,9 @@ def _config(flags: frozenset[str]) -> SwitchConfig:
 def gateway_app(config: SwitchConfig) -> FastAPI:
     app = create_gateway_app(
         **{name: MagicMock() for name in _COLLABORATORS},
+        # No GitHub App configured, as on a server that has none: the app
+        # mounts the same routes either way.
+        connector_apps=MagicMock(**{"github_app.return_value": None}),
         install_service=None,
         invite_mailer=None,
         config=config,

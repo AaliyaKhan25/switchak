@@ -23,6 +23,7 @@
     "finalise_task",
     "get_advanced_config",
     "get_agent_detail",
+    "get_my_context",
     "get_role_detail",
     "get_room_detail",
     "get_room_group_detail",
@@ -49,9 +50,11 @@
     "post_message",
     "read_context",
     "release_role",
+    "remove_agent_service",
     "run_template",
     "save_template",
     "send_targeted_message",
+    "set_agent_service",
     "unarchive_room",
     "unlink_rooms",
     "update_agent_detail",
@@ -84,6 +87,11 @@
       "flags": []
     },
     {
+      "route": "DELETE /gateway/auth/me",
+      "auth": "session",
+      "flags": []
+    },
+    {
       "route": "DELETE /gateway/chats/{room_id}/hidden",
       "auth": "session",
       "flags": []
@@ -107,6 +115,13 @@
       "route": "DELETE /gateway/collaborations/{bridge_id}/teams/{team_id}",
       "auth": "session",
       "flags": []
+    },
+    {
+      "route": "DELETE /gateway/connector-apps/{service}",
+      "auth": "session",
+      "flags": [
+        "service_connections"
+      ]
     },
     {
       "route": "DELETE /gateway/connectors/{connector_id}",
@@ -381,6 +396,11 @@
       "flags": []
     },
     {
+      "route": "GET /gateway/collaborations/setup/slack",
+      "auth": "session",
+      "flags": []
+    },
+    {
       "route": "GET /gateway/collaborations/types",
       "auth": "session",
       "flags": []
@@ -404,6 +424,20 @@
       "route": "GET /gateway/collaborations/{bridge_id}/users",
       "auth": "session",
       "flags": []
+    },
+    {
+      "route": "GET /gateway/connector-apps",
+      "auth": "session",
+      "flags": [
+        "service_connections"
+      ]
+    },
+    {
+      "route": "GET /gateway/connector-apps/{service}/impact",
+      "auth": "session",
+      "flags": [
+        "service_connections"
+      ]
     },
     {
       "route": "GET /gateway/connectors",
@@ -693,6 +727,13 @@
       ]
     },
     {
+      "route": "GET /gateway/service-connections/{service}/agents",
+      "auth": "session",
+      "flags": [
+        "service_connections"
+      ]
+    },
+    {
       "route": "GET /gateway/service-connections/{service}/flows/authorize",
       "auth": "none",
       "flags": [
@@ -787,6 +828,13 @@
       "route": "GET /gateway/version",
       "auth": "session",
       "flags": []
+    },
+    {
+      "route": "GET /gateway/workspace/services",
+      "auth": "session",
+      "flags": [
+        "service_connections"
+      ]
     },
     {
       "route": "PATCH /gateway/agents/{agent_id}/options",
@@ -898,6 +946,11 @@
       "flags": []
     },
     {
+      "route": "POST /gateway/auth/oidc/exchange",
+      "auth": "none",
+      "flags": []
+    },
+    {
       "route": "POST /gateway/auth/refresh",
       "auth": "session",
       "flags": []
@@ -948,6 +1001,11 @@
       "flags": []
     },
     {
+      "route": "POST /gateway/collaborations/setup/slack/check",
+      "auth": "session",
+      "flags": []
+    },
+    {
       "route": "POST /gateway/collaborations/{bridge_id}/default",
       "auth": "session",
       "flags": []
@@ -961,6 +1019,20 @@
       "route": "POST /gateway/collaborations/{bridge_id}/teams/{team_id}",
       "auth": "session",
       "flags": []
+    },
+    {
+      "route": "POST /gateway/connector-apps/{service}/check",
+      "auth": "session",
+      "flags": [
+        "service_connections"
+      ]
+    },
+    {
+      "route": "POST /gateway/connector-apps/{service}/import",
+      "auth": "session",
+      "flags": [
+        "service_connections"
+      ]
     },
     {
       "route": "POST /gateway/connectors",
@@ -1061,22 +1133,12 @@
       "flags": []
     },
     {
-      "route": "POST /gateway/provider-connections/github/callback",
-      "auth": "none",
-      "flags": []
-    },
-    {
       "route": "POST /gateway/provider-connections/github/flows",
       "auth": "session",
       "flags": []
     },
     {
       "route": "POST /gateway/provider-connections/github/flows/{flow_id}/complete",
-      "auth": "session",
-      "flags": []
-    },
-    {
-      "route": "POST /gateway/provider-connections/github/flows/{flow_id}/confirm",
       "auth": "session",
       "flags": []
     },
@@ -1178,21 +1240,7 @@
       ]
     },
     {
-      "route": "POST /gateway/service-connections/{service}/flows/callback",
-      "auth": "none",
-      "flags": [
-        "service_connections"
-      ]
-    },
-    {
       "route": "POST /gateway/service-connections/{service}/flows/{flow_id}/complete",
-      "auth": "session",
-      "flags": [
-        "service_connections"
-      ]
-    },
-    {
-      "route": "POST /gateway/service-connections/{service}/flows/{flow_id}/confirm",
       "auth": "session",
       "flags": [
         "service_connections"
@@ -1291,6 +1339,13 @@
       "flags": []
     },
     {
+      "route": "PUT /gateway/connector-apps/{service}",
+      "auth": "session",
+      "flags": [
+        "service_connections"
+      ]
+    },
+    {
       "route": "PUT /gateway/management/agents/{agent_id}",
       "auth": "session",
       "flags": [
@@ -1340,6 +1395,13 @@
       "route": "PUT /gateway/trust-settings",
       "auth": "session",
       "flags": []
+    },
+    {
+      "route": "PUT /gateway/workspace/services/{service}",
+      "auth": "session",
+      "flags": [
+        "service_connections"
+      ]
     }
   ]
 }
