@@ -12,7 +12,6 @@ import {
   SidebarMenuAction,
   SidebarMenuRow,
 } from '@renderer/features/sidebar/sidebar-primitives';
-import { openRoomView } from '@renderer/features/sidebar/sidebar-room-grouping';
 import { switchRoomsStore } from '@renderer/features/switch-servers/switch-rooms-store';
 import { useFeatureFlags } from '@renderer/lib/hooks/useFeatureFlags';
 import { useParams } from '@renderer/lib/layout/navigation-provider';
@@ -22,7 +21,13 @@ import { EmptyState } from '@renderer/lib/ui/empty-state';
 import type { ChatSummary } from '@shared/core/chats/chats';
 import { isCloudMachine, type ManagedAgentView } from '@shared/core/managed-agents/managed-agents';
 import { AgentConnectionsTab, useAgentServiceGrants } from './agent-connections-tab';
-import { type AgentSection, agentSections, shownAgentSection } from './agent-sections';
+import { AgentRoomSummary } from './agent-room-summary';
+import {
+  type AgentSection,
+  agentSections,
+  shownAgentRoom,
+  shownAgentSection,
+} from './agent-sections';
 import { shouldAutoStartChat } from './auto-start-chat';
 import { ManagedAgentPage } from './managed-agent-page';
 import { managedAgentLabel } from './managed-agent-state';
@@ -108,9 +113,19 @@ export function openAgentChat(
   return direct.find((chat) => chat.roomId === roomId) ?? direct[0] ?? null;
 }
 
+/** The room summarised on an agent's page in place of a chat, if one is. */
+export function openAgentRoom(
+  agent: ManagedAgentView,
+  room: string | undefined,
+  section: AgentSection | null
+): string | null {
+  const { agentRooms, rooms } = conversationsOf(agent);
+  return shownAgentRoom(room, section, agentRooms && rooms);
+}
+
 /**
  * An agent's page: its navigation (the agent's settings, its direct chats and
- * the rooms it is in, which open in the room view) beside what is selected.
+ * the rooms it is in, each summarised in place) beside what is selected.
  * The selection is kept in the view's params; with none chosen it is the
  * newest direct chat, and an agent with none gets one started once per visit.
  */
@@ -124,8 +139,9 @@ export const AgentChats = observer(function AgentChats({ agent }: { agent: Manag
   const { agentRooms, direct, rooms } = conversationsOf(agent);
   const roomsError = switchRoomsStore.errorFor(workspaceId, agentId);
   const { sections, section } = useAgentSection(serverId, agent, params.section);
-  const roomId = openAgentChat(agent, params.roomId)?.roomId ?? null;
-  const open = (id: string) => setParams({ roomId: id, section: undefined });
+  const shownRoom = openAgentRoom(agent, params.room, section);
+  const roomId = shownRoom ? null : (openAgentChat(agent, params.roomId)?.roomId ?? null);
+  const open = (id: string) => setParams({ roomId: id, section: undefined, room: undefined });
   const newChat = async () => {
     const chat = await directChats.start(serverId, agentId);
     if (chat) open(chat.roomId);
@@ -139,7 +155,7 @@ export const AgentChats = observer(function AgentChats({ agent }: { agent: Manag
     listed: ownServer && chatsStore.userId !== null,
     listFailed: chatsStore.listError !== null,
     hasDirectChats: direct.length > 0,
-    selected: Boolean(params.roomId) || section !== null,
+    selected: Boolean(params.roomId) || section !== null || shownRoom !== null,
     tried: autoStartTried.current,
   });
   useEffect(() => {
@@ -199,8 +215,8 @@ export const AgentChats = observer(function AgentChats({ agent }: { agent: Manag
                 bridgeDisplayName:
                   switchRoomsStore.roomSummaryById(room.roomId)?.bridgeDisplayName ?? null,
               }}
-              isActive={false}
-              onOpen={() => openRoomView(room.roomId)}
+              isActive={room.roomId === shownRoom}
+              onOpen={() => setParams({ room: room.roomId, section: undefined })}
             />
           ))}
           {!agentRooms && !roomsError && <Note>Loading…</Note>}
@@ -216,6 +232,14 @@ export const AgentChats = observer(function AgentChats({ agent }: { agent: Manag
             agentId={agentId}
             agentName={managedAgentLabel(agent)}
             cloud={agent.machine !== null && isCloudMachine(agent.machine)}
+          />
+        ) : shownRoom ? (
+          <AgentRoomSummary
+            key={shownRoom}
+            roomId={shownRoom}
+            fallbackName={
+              rooms.find((listed) => listed.roomId === shownRoom)?.roomName ?? shownRoom
+            }
           />
         ) : roomId ? (
           <>

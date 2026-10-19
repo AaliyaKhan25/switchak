@@ -78,34 +78,6 @@ function ToolGroup({
   );
 }
 
-/** Switch's own tools for the turn, folded into a count until asked for. */
-function SwitchActions({
-  items,
-  turn,
-  activity,
-}: {
-  items: ChatActivityItem[];
-  turn: TurnActivity;
-  activity: AgentActivity;
-}) {
-  const [open, setOpen] = useState(false);
-  return (
-    <WorkLogRow
-      icon={<ToolKindIcon kind="switch" />}
-      label={`${items.length} Switch ${items.length === 1 ? 'action' : 'actions'}`}
-      tone="passive"
-      open={open}
-      onToggle={() => setOpen(!open)}
-    >
-      {open && (
-        <div className="ms-3 border-l border-border ps-2">
-          <ToolRows items={items} turn={turn} activity={activity} />
-        </div>
-      )}
-    </WorkLogRow>
-  );
-}
-
 /** How a turn ended, with the host's reason for it muted after it. */
 export function turnEndLabel(label: string, reason: string | null): ReactNode {
   if (!reason) return label;
@@ -159,11 +131,10 @@ export function AgentRow({
 export function turnShown(activity: AgentActivity, turn: TurnActivity): boolean {
   const running = turn.status === 'queued' || turn.status === 'running';
   const reasoning = activity.reasoning.get(turn.turnId) ?? null;
-  const { work, switchActions } = turnTools(turn);
+  const work = turnTools(turn);
   return (
     reasoningLabel(reasoning, running && reasoning !== null) !== null ||
     work.length > 0 ||
-    switchActions.length > 0 ||
     isThinking(turn) ||
     turn.status === 'interrupted' ||
     turn.status === 'error' ||
@@ -200,8 +171,8 @@ export const ChatActivityBlock = observer(function ChatActivityBlock({
   const running = turn.status === 'queued' || turn.status === 'running';
   const reasoning = activity.reasoning.get(turn.turnId) ?? null;
   const label = reasoningLabel(reasoning, running && reasoning !== null);
-  const { work, switchActions } = turnTools(turn);
-  const thinking = isThinking(turn) && !label;
+  const work = turnTools(turn);
+  const thinking = isThinking(turn) && !(label && !reasoning?.completedAt);
   const ended = turn.status === 'interrupted' || turn.status === 'error';
   const requests = turn.requests;
   if (!turnShown(activity, turn)) return null;
@@ -224,9 +195,6 @@ export const ChatActivityBlock = observer(function ChatActivityBlock({
         <ToolGroup items={work} turn={turn} activity={activity} />
       ) : (
         <ToolRows items={work} turn={turn} activity={activity} />
-      )}
-      {switchActions.length > 0 && (
-        <SwitchActions items={switchActions} turn={turn} activity={activity} />
       )}
       {thinking && (
         <WorkLogRow
