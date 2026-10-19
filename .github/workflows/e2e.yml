@@ -21,10 +21,16 @@ name: E2E
 # GitHub Environment, whose protection rules decide which refs may run it:
 #
 #   e2e-provider  secret ANTHROPIC_API_KEY, for the controller's Claude Code
-#   dev, staging  vars SWITCH_API_URL, MATTERMOST_URL, MATTERMOST_TEAM, and
+#   dev, staging  secrets SWITCH_API_URL, MATTERMOST_URL, and
 #                 SWITCH_GATEWAY_UI_URL for the browser lane; secrets
 #                 SWITCH_GATEWAY_ADMIN_EMAIL, SWITCH_GATEWAY_ADMIN_PASSWORD,
-#                 SWITCH_AGENT_REGISTRATION_TOKEN, MATTERMOST_TOKEN
+#                 SWITCH_AGENT_REGISTRATION_TOKEN, MATTERMOST_TOKEN; var
+#                 MATTERMOST_TEAM
+#
+# A non-production deployment's addresses are secrets, not variables, so they
+# stay out of this public repository's logs: GitHub masks them in the job log,
+# and the output directory has their hosts replaced before it is scanned and
+# uploaded.
 #
 # Runs are strict (SWITCH_E2E_STRICT=1): a scenario that cannot run fails
 # rather than skips, so a deployment without Mattermost configured fails the
@@ -177,14 +183,14 @@ jobs:
           SWITCH_E2E_LANE: ${{ inputs.lane }}
           SWITCH_E2E_ENVIRONMENT: ${{ inputs.environment }}
           SWITCH_E2E_STRICT: '1'
-          SWITCH_API_URL: ${{ vars.SWITCH_API_URL }}
+          SWITCH_API_URL: ${{ secrets.SWITCH_API_URL }}
           SWITCH_GATEWAY_ADMIN_EMAIL: ${{ secrets.SWITCH_GATEWAY_ADMIN_EMAIL }}
           SWITCH_GATEWAY_ADMIN_PASSWORD: ${{ secrets.SWITCH_GATEWAY_ADMIN_PASSWORD }}
           SWITCH_AGENT_REGISTRATION_TOKEN: ${{ secrets.SWITCH_AGENT_REGISTRATION_TOKEN }}
-          MATTERMOST_URL: ${{ vars.MATTERMOST_URL }}
+          MATTERMOST_URL: ${{ secrets.MATTERMOST_URL }}
           MATTERMOST_TOKEN: ${{ secrets.MATTERMOST_TOKEN }}
           MATTERMOST_TEAM: ${{ vars.MATTERMOST_TEAM }}
-          SWITCH_GATEWAY_UI_URL: ${{ vars.SWITCH_GATEWAY_UI_URL }}
+          SWITCH_GATEWAY_UI_URL: ${{ secrets.SWITCH_GATEWAY_UI_URL }}
           SWITCH_E2E_SECRETS_FILE: ${{ runner.temp }}/issued-secrets
           SWITCH_E2E_OUTPUT_DIR: ${{ env.OUT }}
         run: |
@@ -203,11 +209,11 @@ jobs:
           SWITCH_E2E_LANE: fast
           SWITCH_E2E_ENVIRONMENT: ${{ inputs.environment }}
           SWITCH_E2E_STRICT: '1'
-          SWITCH_API_URL: ${{ vars.SWITCH_API_URL }}
+          SWITCH_API_URL: ${{ secrets.SWITCH_API_URL }}
           SWITCH_GATEWAY_ADMIN_EMAIL: ${{ secrets.SWITCH_GATEWAY_ADMIN_EMAIL }}
           SWITCH_GATEWAY_ADMIN_PASSWORD: ${{ secrets.SWITCH_GATEWAY_ADMIN_PASSWORD }}
           SWITCH_AGENT_REGISTRATION_TOKEN: ${{ secrets.SWITCH_AGENT_REGISTRATION_TOKEN }}
-          MATTERMOST_URL: ${{ vars.MATTERMOST_URL }}
+          MATTERMOST_URL: ${{ secrets.MATTERMOST_URL }}
           MATTERMOST_TOKEN: ${{ secrets.MATTERMOST_TOKEN }}
           MATTERMOST_TEAM: ${{ vars.MATTERMOST_TEAM }}
           SWITCH_E2E_SECRETS_FILE: ${{ runner.temp }}/issued-secrets
@@ -220,10 +226,31 @@ jobs:
           node --experimental-strip-types console/tooling-e2e/src/ci-summary.ts \
             "$OUT/junit.xml" "$LANE" "$LANE lane on $TARGET" >>"$GITHUB_STEP_SUMMARY"
 
+      - name: Replace the deployment's hosts in the output
+        if: ${{ always() && inputs.environment != 'ephemeral' }}
+        env:
+          SWITCH_API_URL: ${{ secrets.SWITCH_API_URL }}
+          MATTERMOST_URL: ${{ secrets.MATTERMOST_URL }}
+          SWITCH_GATEWAY_UI_URL: ${{ secrets.SWITCH_GATEWAY_UI_URL }}
+        run: |
+          [ -d "$OUT" ] || exit 0
+          for name in SWITCH_API_URL MATTERMOST_URL SWITCH_GATEWAY_UI_URL; do
+            url="${!name}"
+            [ -n "$url" ] || continue
+            host="${url#*://}"
+            host="${host%%/*}"
+            grep -rlIF -e "$host" -- "$OUT" | while IFS= read -r file; do
+              HOST="$host" NAME="$name" perl -pi -e 's/\Q$ENV{HOST}\E/<$ENV{NAME} host>/g' "$file"
+            done
+          done
+
       - name: Scan the output for secrets
         id: scan
         if: ${{ always() }}
         env:
+          SWITCH_API_URL: ${{ secrets.SWITCH_API_URL }}
+          MATTERMOST_URL: ${{ secrets.MATTERMOST_URL }}
+          SWITCH_GATEWAY_UI_URL: ${{ secrets.SWITCH_GATEWAY_UI_URL }}
           SWITCH_GATEWAY_ADMIN_PASSWORD: ${{ secrets.SWITCH_GATEWAY_ADMIN_PASSWORD }}
           SWITCH_AGENT_REGISTRATION_TOKEN: ${{ secrets.SWITCH_AGENT_REGISTRATION_TOKEN }}
           MATTERMOST_TOKEN: ${{ secrets.MATTERMOST_TOKEN }}
@@ -237,8 +264,15 @@ jobs:
           else
             # The environment's own secrets, and every credential the server
             # issued the harness during the run (agent keys, gateway sessions),
-            # which stay valid on a shared deployment after the run ends.
+            # which stay valid on a shared deployment after the run ends. The
+            # deployment's hosts too: one left in a binary file, which the step
+            # before does not rewrite, keeps the output from being uploaded.
             { printf '%s\n' "$SWITCH_GATEWAY_ADMIN_PASSWORD" "$SWITCH_AGENT_REGISTRATION_TOKEN" "$MATTERMOST_TOKEN"
+              for url in "$SWITCH_API_URL" "$MATTERMOST_URL" "$SWITCH_GATEWAY_UI_URL"; do
+                [ -n "$url" ] || continue
+                host="${url#*://}"
+                printf '%s\n' "${host%%/*}"
+              done
               cat "$RUNNER_TEMP/issued-secrets" 2>/dev/null || true
             } | console/tooling-e2e/scripts/scan-artifacts.sh "$OUT"
           fi
