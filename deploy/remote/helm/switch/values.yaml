@@ -189,6 +189,10 @@ secrets:
 
 # ── Switch Core (FastAPI) ─────────────────────────────────────────────────────
 switchCore:
+  # The GitHub App and Google's client below are optional: the server's
+  # operator can set them up under Connectors in the dashboard instead
+  # (docs/old/github-app-setup.md, docs/old/google-workspace-setup.md). Set
+  # here, they win over what is saved there.
   # Existing Secret with github.json (client_id, client_secret, slug, origin).
   githubConnectionsSecret: ""
   # Absolute path to the GitHub App's signing key inside a Secret this chart
@@ -201,7 +205,8 @@ switchCore:
   # Existing Secret with client.json ({"client_id", "client_secret"}): the
   # Web OAuth client of an internal Google app, for the Google Workspace
   # connection. Register <gatewayPublicUrl>/gateway/service-connections/google-workspace/flows/callback
-  # as its redirect URI. Without it, Google Workspace shows as not set up.
+  # as its redirect URI. Without it or one saved under Connectors, Google
+  # Workspace shows as not set up.
   googleWorkspaceClientSecret: ""
   hostedControllerSecret: ""
   # How many cloud machines may run at once; 0 means this server cannot run
@@ -283,7 +288,7 @@ switchCore:
     enabled: false
     # Base URL, no path — `/v1/logs` is appended, the same
     # convention otlpEndpoint follows.
-    endpoint: https://telemetry.flintai.dev
+    endpoint: https://telemetry.switchagents.ai
     # How often the usage snapshot is collected and sent.
     snapshotIntervalHours: 24
     # Which Amplitude project the usage lands in: prod, staging, dev or local.
@@ -333,6 +338,13 @@ switchCore:
     clientId: ""
     scopes: "openid profile email"
     providerLabel: "OIDC"
+    # One sign-in button per entry instead of one labelled providerLabel. Each
+    # sends its params with the authorization request, so a provider that
+    # understands them goes straight to that way of signing in. WorkOS:
+    #   loginOptions:
+    #     - { id: google, label: Google, params: { provider: GoogleOAuth } }
+    #     - { id: github, label: GitHub, params: { provider: GitHubOAuth } }
+    loginOptions: []
     # Must exactly match the redirect URI registered with the IdP.
     redirectUrl: ""
     # Refuse a login unless the IdP asserts email_verified. Set false only for a

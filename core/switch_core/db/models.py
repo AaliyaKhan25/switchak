@@ -3960,6 +3960,10 @@ class ServiceConnection(TenantScoped, Base):
     encrypted_secret: Mapped[str] = mapped_column(Text, nullable=False)
     secret_revision: Mapped[int] = mapped_column(Integer, nullable=False)
     error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # The OAuth client the sign-in went through, so a connection made through
+    # a client the operator has since replaced is known to need reconnecting.
+    # Null for a key, and for a sign-in made before it was recorded.
+    oauth_client_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -3987,13 +3991,17 @@ class SignInFlow(TenantScoped, Base):
     conditional update only, so of two requests racing for one step exactly
     one takes it.
 
-    Nothing secret is stored in the clear: the PKCE verifier and, once the code
-    is exchanged, the vendor's credentials are keyring-encrypted, and the
-    completion secret and browser nonce are kept as SHA-256 hashes, compared
-    against what Console and the browser present. `details` holds what the
-    flow asked the vendor for (its name, scopes and consent), none of it
-    secret. Rows expire after ten minutes, and expired ones are deleted as the
-    next flow in the workspace starts.
+    Nothing secret is stored in the clear: the PKCE verifier is
+    keyring-encrypted, and the completion secret and browser nonce are kept as
+    SHA-256 hashes, compared against what Console and the browser present.
+    The vendor's credentials never reach the row: the request that exchanges
+    the code writes the connection, and the flow then holds the outcome
+    (`account_label`, `warning` or `error`) for Console to read until it drops
+    the flow. `encrypted_result` held those credentials between the exchange
+    and a confirm step that is gone; it stays for a release that still writes
+    it. `details` holds what the flow asked the vendor for (its name, scopes
+    and consent), none of it secret. Rows expire after ten minutes, and
+    expired ones are deleted as the next flow in the workspace starts.
     """
 
     __tablename__ = "sign_in_flows"
@@ -4001,7 +4009,7 @@ class SignInFlow(TenantScoped, Base):
         CheckConstraint("kind IN ('github', 'service')", name="ck_sign_in_flows_kind"),
         CheckConstraint(
             "status IN ('pending', 'authorizing', 'returning', 'delivered', "
-            "'checking', 'ready', 'failed')",
+            "'checking', 'ready', 'connected', 'failed')",
             name="ck_sign_in_flows_status",
         ),
         CheckConstraint("mode IN ('loopback', 'core')", name="ck_sign_in_flows_mode"),
@@ -4026,6 +4034,7 @@ class SignInFlow(TenantScoped, Base):
     encrypted_result: Mapped[str | None] = mapped_column(Text, nullable=True)
     account_label: Mapped[str | None] = mapped_column(Text, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    warning: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -4055,6 +4064,88 @@ class ServiceOAuthClient(Base):
     encrypted_secret: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class ServiceAppCredential(Base):
+    """The app the operator registered at a service's vendor, for the whole server.
+
+    A GitHub App or a static OAuth client, entered from the dashboard rather
+    than a settings file (`connections/app_credentials.py`). One row per
+    deployment and service, as `ServiceOAuthClient` is: the vendor sees one
+    Switch. `service` is a catalog slug, checked in code. `client_id` and
+    `settings` (non-secret extras, such as a GitHub App's slug) are kept in the
+    clear; `encrypted_secrets` is keyring-encrypted JSON of every secret the
+    kind has, so a kind with more secrets needs no migration.
+    """
+
+    __tablename__ = "service_app_credentials"
+
+    service: Mapped[str] = mapped_column(Text, primary_key=True)
+    client_id: Mapped[str] = mapped_column(Text, nullable=False)
+    settings: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    encrypted_secrets: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_by: Mapped[str] = mapped_column(
+        Text, ForeignKey("users.id"), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class ServerAuditEvent(Base):
+    """One change to the server as a whole: who did what, to what, when.
+
+    `AuditEvent` records a tenant's history; a change no tenant owns, such as
+    the operator setting up a connector's app, has no tenant to be filed
+    under, so it lands here. The same shape and the same rules: append-only
+    for the runtime role (`grant_runtime_role`), `actor_user_id` with no
+    foreign key so the history outlives the account, and `details` holding
+    identifiers and field names, never a secret.
+    """
+
+    __tablename__ = "server_audit_events"
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True, default=_uuid)
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.clock_timestamp(), nullable=False
+    )
+    actor_user_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    action: Mapped[str] = mapped_column(Text, nullable=False)
+    target_type: Mapped[str] = mapped_column(Text, nullable=False)
+    target_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    details: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+
+
+class WorkspaceServiceSetting(TenantScoped, Base):
+    """A workspace admin switched a catalog service on or off for the workspace.
+
+    No row means on: a row is written only when an admin touches the switch,
+    so `updated_by` always names a person. `service` is a catalog slug, checked
+    in code as `ServiceConnection.service` is. Off, nobody in the workspace can
+    connect, grant or be issued a token for it, and its grants drop out of
+    what agents' sessions are given; the grants themselves are kept.
+    """
+
+    __tablename__ = "workspace_service_settings"
+    __table_args__ = (PrimaryKeyConstraint("tenant_id", "service"),)
+
+    service: Mapped[str] = mapped_column(Text, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    updated_by: Mapped[str] = mapped_column(
+        Text, ForeignKey("users.id"), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
     )
 
 

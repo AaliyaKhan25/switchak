@@ -290,7 +290,7 @@ async def test_several_agents_make_a_private_channel_with_all_of_them(
     assert chat["channelType"] == "channel_private"
     assert chat["bridgeType"] is None
     assert sorted(a["id"] for a in chat["agents"]) == sorted([helper.id, other.id])
-    assert chat["name"] == "Chat with helper, other"
+    assert chat["name"] == "New chat"
 
     async with chats.factory() as session:
         clients = set(await RoomStore().get_client_ids(session, chat["roomId"]))
@@ -1051,6 +1051,32 @@ async def test_the_periodic_recheck_recovers_a_missed_notification(
     ).status_code == 200
     name, data = await events.next()
     assert name == "message" and data["body"] == "unannounced"
+    await events.stream.aclose()  # type: ignore[attr-defined]
+
+
+async def test_a_changed_agent_resends_the_chats_it_is_in(chats: _Harness) -> None:
+    agent = await chats.agent("helper", owner=chats.alice)
+    room_id = await chats.new_chat(chats.alice, agent, "c1")
+    assert (await chats.invite(chats.alice, room_id, chats.bob)).status_code == 200
+
+    events = _stream(chats, chats.bob, {}, recheck=60.0)
+    assert (await events.next())[0] == "chat"
+    assert (await events.next())[0] == "ready"
+
+    async with chats.factory() as session:
+        await AgentStore().update(
+            session,
+            agent.id,
+            icon_url="https://example.com/new.png",
+            display_name="Helper",
+        )
+        await session.commit()
+    await chats.service.agent_changed(TENANT, agent.id)
+
+    name, summary = await events.next()
+    assert name == "chat" and summary["roomId"] == room_id
+    assert summary["agents"][0]["iconUrl"] == "https://example.com/new.png"
+    assert summary["agents"][0]["displayName"] == "Helper"
     await events.stream.aclose()  # type: ignore[attr-defined]
 
 

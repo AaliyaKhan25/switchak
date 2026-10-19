@@ -18,14 +18,37 @@ import type {
 import { ManagedServerStoppedError } from '@shared/core/managed-switch-server/managed-switch-server';
 import { HostUnreachableError } from '@shared/core/remote-hosts/reachability';
 import {
+  type ConnectionAgent,
   type ConnectionCatalogEntry,
+  type WorkspaceService,
+  type WorkspaceServiceChange,
+  connectionAgentsSchema,
   connectionCatalogSchema,
   serviceConnectionsSchema,
+  workspaceServiceChangeSchema,
+  workspaceServicesSchema,
 } from '@shared/core/switch-servers/connection-catalog';
+import {
+  type ConnectorApp,
+  type ConnectorAppCheckResult,
+  type ConnectorAppImpact,
+  type ConnectorApps,
+  type SaveConnectorAppInput,
+  type SaveConnectorAppResult,
+  connectorAppCheckResultSchema,
+  connectorAppImpactSchema,
+  connectorAppRefusalSchema,
+  connectorAppSchema,
+  connectorAppsSchema,
+} from '@shared/core/switch-servers/connector-apps';
 import {
   gitHubConnectionSchema,
   gitHubFlowSchema,
 } from '@shared/core/switch-servers/github-connection';
+import type {
+  SlackOwnAppSetup,
+  SlackTokensChecked,
+} from '@shared/core/switch-servers/own-app-setup';
 import { policyNamesOwner } from '@shared/core/switch-servers/owner-policy';
 import {
   SERVICE_CALLBACK_PATH,
@@ -392,12 +415,17 @@ export async function fetchAuthConfig(server: SwitchServer): Promise<SwitchAuthC
     oidc_enabled: boolean;
     oidc_provider_label: string | null;
     signup_enabled?: boolean;
+    oidc_login_options?: { id: string; label: string }[];
+    oidc_browser_handoff?: boolean;
   };
   return {
     passwordLoginEnabled: json.password_login_enabled,
     oidcEnabled: json.oidc_enabled,
     oidcProviderLabel: json.oidc_provider_label,
     signupEnabled: json.signup_enabled === true,
+    // Absent on servers predating them: one button, in the app's own window.
+    oidcLoginOptions: (json.oidc_login_options ?? []).map(({ id, label }) => ({ id, label })),
+    oidcBrowserHandoff: json.oidc_browser_handoff === true,
   };
 }
 
@@ -500,6 +528,24 @@ const featureFlagsResponseSchema = z.object({
 export async function fetchFeatureFlags(server: SwitchServer): Promise<RemoteFeatureFlag[]> {
   const res = await gatewayFetch(server, '/feature-flags', { authenticated: true });
   return featureFlagsResponseSchema.parse(await res.json()).flags;
+}
+
+/**
+ * Delete the signed-in account on this server, confirmed by its email. A
+ * refusal (the only owner of a shared workspace, the server's own admin, …) is
+ * raised with the server's own reason, which says what to do first.
+ */
+export async function deleteMyAccount(server: SwitchServer, email: string): Promise<void> {
+  try {
+    await gatewayFetch(server, '/auth/me', {
+      authenticated: true,
+      method: 'DELETE',
+      body: { email },
+    });
+  } catch (error) {
+    if (error instanceof GatewayError && error.detail) throw new Error(error.detail);
+    throw error;
+  }
 }
 
 export async function fetchMe(server: SwitchServer): Promise<SwitchUser> {
@@ -1608,6 +1654,49 @@ export async function fetchBridgeTypes(server: SwitchServer): Promise<RemoteBrid
  * it to the renderer, and do not fold it into an error message: `GatewayError`
  * quotes the *response* body only, never the request.
  */
+/** Slack's create-app page, filled in with the app this server needs. */
+export async function fetchSlackOwnAppSetup(server: SwitchServer): Promise<SlackOwnAppSetup> {
+  const res = await gatewayFetch(server, '/collaborations/setup/slack', { authenticated: true });
+  const body = z.object({ create_url: z.string() }).parse(await res.json());
+  return { createUrl: body.create_url };
+}
+
+/**
+ * Whether a Slack app's two tokens work, and its workspace. A refusal is raised
+ * with the server's own sentence, which says which token is wrong. The tokens
+ * are not logged nor quoted in errors.
+ */
+export async function checkSlackTokens(
+  server: SwitchServer,
+  tokens: { botToken: string; appToken: string }
+): Promise<SlackTokensChecked> {
+  const res = await ownAppCheck(server, '/collaborations/setup/slack/check', {
+    bot_token: tokens.botToken,
+    app_token: tokens.appToken,
+  });
+  const body = z
+    .object({ workspace_id: z.string(), workspace_name: z.string(), bot_name: z.string() })
+    .parse(await res.json());
+  return {
+    workspaceId: body.workspace_id,
+    workspaceName: body.workspace_name,
+    botName: body.bot_name,
+  };
+}
+
+async function ownAppCheck(
+  server: SwitchServer,
+  path: string,
+  body: Record<string, string>
+): Promise<Response> {
+  try {
+    return await gatewayFetch(server, path, { authenticated: true, method: 'POST', body });
+  } catch (error) {
+    if (error instanceof GatewayError && error.detail) throw new Error(error.detail);
+    throw error;
+  }
+}
+
 export async function createBridge(
   server: SwitchServer,
   params: {
@@ -3031,6 +3120,8 @@ export async function getConnectionCatalog(
     loopback_ports: entry.loopback_ports,
     key: entry.key,
     external_identity: entry.external_identity,
+    consent: entry.consent,
+    workspace_enabled: entry.workspace_enabled,
   }));
 }
 
@@ -3051,8 +3142,176 @@ async function getOlderCatalog(server: SwitchServer): Promise<ConnectionCatalogE
         loopback_ports: null,
         key: null,
         external_identity: null,
+        consent: null,
+        workspace_enabled: null,
       }))
   );
+}
+
+/**
+ * The signed-in person's own agents in the workspace, and whether each is
+ * granted `service`; null when the server has no such list (a 404: it
+ * predates it). Any other failure is thrown for the caller to show.
+ */
+export async function fetchConnectionAgents(
+  server: SwitchServer,
+  service: string
+): Promise<ConnectionAgent[] | null> {
+  let response: Response;
+  try {
+    response = await gatewayFetch(
+      server,
+      `/service-connections/${encodeURIComponent(service)}/agents`,
+      { authenticated: true }
+    );
+  } catch (cause) {
+    if (cause instanceof GatewayError && cause.status === 404) return null;
+    throw cause;
+  }
+  return connectionAgentsSchema.parse(await response.json());
+}
+
+/**
+ * Every service the workspace can switch on or off, for a workspace admin; null
+ * when the server has no workspace switch (a 404: it predates it, or its
+ * `service_connections` flag is off). Any other failure, a refusal included,
+ * is thrown for the caller to show.
+ */
+export async function fetchWorkspaceServices(
+  server: SwitchServer
+): Promise<WorkspaceService[] | null> {
+  let response: Response;
+  try {
+    response = await gatewayFetch(server, '/workspace/services', { authenticated: true });
+  } catch (cause) {
+    if (cause instanceof GatewayError && cause.status === 404) return null;
+    throw cause;
+  }
+  return workspaceServicesSchema.parse(await response.json()).services;
+}
+
+/** Switch `service` on or off for the whole workspace; workspace admins only. */
+export async function setWorkspaceService(
+  server: SwitchServer,
+  service: string,
+  enabled: boolean
+): Promise<WorkspaceServiceChange> {
+  const response = await gatewayFetch(
+    server,
+    `/workspace/services/${encodeURIComponent(service)}`,
+    { authenticated: true, method: 'PUT', body: { enabled } }
+  );
+  return workspaceServiceChangeSchema.parse(await response.json());
+}
+
+const connectorAppPath = (service: string, rest = '') =>
+  `/connector-apps/${encodeURIComponent(service)}${rest}`;
+
+/**
+ * The server's connector apps, for its operator; null when the server has
+ * none to set up (a 404: it predates them, or its `service_connections` flag
+ * is off). Any other failure, a refusal included, is thrown for the caller
+ * to show.
+ */
+export async function fetchConnectorApps(server: SwitchServer): Promise<ConnectorApps | null> {
+  let response: Response;
+  try {
+    response = await gatewayFetch(server, '/connector-apps', { authenticated: true });
+  } catch (cause) {
+    if (cause instanceof GatewayError && cause.status === 404) return null;
+    throw cause;
+  }
+  return connectorAppsSchema.parse(await response.json());
+}
+
+/**
+ * Save a connector's app once its vendor accepts it; it takes effect at once.
+ * A refusal from the vendor's check is answered, with the value to look at
+ * again; any other failure is thrown.
+ */
+export async function saveConnectorApp(
+  server: SwitchServer,
+  service: string,
+  input: SaveConnectorAppInput
+): Promise<SaveConnectorAppResult> {
+  let response: Response;
+  try {
+    response = await gatewayFetch(server, connectorAppPath(service), {
+      authenticated: true,
+      method: 'PUT',
+      body: input,
+    });
+  } catch (cause) {
+    if (cause instanceof GatewayError && cause.status === 422 && cause.body) {
+      const refusal = connectorAppRefusalSchema.safeParse(safeJson(cause.body));
+      if (refusal.success)
+        return {
+          kind: 'refused',
+          message: refusal.data.detail,
+          field: refusal.data.field,
+          checks: refusal.data.checks,
+        };
+    }
+    throw cause;
+  }
+  return { kind: 'saved', app: connectorAppSchema.parse(await response.json()) };
+}
+
+function safeJson(body: string): unknown {
+  try {
+    return JSON.parse(body);
+  } catch {
+    return null;
+  }
+}
+
+/** Copy the app configuration sets into a saved one, so the configuration can be removed. */
+export async function importConnectorApp(
+  server: SwitchServer,
+  service: string
+): Promise<ConnectorApp> {
+  const response = await gatewayFetch(server, connectorAppPath(service, '/import'), {
+    authenticated: true,
+    method: 'POST',
+  });
+  return connectorAppSchema.parse(await response.json());
+}
+
+/** Ask the vendor about the app in use; nothing is stored. */
+export async function checkConnectorApp(
+  server: SwitchServer,
+  service: string
+): Promise<ConnectorAppCheckResult> {
+  const response = await gatewayFetch(server, connectorAppPath(service, '/check'), {
+    authenticated: true,
+    method: 'POST',
+  });
+  return connectorAppCheckResultSchema.parse(await response.json());
+}
+
+/** Who would have to reconnect if the app `clientId` names replaced the one in use. */
+export async function fetchConnectorAppImpact(
+  server: SwitchServer,
+  service: string,
+  clientId: string
+): Promise<ConnectorAppImpact> {
+  const query = new URLSearchParams({ client_id: clientId });
+  const response = await gatewayFetch(server, connectorAppPath(service, `/impact?${query}`), {
+    authenticated: true,
+  });
+  return connectorAppImpactSchema.parse(await response.json());
+}
+
+/** Remove the saved app; answers who was connected through it, and keeps their connections. */
+export async function removeConnectorApp(
+  server: SwitchServer,
+  service: string
+): Promise<ConnectorAppImpact> {
+  const response = await gatewayFetch(server, connectorAppPath(service), {
+    authenticated: true,
+    method: 'DELETE',
+  });
+  return connectorAppImpactSchema.parse(await response.json());
 }
 
 /**
@@ -3147,30 +3406,14 @@ export async function getGitHubFlow(server: SwitchServer, id: string) {
     ).json()
   );
 }
-export async function confirmGitHubConnection(
-  server: SwitchServer,
-  id: string,
-  completionSecret: string
-) {
-  const response = await gatewayFetch(
-    server,
-    `/provider-connections/github/flows/${encodeURIComponent(id)}/confirm`,
-    {
-      authenticated: true,
-      method: 'POST',
-      body: { completion_secret: completionSecret },
-    }
-  );
-  if (response.status === 204) return { warning: null };
-  return z.object({ warning: z.string().nullable() }).parse(await response.json());
-}
+/** Hand the code back: the server exchanges it and keeps the connection. */
 export async function completeGitHubConnection(
   server: SwitchServer,
   id: string,
   code: string,
   completionSecret: string
 ) {
-  await gatewayFetch(
+  const response = await gatewayFetch(
     server,
     `/provider-connections/github/flows/${encodeURIComponent(id)}/complete`,
     {
@@ -3179,6 +3422,9 @@ export async function completeGitHubConnection(
       body: { code, completion_secret: completionSecret },
     }
   );
+  return z
+    .object({ warning: z.string().nullable(), login: z.string() })
+    .parse(await response.json());
 }
 export async function cancelGitHubConnection(server: SwitchServer, id: string) {
   await gatewayFetch(server, `/provider-connections/github/flows/${encodeURIComponent(id)}`, {
@@ -3250,6 +3496,7 @@ export async function getServiceFlow(server: SwitchServer, service: string, id: 
     ).json()
   );
 }
+/** Hand the code back: the server exchanges it and keeps the connection. */
 export async function completeServiceConnection(
   server: SwitchServer,
   service: string,
@@ -3257,24 +3504,22 @@ export async function completeServiceConnection(
   code: string,
   completionSecret: string
 ) {
-  await gatewayFetch(server, `${serviceFlows(service)}/${encodeURIComponent(id)}/complete`, {
-    authenticated: true,
-    method: 'POST',
-    body: { code, completion_secret: completionSecret },
-  });
-}
-export async function confirmServiceConnection(
-  server: SwitchServer,
-  service: string,
-  id: string,
-  completionSecret: string
-) {
   const response = await gatewayFetch(
     server,
-    `${serviceFlows(service)}/${encodeURIComponent(id)}/confirm`,
-    { authenticated: true, method: 'POST', body: { completion_secret: completionSecret } }
+    `${serviceFlows(service)}/${encodeURIComponent(id)}/complete`,
+    {
+      authenticated: true,
+      method: 'POST',
+      body: { code, completion_secret: completionSecret },
+    }
   );
-  return z.object({ warning: z.string().nullable() }).parse(await response.json());
+  return z
+    .object({
+      warning: z.string().nullable(),
+      consent: z.enum(['read', 'write']),
+      account: z.string(),
+    })
+    .parse(await response.json());
 }
 export async function cancelServiceConnection(server: SwitchServer, service: string, id: string) {
   await gatewayFetch(server, `${serviceFlows(service)}/${encodeURIComponent(id)}`, {

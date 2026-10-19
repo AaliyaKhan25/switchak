@@ -30,8 +30,8 @@ export function stackProjectName(dataDirName: string, kind: 'local' | 'remote'):
  * project name share `pgdata` and every one except the one that created it
  * fails authentication. They also fight over the containers themselves,
  * recreating each other's stack on start with their own ports. That covers
- * dev builds started side by side with SWITCH_CONSOLE_USER_DATA_DIR, not only
- * different builds. Stable keeps the original name, `switchdash-local`, so
+ * dev builds and Canary started side by side with SWITCH_CONSOLE_USER_DATA_DIR,
+ * not only different builds. Stable keeps the original name, `switchdash-local`, so
  * existing installs stay attached to the stack they already have.
  */
 export const LOCAL_SERVER_PROJECT_NAME = stackProjectName(userDataDirName(), 'local');
