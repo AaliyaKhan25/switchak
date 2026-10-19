@@ -44,6 +44,23 @@ describe('configuration', () => {
     );
   });
 
+  it('refuses a Mattermost configuration beside a declaration that there is none', () => {
+    expect(loadEnv('fast', { ...BASE, SWITCH_E2E_NO_MATTERMOST: '1' }, {}).noMattermost).toBe(true);
+    expect(() =>
+      loadEnv(
+        'fast',
+        {
+          ...BASE,
+          SWITCH_E2E_NO_MATTERMOST: '1',
+          MATTERMOST_URL: 'http://mm.invalid',
+          MATTERMOST_TOKEN: 'mm-token-placeholder',
+          MATTERMOST_TEAM: 'team',
+        },
+        {}
+      )
+    ).toThrow(/SWITCH_E2E_NO_MATTERMOST/);
+  });
+
   it('refuses an unknown environment or lane', () => {
     expect(() => loadEnv('fast', { ...BASE, SWITCH_E2E_ENVIRONMENT: 'qa' }, {})).toThrow(/qa/);
     expect(() => laneFrom({ SWITCH_E2E_LANE: 'slow' }, {})).toThrow(/slow/);
@@ -168,6 +185,19 @@ describe('admission', () => {
       failure: true,
       reason: expect.stringContaining('MATTERMOST_URL'),
     });
+  });
+
+  it('skips without failing, even when strict, on a Mattermost the environment does not deploy', () => {
+    const needsMattermost = header({ requires: ['mattermost'] });
+    expect(admit(needsMattermost, env({ strict: true, noMattermost: true }))).toMatchObject({
+      run: false,
+      failure: false,
+      reason: expect.stringContaining('does not deploy'),
+    });
+    const needsBoth = header({ requires: ['mattermost', 'gateway-ui'] });
+    expect(
+      admit(needsBoth, env({ strict: true, noMattermost: true, gatewayUiUrl: null }))
+    ).toMatchObject({ run: false, failure: true });
   });
 });
 

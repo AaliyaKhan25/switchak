@@ -383,7 +383,7 @@ jobs:
 
   # Real messages through a real server and Mattermost, on a stack the job
   # builds from this checkout. Needs no secret, so a fork PR runs it the same.
-  # The provider lane and the deployed environments are e2e-scheduled.yml's.
+  # The provider lane is e2e-scheduled.yml's.
   e2e-fast:
     name: E2E fast lane
     needs: changes
@@ -391,7 +391,6 @@ jobs:
     uses: ./.github/workflows/e2e.yml
     with:
       lane: fast
-      environment: ephemeral
       agent_type: claude-code
 
   migration-heads-on-merge:

@@ -115,7 +115,9 @@ in `environments`, and its `requires` are configured. Otherwise it shows as
 **skipped, with the reason**, never as passed. Under `SWITCH_E2E_STRICT=1` (how
 `just e2e-fast` and CI run) a missing prerequisite, missing configuration or an
 unreachable server **fails** the run instead, so a job that ran nothing cannot
-go green.
+go green. The one exception is an environment that deploys no Mattermost on
+purpose and says so with `SWITCH_E2E_NO_MATTERMOST=1`: its Mattermost
+scenarios skip even under strict mode, and the reason names the setting.
 
 A scenario that changes server-global state (a feature flag, say) lists only
 `ephemeral`. One that writes anything never lists `prod`.
@@ -193,11 +195,12 @@ beside this file. Never commit one. `just e2e-fast` sets all of them itself.
 | `MATTERMOST_TOKEN` | for Mattermost scenarios | Token of the **human** the harness posts as (a personal access token, or a login session token). |
 | `MATTERMOST_TEAM` | for Mattermost scenarios | Team **slug** (e.g. `switch`), not its display name. |
 | `SWITCH_E2E_STRICT` | no | `1` turns every "cannot run" into a failure. CI sets it. |
+| `SWITCH_E2E_NO_MATTERMOST` | no | `1` declares that the environment deploys no Mattermost, so its Mattermost scenarios skip even under strict mode. Refused alongside `MATTERMOST_*`. |
 | `SWITCH_E2E_KEEP` | no | `1` leaves agents, rooms and channels behind for inspection. |
 | `SWITCH_E2E_SERVER_LOG` | no | The server's log, written with `LOG_FORMAT=json`. When set, a scenario fails if the server logged an error while it ran. The stack script sets it. |
-| `SWITCH_E2E_SECRETS_FILE` | no | File to append each credential the server issues during the run to (agent keys, gateway sessions), for CI's scan of the output. The stack script and `e2e.yml` set it. |
+| `SWITCH_E2E_SECRETS_FILE` | no | File to append each credential the server issues during the run to (agent keys, gateway sessions), for CI's scan of the output. The stack script sets it. |
 | `SWITCH_GATEWAY_UI_URL` | browser lane | Where the gateway UI is served. Its `/gateway` requests must reach `SWITCH_API_URL`. `just e2e-browser` sets it. |
-| `SWITCH_E2E_OUTPUT_DIR` | no | Where the browser lane saves screenshots of failed pages. The stack script and `e2e.yml` set it. |
+| `SWITCH_E2E_OUTPUT_DIR` | no | Where the browser lane saves screenshots of failed pages. The stack script sets it. |
 | `SWITCH_E2E_DRIVER_MODEL` | agentic lane | Exact model id that plays the human, e.g. `claude-sonnet-5`. |
 | `SWITCH_E2E_JUDGE_MODEL` | agentic lane | Exact model id that grades the conversation. |
 | `SWITCH_E2E_AGENTIC_BUDGET_USD` | agentic lane | What one run may spend, driver, judge and agent together. The run stops once it is reached. |
@@ -405,30 +408,21 @@ on every PR with no server.
 
 ## In CI
 
-`.github/workflows/e2e.yml` defines a run: one lane against one environment
-(`ephemeral`, `dev` or `staging`). Other workflows call it, and it can also be
-dispatched by hand.
+`.github/workflows/e2e.yml` defines a run: one lane on a throwaway stack built
+from the checkout. Other workflows call it, and it can also be dispatched by
+hand.
 
 | When | Lane | Environment | Required check |
 | --- | --- | --- | --- |
 | Every PR, and every push to main (`pr-ci.yml`) | fast | ephemeral | yes |
 | After a merge to main (`e2e-scheduled.yml`) | provider | ephemeral | no |
-| Nightly (`e2e-scheduled.yml`) | provider; fast; browser | ephemeral; dev; dev | no |
+| Nightly (`e2e-scheduled.yml`) | provider | ephemeral | no |
 | By hand only, for now (`e2e.yml`, dispatch) | agentic | ephemeral | no |
 
 - **Secrets.** An ephemeral fast run generates every secret it uses on the
   runner, so it works the same on a fork PR. Every other run reads its secrets
-  from a GitHub Environment:
-  - `e2e-provider` holds `ANTHROPIC_API_KEY`;
-  - `dev` and `staging` hold the deployment's URLs as variables (the browser
-    lane also needs `SWITCH_GATEWAY_UI_URL`) and its credentials as secrets.
-
-  The header of `e2e.yml` lists every name. Each environment's protection rules
-  decide which branches may use it.
-- **Concurrency.** Runs against a shared deployment queue behind each other.
-  They are never cancelled, because a cancelled run leaves its artefacts
-  behind. After every deployed run, `pnpm cleanup --older-than 180` removes
-  what interrupted runs left.
+  from the GitHub Environment `e2e-provider`, which holds `ANTHROPIC_API_KEY`
+  and whose protection rules decide which branches may use it.
 - **Artifacts.** The output directory is uploaded only after it passes two
   scans. The first (`scan-artifacts.sh`) looks for the exact secret values the
   run used: the ones it was configured with, plus every credential the server
@@ -441,6 +435,28 @@ dispatched by hand.
   go to the webhook in the repository secret `E2E_NOTIFY_WEBHOOK_URL`:
   - one summary each night;
   - a report when the provider lane fails after a merge.
+
+## Against a deployed environment
+
+Runs against the shared deployments are driven from the deployment
+configuration, not from this repository's CI: it knows which commit each
+environment runs, checks this harness out at that commit, and holds the
+environment's addresses and credentials. To run a lane there:
+
+```bash
+SWITCH_E2E_LANE=fast SWITCH_E2E_ENVIRONMENT=dev SWITCH_E2E_STRICT=1 \
+SWITCH_API_URL=… SWITCH_GATEWAY_ADMIN_EMAIL=… SWITCH_GATEWAY_ADMIN_PASSWORD=… \
+SWITCH_AGENT_REGISTRATION_TOKEN=… SWITCH_E2E_SECRETS_FILE=… pnpm test
+```
+
+- Give either the three `MATTERMOST_*` variables or `SWITCH_E2E_NO_MATTERMOST=1`.
+- The browser lane also needs `SWITCH_GATEWAY_UI_URL`.
+- Run one lane at a time per environment and never cancel a run: a cancelled
+  run leaves its agents and rooms behind. After each run,
+  `pnpm cleanup --older-than 180` removes what interrupted runs left.
+- Scan the output for the run's secrets before keeping it: the configured
+  ones, and every credential listed in `SWITCH_E2E_SECRETS_FILE`
+  (`scripts/scan-artifacts.sh` takes them on stdin).
 
 ## With a Switch Console session
 

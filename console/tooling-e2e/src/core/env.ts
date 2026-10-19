@@ -140,6 +140,11 @@ export interface HarnessEnv {
   switch: SwitchEnv;
   /** `null` when no Mattermost is configured; scenarios that need one then skip or fail. */
   mattermost: MattermostEnv | null;
+  /**
+   * The environment deploys no Mattermost, by design (`SWITCH_E2E_NO_MATTERMOST=1`).
+   * Scenarios that need one skip even in strict mode, and say why.
+   */
+  noMattermost: boolean;
   provider: ProviderEnv;
   agentic: AgenticEnv;
 }
@@ -267,6 +272,12 @@ export function loadEnv(
     .filter(([, value]) => value === undefined)
     .map(([key]) => key);
   if (missing.length > 0) throw new MissingConfigError(missing);
+  const noMattermost = get('SWITCH_E2E_NO_MATTERMOST') === '1';
+  if (noMattermost && mattermostGiven) {
+    throw new Error(
+      'SWITCH_E2E_NO_MATTERMOST=1 says this environment has no Mattermost, but MATTERMOST_* is set too. Unset one.'
+    );
+  }
 
   return {
     lane,
@@ -290,6 +301,7 @@ export function loadEnv(
           team: mattermost.MATTERMOST_TEAM as string,
         }
       : null,
+    noMattermost,
     provider: {
       agentRepoDir: get('SWITCH_E2E_AGENT_DIR') ?? null,
       manifestPath: get('SWITCH_E2E_MANIFEST') ?? null,

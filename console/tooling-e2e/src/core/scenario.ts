@@ -88,6 +88,8 @@ export function assertValidHeaders(headers: readonly ScenarioHeader[]): void {
  * is simply not this run's business. A missing prerequisite is different: the
  * scenario belongs here and cannot run, which skips on a developer machine and
  * fails in strict mode — CI must not report a scenario that never ran as green.
+ * The exception is a prerequisite the environment declares it lacks by design
+ * (`SWITCH_E2E_NO_MATTERMOST`): that skips everywhere, with the reason given.
  */
 export type Admission = { run: true } | { run: false; reason: string; failure: boolean };
 
@@ -104,13 +106,20 @@ export function admit(header: ScenarioHeader, env: HarnessEnv): Admission {
   }
   const missing = header.requires.filter((prerequisite) => !satisfied(prerequisite, env));
   if (missing.length > 0) {
+    const byDesign = missing.every((prerequisite) => absentByDesign(prerequisite, env));
     return {
       run: false,
-      reason: `needs ${missing.map(describePrerequisite).join(' and ')}`,
-      failure: env.strict,
+      reason:
+        `needs ${missing.map(describePrerequisite).join(' and ')}` +
+        (byDesign ? `, which '${env.environment}' does not deploy (SWITCH_E2E_NO_MATTERMOST)` : ''),
+      failure: env.strict && !byDesign,
     };
   }
   return { run: true };
+}
+
+function absentByDesign(prerequisite: Prerequisite, env: HarnessEnv): boolean {
+  return prerequisite === 'mattermost' && env.noMattermost;
 }
 
 function satisfied(prerequisite: Prerequisite, env: HarnessEnv): boolean {
