@@ -3,8 +3,10 @@ import { describeEnv } from '../core/env.ts';
 import { RunContext } from '../core/run.ts';
 import { admit, assertValidHeaders } from '../core/scenario.ts';
 import { resolveLane, type LaneResolution } from '../core/suite.ts';
+import { readSurface } from '../gate/gate.ts';
 import { Fixtures } from '../fixtures/fixtures.ts';
 import { FAST_SCENARIOS } from './index.ts';
+import { probeSessionRoutes } from './session-required.ts';
 
 /**
  * The fast lane: provider-free scenarios against a Switch server, one fresh
@@ -58,4 +60,20 @@ describe('fast lane', () => {
       if (!env.keepArtifacts) expect(leftovers, 'teardown left artefacts behind').toEqual([]);
     });
   }
+});
+
+describe('fast lane, derived checks', () => {
+  // Sends writes (without a credential), so it stays off prod like every
+  // scenario that writes.
+  it('every gateway route that takes a session refuses a request without one', async (context) => {
+    if (!lane.target) return context.skip(lane.skip);
+    if (lane.target.env.environment === 'prod') return context.skip('sends writes; not on prod');
+    const probe = await probeSessionRoutes(lane.target.switchClient, readSurface());
+    console.log(
+      `[session-required] probed ${probe.probed} session routes; ` +
+        `${probe.notMounted} more are not mounted here (feature flags off)`
+    );
+    expect(probe.probed, 'no session route was probed').toBeGreaterThan(0);
+    expect(probe.wrong, `answered without a session:\n  ${probe.wrong.join('\n  ')}\n`).toEqual([]);
+  }, 120_000);
 });

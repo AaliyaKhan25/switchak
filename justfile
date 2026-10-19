@@ -176,6 +176,15 @@ e2e-fast *args:
 e2e-provider *args:
     SWITCH_E2E_LANE=provider console/tooling-e2e/scripts/ephemeral-stack.sh {{ args }}
 
+# ── Regenerate the server surface the E2E coverage gate reads ─────────────────
+# Every agent operation and gateway route, written to
+# console/tooling-e2e/surface/server-surface.json. CI fails when it is stale;
+# after regenerating, the gate (pnpm test in console/tooling-e2e) says what a
+# new operation or route needs: a scenario, or an exemption with its reason.
+# Regenerate the server surface snapshot the E2E coverage gate reads
+e2e-surface:
+    uv run --project core python scripts/e2e_surface.py
+
 # ── Run integration tests (real Postgres via testcontainers) ───────────────────
 # DOCKER_HOST is auto-resolved from the active docker context in conftest, so this
 # works under Docker Desktop / OrbStack / colima without extra setup.

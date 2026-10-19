@@ -190,6 +190,42 @@ export class SwitchClient {
     return { parsed: text === '' ? undefined : JSON.parse(text), response };
   }
 
+  /**
+   * The status a request with no credential at all gets: no cookie, no bearer
+   * key, no body. For the check that every route which takes a session refuses
+   * a request without one.
+   */
+  async statusWithoutCredentials(method: string, path: string): Promise<number> {
+    assertAllowed(this.environment, method, path);
+    const response = await fetch(`${this.apiUrl}${path}`, {
+      method,
+      headers: { Accept: 'application/json' },
+      redirect: 'manual',
+      signal: AbortSignal.timeout(30_000),
+    });
+    await response.body?.cancel();
+    return response.status;
+  }
+
+  /**
+   * The gateway routes this deployment mounts, as `METHOD /gateway/path`, from
+   * its own OpenAPI document (served without a session). Routes behind a
+   * feature flag the deployment has off are not in it.
+   */
+  async mountedGatewayRoutes(): Promise<Set<string>> {
+    const document = await this.request<{ paths: Record<string, Record<string, unknown>> }>(
+      'GET',
+      '/gateway/openapi.json'
+    );
+    const routes = new Set<string>();
+    for (const [path, operations] of Object.entries(document.paths)) {
+      for (const method of Object.keys(operations)) {
+        routes.add(`${method.toUpperCase()} /gateway${path}`);
+      }
+    }
+    return routes;
+  }
+
   /** `GET /health` — the reachability probe the suite skips on. */
   async health(): Promise<void> {
     const body = await this.request<{ status?: string }>('GET', '/health', {

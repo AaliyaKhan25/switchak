@@ -96,6 +96,10 @@ jobs:
               - 'scripts/check_migration_heads_for_open_prs.py'
               - 'scripts/pin_chart_images.py'
               - 'scripts/prune_dev_packages.py'
+              # The end-to-end coverage gate's snapshot of the server's surface,
+              # checked against the server below.
+              - 'scripts/e2e_surface.py'
+              - 'console/tooling-e2e/surface/**'
             console:
               - *shared
               - 'console/**'
@@ -171,6 +175,13 @@ jobs:
 
       - name: mypy
         run: uv run --project core mypy --config-file core/pyproject.toml core/switch_core/
+
+      # The coverage gate in console/tooling-e2e reads this snapshot rather
+      # than the server, so it has to be the server's: a route or operation
+      # added without regenerating it fails here, and the regenerated snapshot
+      # then fails the gate until a scenario or an exemption accounts for it.
+      - name: E2E surface snapshot is current
+        run: uv run --project core python scripts/e2e_surface.py --check
 
       # Store tests boot real Postgres via testcontainers; ubuntu-latest ships
       # Docker so the containers come up without extra setup. The slow
