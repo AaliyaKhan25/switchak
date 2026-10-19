@@ -2,11 +2,12 @@ import { randomUUID } from 'node:crypto';
 import { appendFile, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { Command, Session, Snapshot } from '@switch-console/shared/session-v1';
+import type { Command, Session } from '@switch-console/shared/session-v1';
 import { afterEach, expect, it, vi } from 'vitest';
 import { ProviderConversationUnavailableError, type ProviderAdapter } from '../adapter';
 import type { ProviderRuntimeEvent } from '../events';
-import { HostedSession, lastAssistantText, type RoomReply, unpostedReply } from './session-host';
+import { CONNECTOR_APPROVAL_NOTICE, ServiceNotices } from './service-notices';
+import { HostedSession, type RoomReply, unpostedReply } from './session-host';
 
 /**
  * `vi.waitFor` with room for a slow disk: every step here is a journal write
@@ -94,6 +95,7 @@ function setup(provider: Session['provider']) {
       runtimeMode: 'approval-required' as const,
       env: {},
       mcpServers: {},
+      connectorMcpServers: [],
     },
   };
   return { adapter, config, emit };
@@ -1325,21 +1327,38 @@ async function roomReplyRecords(root: string): Promise<unknown[]> {
     .filter((record) => record.type === 'room-reply');
 }
 
-it('posts the last words of a room turn that ended without posting, once, in its thread', async () => {
+it('posts nothing for a room turn that finished without posting', async () => {
   const reply = vi.fn(async (_reply: RoomReply) => {});
   const { host, emit, root, adapter } = await startReplying(reply);
   await host.command(roomMessage('turn', 'thread'));
   await waitFor(() => expect(adapter.sendTurn).toHaveBeenCalledOnce());
-  said(emit, 'turn', 'first', 'Let me look.');
-  said(emit, 'turn', 'last', '  Upgrade your plan to continue  ');
+  said(emit, 'turn', 'last', 'Not answering this one.');
   emit({ type: 'turn.completed', turnId: 'turn', outcome: 'completed', usage: [] });
+  await waitFor(() => expect(host.snapshot().turns[0]?.status).toBe('completed'));
+  await host.barrier();
+  expect(reply).not.toHaveBeenCalled();
+  expect(await roomReplyRecords(root)).toEqual([]);
+});
+
+it('tells the room once, in its thread, that a turn failed without posting', async () => {
+  const reply = vi.fn(async (_reply: RoomReply) => {});
+  const { host, emit, root, adapter } = await startReplying(reply);
+  await host.command(roomMessage('turn', 'thread'));
+  await waitFor(() => expect(adapter.sendTurn).toHaveBeenCalledOnce());
+  emit({
+    type: 'turn.completed',
+    turnId: 'turn',
+    outcome: 'error',
+    message: 'Upgrade your plan to continue',
+    usage: [],
+  });
   await waitFor(() =>
     expect(host.snapshot().notices.map((notice) => notice.code)).toContain('ROOM_REPLY_POSTED')
   );
   expect(reply).toHaveBeenCalledExactlyOnceWith({
     roomId: 'room',
     threadId: 'thread',
-    body: 'I finished without posting a reply. My last words were:\n\nUpgrade your plan to continue',
+    body: 'I finished without replying. The turn failed: Upgrade your plan to continue',
   });
   expect(await roomReplyRecords(root)).toEqual([{ type: 'room-reply', commandId: 'turn' }]);
 
@@ -1363,12 +1382,18 @@ it('leaves a room turn alone when the agent posted to the room during it', async
   // A post counts for the turn it was made in, not the next one.
   await host.command(roomMessage('silent', null));
   await waitFor(() => expect(adapter.sendTurn).toHaveBeenCalledTimes(2));
-  emit({ type: 'turn.completed', turnId: 'silent', outcome: 'completed', usage: [] });
+  emit({
+    type: 'turn.completed',
+    turnId: 'silent',
+    outcome: 'error',
+    message: 'boom',
+    usage: [],
+  });
   await waitFor(() => expect(reply).toHaveBeenCalledOnce());
   expect(reply).toHaveBeenCalledWith({
     roomId: 'room',
     threadId: null,
-    body: 'I finished without replying.',
+    body: 'I finished without replying. The turn failed: boom',
   });
 });
 
@@ -1437,7 +1462,7 @@ it('keeps the session working when the room reply cannot be posted', async () =>
   const { host, emit, adapter } = await startReplying(reply);
   await host.command(roomMessage('first', null));
   await waitFor(() => expect(adapter.sendTurn).toHaveBeenCalledOnce());
-  emit({ type: 'turn.completed', turnId: 'first', outcome: 'completed', usage: [] });
+  emit({ type: 'turn.completed', turnId: 'first', outcome: 'error', message: 'boom', usage: [] });
   await waitFor(() =>
     expect(host.snapshot().notices.map((notice) => notice.code)).toContain('ROOM_REPLY_FAILED')
   );
@@ -1450,47 +1475,13 @@ it('keeps the session working when the room reply cannot be posted', async () =>
   warn.mockRestore();
 });
 
-it('reads the last thing the agent said in a turn, whole', () => {
-  const item = (itemId: string, turnId: string, text: string, kind = 'assistant-message') => ({
-    itemId,
-    turnId,
-    revision: 1,
-    kind,
-    status: 'completed',
-    title: '',
-    text,
-    attachments: [],
-    origin: null,
-  });
-  const snapshot = {
-    items: [
-      item('a', 'turn', 'First.'),
-      item('b', 'turn', 'Long '),
-      item('tool', 'turn', '', 'tool-activity'),
-      item('b:part:1', 'turn', 'answer'),
-      item('c', 'turn', '   '),
-      item('d', 'other', 'Another turn.'),
-    ],
-  } as unknown as Snapshot;
-  expect(lastAssistantText(snapshot, 'turn')).toBe('Long answer');
-  expect(lastAssistantText(snapshot, 'missing')).toBe('');
-});
-
-it('caps what a room reply quotes and adds the failure the text does not already say', () => {
-  const long = unpostedReply('x'.repeat(5000), 'completed', null);
-  expect(long.endsWith('x…')).toBe(true);
-  expect(long.length).toBe(
-    'I finished without posting a reply. My last words were:\n\n'.length + 4000
+it('says only that a turn failed, and why; nothing for one that finished or was stopped', () => {
+  expect(unpostedReply('completed', null)).toBeNull();
+  expect(unpostedReply('interrupted', 'Stopped by a person')).toBeNull();
+  expect(unpostedReply('error', null)).toBe('I finished without replying. The turn failed.');
+  expect(unpostedReply('error', 'Not signed in.')).toBe(
+    'I finished without replying. The turn failed: Not signed in.'
   );
-  expect(
-    unpostedReply('Upgrade your plan to continue', 'error', 'Upgrade your plan to continue')
-  ).toBe(
-    'I finished without posting a reply. My last words were:\n\nUpgrade your plan to continue'
-  );
-  expect(unpostedReply('Halfway there', 'interrupted', 'Stopped by a person')).toBe(
-    'I finished without posting a reply. My last words were:\n\nHalfway there\n\n(The turn was interrupted: Stopped by a person)'
-  );
-  expect(unpostedReply('', 'error', null)).toBe('I finished without replying. The turn failed.');
 });
 
 /**
@@ -1611,4 +1602,60 @@ it('keeps tool input and output off the event stream, the journal and the snapsh
       tools: [expect.objectContaining({ input, output: 'PRIVATE OUTPUT', toolName: 'Read' })],
     },
   ]);
+});
+
+it("tells its owner when the provider asks to run a connector's tool, and only then", async () => {
+  const root = await mkdtemp(join(tmpdir(), 'sdk-host-test-'));
+  roots.push(root);
+  const fixture = setup('claude');
+  const asked: string[] = [];
+  const notices = new ServiceNotices();
+  const host = await HostedSession.start(
+    root,
+    {
+      ...fixture.config,
+      connectorApproval: (connector) => {
+        asked.push(connector);
+        notices.raise(CONNECTOR_APPROVAL_NOTICE);
+      },
+    },
+    fixture.adapter
+  );
+  hosts.push(host);
+  notices.attach((message) => host.serviceFallback(message));
+  const published: Array<{ type: string; message?: string; request?: { requestId: string } }> = [];
+  host.onPublished((event) => published.push(event.body as (typeof published)[number]));
+  await waitFor(() => expect(host.snapshot().session.status).toBe('ready'));
+  await host.command(message('turn'));
+  const connectorRequest = (requestId: string) => ({
+    type: 'request.opened' as const,
+    turnId: 'turn',
+    requestId,
+    requestType: 'mcp_tool_approval' as const,
+    title: `atlassian wants to run ${requestId}`,
+    options: [{ decision: 'accept' as const, label: 'Allow once' }],
+    connector: 'atlassian',
+  });
+  fixture.emit({
+    type: 'request.opened',
+    turnId: 'turn',
+    requestId: 'bash',
+    requestType: 'command_execution_approval',
+    title: 'ls',
+    options: [{ decision: 'accept', label: 'Allow once' }],
+  });
+  fixture.emit(connectorRequest('search'));
+  fixture.emit(connectorRequest('add_comment'));
+  await waitFor(() => expect(host.snapshot().requests).toHaveLength(3));
+  await host.barrier();
+  expect(asked).toEqual(['atlassian', 'atlassian']);
+
+  const order = published.flatMap((body) =>
+    body.type === 'notice' && body.message === CONNECTOR_APPROVAL_NOTICE
+      ? ['notice']
+      : body.type === 'request.opened' && body.request
+        ? [body.request.requestId]
+        : []
+  );
+  expect(order).toEqual(['bash', 'notice', 'search', 'add_comment']);
 });

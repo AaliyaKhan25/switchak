@@ -51,6 +51,7 @@ from switch_core.connections.adapters import (
 )
 from switch_core.connections.adapters.api_key import ApiKeyAdapter
 from switch_core.connections.adapters.oauth import OAuthAdapter
+from switch_core.connections.app_credentials import needs_operator_app, not_set_up
 from switch_core.connections.loader import (
     TOKEN_PLACEHOLDER,
     AccessLevel,
@@ -75,6 +76,7 @@ from switch_core.db.stores.service_connection_store import (
     ServiceConnectionBusy,
     ServiceConnectionStore,
 )
+from switch_core.db.stores.workspace_service_store import WorkspaceServiceStore
 from switch_core.keys import Keyring
 from switch_core.observability.catalogue import SERVICE_TOKEN_REQUESTS
 from switch_core.observability.metrics import metrics
@@ -124,6 +126,9 @@ REVOCATION_CLAIM = timedelta(seconds=90)
 VENDOR_CALL_SECONDS = 8
 ACCESS_WARNING = "Some access already given out may remain for up to 1 hour."
 SWITCHED_OFF = "Switched off on this server."
+# Why a connection needs reconnecting: the operator replaced the app it
+# signed in through.
+CLIENT_REPLACED = "client_replaced"
 
 
 class ServiceError(Exception):
@@ -323,6 +328,8 @@ class ServiceBroker:
         disabled: dict[str, str],
         store: ServiceConnectionStore,
         token_retention: timedelta,
+        workspace_services: WorkspaceServiceStore,
+        workspace_gate: bool,
     ) -> None:
         unknown = sorted(set(adapters) - set(catalog))
         if unknown:
@@ -342,6 +349,10 @@ class ServiceBroker:
         }
         self._store = store
         self._token_retention = token_retention
+        self._workspace_services = workspace_services
+        # Whether a workspace admin's switch applies: on with the
+        # `service_connections` flag, so with it off GitHub works as before.
+        self._workspace_gate = workspace_gate
         # The access token being fetched for each connection, by (tenant,
         # owner, service), for callers that ask while it is.
         self._fetching: dict[tuple[str, str, str], asyncio.Task[AccessToken]] = {}
@@ -380,6 +391,31 @@ class ServiceBroker:
         reason = self._disabled.get(service)
         if reason is not None:
             raise ServiceError(403, FORBIDDEN, reason, retryable=False)
+
+    async def require_workspace_enabled(
+        self, session: AsyncSession, service: str
+    ) -> None:
+        """Refuse `service` where a workspace admin switched it off. The
+        server's own switch (`DISABLED_SERVICES`) is checked first, so its
+        reason is the one people see when both apply."""
+        name = self._entry(service).definition.name
+        if not self._workspace_gate:
+            return
+        self._require_switched_on(service)
+        if not await self._workspace_services.is_enabled(session, service):
+            raise ServiceError(
+                403,
+                FORBIDDEN,
+                f"{name} is not enabled in this workspace. Ask a workspace admin; "
+                "they switch it on under Connectors in Switch Console.",
+                retryable=False,
+            )
+
+    async def workspace_disabled(self, session: AsyncSession) -> set[str]:
+        """The services a workspace admin switched off; none with the gate off."""
+        if not self._workspace_gate:
+            return set()
+        return await self._workspace_services.disabled_services(session)
 
     def _adapter(self, service: str) -> ServiceAdapter:
         """The adapter that issues for `service`, or the refusal saying why not."""
@@ -431,6 +467,7 @@ class ServiceBroker:
     ) -> GrantDecision:
         entry = self._entry(service)
         self._require_switched_on(service)
+        await self.require_workspace_enabled(session, service)
         name = entry.definition.name
         tenant_id = require_tenant_id()
         agent = await session.scalar(
@@ -879,6 +916,18 @@ class ServiceBroker:
                     "Connections.",
                     retryable=False,
                 )
+            if self.client_replaced(connection):
+                await self._store.mark_needs_reauthorization(
+                    session, owner_id, service, CLIENT_REPLACED
+                )
+                await session.commit()
+                raise self._revoked(
+                    service,
+                    ReauthorizationRequiredError(
+                        f"{name} was connected through an app this server no "
+                        "longer uses."
+                    ),
+                )
             secret = self._secret(connection)
             token = secret.access_token
             fresh = secret.expires_at > time.time() + before.total_seconds()
@@ -968,8 +1017,14 @@ class ServiceBroker:
         issuing holds it to.
         """
         _require_owners_controller(principal, agent.owner_id)
+        # A service the workspace switched off is left out, as if never
+        # granted: the host restarts a running session without it. The grant
+        # is kept, so switching it back on returns it.
+        switched_off = await self.workspace_disabled(session)
         grants = []
         for grant in await self._store.list_grants(session, agent.id):
+            if grant.service in switched_off:
+                continue
             entry = self._catalog.get(grant.service)
             skill = None if entry is None else entry.skill_files.get("SKILL.md")
             mcp = None if entry is None else entry.definition.mcp
@@ -1023,6 +1078,39 @@ class ServiceBroker:
             and service not in self._disabled
         )
 
+    def server_setup_needed(self, service: str) -> bool:
+        """Whether `service` waits on the operator setting up its app here."""
+        entry = self._catalog.get(service)
+        return (
+            entry is not None
+            and entry.definition.enabled
+            and needs_operator_app(entry.definition)
+            and service not in self._adapters
+        )
+
+    def client_replaced(self, connection: ServiceConnection) -> bool:
+        """Whether `connection` signed in through a client its service no
+        longer uses, so it must reconnect. Unknown either side is no."""
+        if connection.oauth_client_id is None:
+            return False
+        adapter = self._adapters.get(connection.service)
+        current = None if adapter is None else adapter.current_client_id()
+        return current is not None and current != connection.oauth_client_id
+
+    def replace_adapter(self, service: str, adapter: ServiceAdapter | None) -> None:
+        """Use `adapter` for `service` from the next call on, or none.
+
+        One assignment on the event loop, so a reader sees the old adapter or
+        the new one, never a mix. A call already under way finishes on the
+        adapter it started with.
+        """
+        if service not in self._catalog:
+            raise ValueError(f"No service named {service!r} in the catalog.")
+        if adapter is None:
+            self._adapters.pop(service, None)
+        else:
+            self._adapters[service] = adapter
+
     def availability(self, service: str) -> str | None:
         """Why `service` cannot be granted on this server, or None if it can."""
         entry = self._catalog.get(service)
@@ -1033,9 +1121,8 @@ class ServiceBroker:
             return reason
         adapter = self._adapters.get(service)
         if adapter is None:
-            oauth = entry.definition.auth.oauth
-            if oauth is not None and oauth.setup_note is not None:
-                return f"Not set up on this server. {oauth.setup_note}"
+            if needs_operator_app(entry.definition):
+                return not_set_up(entry.definition.name)
             return f"{entry.definition.name} is not set up on this server."
         if not adapter.can_issue:
             return (
@@ -1073,6 +1160,7 @@ class ServiceBroker:
         unavailable = self.availability(service)
         if unavailable is not None:
             raise ServiceError(422, VALIDATION_ERROR, unavailable, retryable=False)
+        await self.require_workspace_enabled(session, service)
         entry = self._entry(service)
         name = entry.definition.name
         adapter = self._adapter(service)
@@ -1332,8 +1420,12 @@ class ServiceBroker:
         account_id: str,
         external_identity: str,
         secret: ConnectionSecret,
+        oauth_client_id: str | None,
     ) -> str | None:
         """Link the person's account, or re-link it in place.
+
+        `oauth_client_id` is the vendor client the sign-in went through, None
+        for a key.
 
         Re-linking keeps the grants (a different account then fails them with
         `grant_account_changed`) and revokes what was issued on the old
@@ -1342,6 +1434,23 @@ class ServiceBroker:
         """
         name = self._entry(service).definition.name
         self._require_switched_on(service)
+        try:
+            await self.require_workspace_enabled(session, service)
+        except ServiceError as refusal:
+            # The vendor has already issued this sign-in: one Switch will not
+            # keep is revoked, rather than left live with nobody holding it.
+            previous = await self._store.get_connection(session, user_id, service)
+            kept = previous is not None and (
+                self._secret(previous).access_token == secret.access_token
+            )
+            await session.rollback()
+            note = None if kept else await self._revoke_unkept(service, secret)
+            raise ServiceError(
+                refusal.status_code,
+                refusal.code,
+                refusal.message if note is None else f"{refusal.message} {note}",
+                retryable=False,
+            ) from None
         try:
             await self._store.lock_connection(session, user_id, service)
         except ServiceConnectionBusy as error:
@@ -1362,6 +1471,7 @@ class ServiceBroker:
             account_id=account_id,
             external_identity=external_identity,
             encrypted_secret=self._keyring.encrypt(json.dumps(secret.values)),
+            oauth_client_id=oauth_client_id,
         )
         await record_audit_event(
             session,
@@ -1399,6 +1509,37 @@ class ServiceBroker:
         if await self.revoke_pending(session, issued_on_it):
             warnings.append(ACCESS_WARNING)
         return " ".join(warnings) or None
+
+    async def _revoke_unkept(
+        self, service: str, secret: ConnectionSecret
+    ) -> str | None:
+        """Revoke a new sign-in that was not kept; a sentence for the person
+        when it could not be. A key is the person's own, and theirs to keep."""
+        definition = self._entry(service).definition
+        if definition.adapter == "api_key":
+            return None
+        name = definition.name
+        adapter = self._adapters.get(service)
+        try:
+            if adapter is None:
+                raise ServiceUnavailableError(
+                    f"{name} is not available on this server."
+                )
+            async with asyncio.timeout(VENDOR_CALL_SECONDS):
+                await adapter.revoke_connection(secret)
+        except ConnectionNotRevocable:
+            return None
+        except Exception as error:
+            logger.error(
+                "%s unkept sign-in revocation failed: error_type=%s",
+                service,
+                type(error).__name__,
+            )
+            return (
+                f"Switch could not revoke the sign-in {name} just issued. Remove "
+                f"Switch from your {name} account's connected apps."
+            )
+        return None
 
     async def check_key(self, service: str, fields: dict[str, str]) -> CheckedKey:
         """A pasted key for `service`, once its vendor accepts it: whose it is,
@@ -1600,11 +1741,17 @@ class ServiceBroker:
             entry = self._catalog.get(service)
             name = service if entry is None else entry.definition.name
             adapter = self._adapters.get(service)
+            if adapter is None:
+                logger.warning(
+                    "%s sign-in not revoked: the service is not set up on this server",
+                    service,
+                )
+                warnings.append(
+                    f"{name} is not set up on this server, so Switch could not "
+                    f"revoke the sign-in. Revoke it at {name}."
+                )
+                continue
             try:
-                if adapter is None:
-                    raise ServiceUnavailableError(
-                        f"{name} is not available on this server."
-                    )
                 async with asyncio.timeout(VENDOR_CALL_SECONDS):
                     await adapter.revoke_connection(secret)
             except ConnectionNotRevocable as error:
