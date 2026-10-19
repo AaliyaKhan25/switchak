@@ -420,12 +420,8 @@ dispatched by hand.
   runner, so it works the same on a fork PR. Every other run reads its secrets
   from a GitHub Environment:
   - `e2e-provider` holds `ANTHROPIC_API_KEY`;
-  - `dev` and `staging` hold the deployment's URLs and credentials as
-    secrets (the browser lane also needs `SWITCH_GATEWAY_UI_URL`), and
-    `MATTERMOST_TEAM` as a variable. The URLs are secrets so that GitHub
-    masks them in this public repository's job logs; before the output is
-    scanned, their hosts are replaced in every text file in it, and the scan
-    then looks for the hosts as well.
+  - `dev` and `staging` hold the deployment's URLs as variables (the browser
+    lane also needs `SWITCH_GATEWAY_UI_URL`) and its credentials as secrets.
 
   The header of `e2e.yml` lists every name. Each environment's protection rules
   decide which branches may use it.
