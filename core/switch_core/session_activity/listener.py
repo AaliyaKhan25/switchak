@@ -55,6 +55,8 @@ class Change:
     session_id: str
     # The step's `turn_id` or the approval `request_id`.
     key: str
+    # None for a step or request outside any room.
+    room_id: str | None
     row: dict[str, Any] | None
 
     @staticmethod
@@ -77,12 +79,14 @@ class Change:
                 key = str(fields["request_id"] if row is not None else fields["key"])
             else:
                 raise ValueError(table)
+            room_id = fields["room_id"]
             return Change(
                 kind=kind,
                 tenant_id=str(fields["tenant_id"]),
                 agent_id=str(fields["agent_id"]),
                 session_id=str(fields["session_id"]),
                 key=key,
+                room_id=None if room_id is None else str(room_id),
                 row=row,
             )
         except (ValueError, TypeError, KeyError):

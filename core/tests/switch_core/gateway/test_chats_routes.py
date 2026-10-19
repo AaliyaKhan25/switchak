@@ -1609,13 +1609,14 @@ async def _request(
         await session.commit()
 
 
-def _turn_change(agent: Agent, turn_id: str) -> Change:
+def _turn_change(agent: Agent, room_id: str, turn_id: str) -> Change:
     return Change(
         kind="activity",
         tenant_id="00000000-0000-0000-0000-000000000000",
         agent_id=agent.id,
         session_id="s1",
         key=turn_id,
+        room_id=room_id,
         row=None,
     )
 
@@ -1703,19 +1704,19 @@ async def test_the_activity_stream_sends_only_readable_rooms_and_moved_steps(
     assert (await events.next())[0] == "ready"
 
     await _step(chats, agent, room_id, "t1", "turn", 1)
-    await chats.activity.change(_turn_change(agent, "t1"))
+    await chats.activity.change(_turn_change(agent, room_id, "t1"))
     name, item = await events.next()
     assert name == "activity" and item["roomId"] == room_id and item["revision"] == 1
 
     # A reread of the turn resends only the step that moved.
     await _step(chats, agent, room_id, "t1", "tool-1", 1)
-    await chats.activity.change(_turn_change(agent, "t1"))
+    await chats.activity.change(_turn_change(agent, room_id, "t1"))
     name, item = await events.next()
     assert (name, item["itemId"]) == ("activity", "tool-1")
 
     # A room the reader is not in is never sent: the next frame is the request.
     await _step(chats, other_agent, hidden, "t2", "turn", 1)
-    await chats.activity.change(_turn_change(other_agent, "t2"))
+    await chats.activity.change(_turn_change(other_agent, hidden, "t2"))
     await _request(chats, agent, room_id, "r1", "answered")
     await chats.activity.change(
         Change(
@@ -1724,6 +1725,7 @@ async def test_the_activity_stream_sends_only_readable_rooms_and_moved_steps(
             agent_id=agent.id,
             session_id="s1",
             key="r1",
+            room_id=room_id,
             row=None,
         )
     )
@@ -1739,7 +1741,7 @@ async def test_the_activity_stream_sends_only_readable_rooms_and_moved_steps(
     )
     assert removed.status_code == 204
     await _step(chats, agent, room_id, "t1", "turn", 2)
-    await chats.activity.change(_turn_change(agent, "t1"))
+    await chats.activity.change(_turn_change(agent, room_id, "t1"))
     with pytest.raises(TimeoutError):
         await events.next(timeout=0.3)
     await events.stream.aclose()  # type: ignore[attr-defined]
@@ -1761,7 +1763,7 @@ async def test_the_activity_stream_says_resync_when_changes_may_be_lost(
 
     # Falling behind drops what was queued and asks for a reload instead.
     for _ in range(3):
-        await chats.activity.change(_turn_change(agent, "t1"))
+        await chats.activity.change(_turn_change(agent, room_id, "t1"))
     assert await events.next() == ("resync", {})
     with pytest.raises(TimeoutError):
         await events.next(timeout=0.3)
@@ -1790,7 +1792,7 @@ async def test_the_activity_stream_ends_when_the_tenant_role_is_gone(
 
     await _drop_tenant_role(chats, chats.bob)
     await _step(chats, agent, room_id, "t1", "turn", 1)
-    await chats.activity.change(_turn_change(agent, "t1"))
+    await chats.activity.change(_turn_change(agent, room_id, "t1"))
     with pytest.raises(StopAsyncIteration):
         await on_change.next()
     with pytest.raises(StopAsyncIteration):
@@ -1809,11 +1811,11 @@ async def test_the_activity_stream_forgets_revisions_past_its_cap(
 
     await _step(chats, agent, room_id, "t1", "turn", 1)
     await _step(chats, agent, room_id, "t1", "tool-1", 1)
-    await chats.activity.change(_turn_change(agent, "t1"))
+    await chats.activity.change(_turn_change(agent, room_id, "t1"))
     assert [(await events.next())[1]["itemId"] for _ in range(2)] == ["turn", "tool-1"]
 
     # Over the cap, the next reread starts from nothing and resends the turn.
-    await chats.activity.change(_turn_change(agent, "t1"))
+    await chats.activity.change(_turn_change(agent, room_id, "t1"))
     assert [(await events.next())[1]["itemId"] for _ in range(2)] == ["turn", "tool-1"]
     await events.stream.aclose()  # type: ignore[attr-defined]
 
