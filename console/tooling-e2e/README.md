@@ -225,15 +225,24 @@ on: an event loop that catches one bad event, say. Two checks catch that.
   `SWITCH_E2E_STRICT=1`. Each lane's last test asks again, so a run that
   leaves the server unready fails.
 - **No errors logged.** With `SWITCH_E2E_SERVER_LOG` set, the harness reads the
-  server's JSON log after each scenario. The scenario fails if anything was
-  logged at error level or above, including output that bypassed logging,
-  between its start and 1.5 s after its end.
-  - The check goes by time, because the work a scenario sets off runs on
-    background tasks that carry no request id.
+  server's JSON log as the lane runs. Each read starts where the previous one
+  stopped, and a line the server is still writing waits for the next read.
+  - A scenario fails if anything in the lines written while it ran is at error
+    level or above.
+  - Whatever is logged outside the scenarios also counts: during setup,
+    between scenarios (late background work, say), and in the 1.5 s after the
+    last one. It fails the lane's last test, "the server logged no errors
+    outside the scenarios". The provider lane reads once more after its
+    teardown, and fails the run if that teardown made the server log an error.
+  - Output that bypassed logging counts when it reads as a failure: a
+    traceback, an exception a thread died of, a fatal interpreter error, or a
+    task destroyed while pending. Anything else that is not a JSON record (a
+    dependency's warning, a stray print) does not.
   - Each harness request carries `X-Request-Id: e2e-<run><scope>-<n>`, which
     the server stamps on every line it logs while serving the request. Each
     error is reported as coming from this scenario's request, another request,
-    or background work.
+    or background work. That holds wherever the error lands, so a late one
+    still names the scenario that caused it.
 
   The stack script starts switch-core with `LOG_FORMAT=json` and sets the
   variable. Against a deployed environment the log is in its log backend, so

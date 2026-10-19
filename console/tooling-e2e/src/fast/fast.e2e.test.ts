@@ -3,10 +3,9 @@ import { describeEnv } from '../core/env.ts';
 import { RunContext } from '../core/run.ts';
 import { admit, assertValidHeaders } from '../core/scenario.ts';
 import {
-  describeErrors,
   describeServerLogCheck,
-  ScenarioObserver,
-  type ServerLogError,
+  expectNoServerErrors,
+  ServerLogWatch,
 } from '../core/server-log.ts';
 import { resolveLane, type LaneResolution } from '../core/suite.ts';
 import { Fixtures } from '../fixtures/fixtures.ts';
@@ -27,12 +26,14 @@ assertValidHeaders(FAST_SCENARIOS.map((scenario) => scenario.header));
 
 const run = new RunContext();
 let lane: LaneResolution;
+let watch: ServerLogWatch;
 
 beforeAll(async () => {
   lane = await resolveLane('fast');
   if (lane.target) {
     console.log(`fast lane run ${run.runId}: ${describeEnv(lane.target.env)}`);
     console.log(`  ${describeServerLogCheck(lane.target.env.serverLog)}`);
+    watch = new ServerLogWatch(lane.target.env.serverLog);
   }
 }, 60_000);
 
@@ -55,25 +56,27 @@ describe('fast lane', () => {
       const names = run.scope();
       const fixtures = new Fixtures(env, names, switchClient, mattermost);
       const log = (message: string): void => console.log(`[${scenario.header.id}] ${message}`);
-      const observer = new ScenarioObserver(env.serverLog, switchClient, names.tag);
+      const observer = watch.begin(switchClient, names.tag);
       let failure: unknown = null;
+      let leftovers: string[];
       try {
-        await scenario.run({ env, names, switchClient, mattermost, fixtures, log });
-      } catch (error) {
-        failure = error;
+        try {
+          await scenario.run({ env, names, switchClient, mattermost, fixtures, log });
+        } catch (error) {
+          failure = error;
+        }
+        leftovers = await fixtures.teardown();
+      } finally {
+        observer.stop();
       }
-      const leftovers = await fixtures.teardown();
       for (const line of leftovers) log(`teardown: ${line}`);
-      const serverErrors = await observer.finish();
-      if (serverErrors !== null && serverErrors.length > 0) {
-        log(`the server logged errors:\n  ${describeErrors(serverErrors, observer.tag)}`);
-      }
+      const serverErrors = observer.errors(failure, log);
       // The scenario's own failure is the root cause and is reported as is; a
       // leak, then a server error, is the verdict only when nothing else went
       // wrong.
       if (failure !== null) throw failure;
       if (!env.keepArtifacts) expect(leftovers, 'teardown left artefacts behind').toEqual([]);
-      expectNoServerErrors(serverErrors, observer.tag);
+      expectNoServerErrors(serverErrors, observer.tag, 'while this ran');
     });
   }
 });
@@ -84,30 +87,32 @@ describe('fast lane, derived checks', () => {
   it('every gateway route that takes a session refuses a request without one', async (context) => {
     if (!lane.target) return context.skip(lane.skip);
     if (lane.target.env.environment === 'prod') return context.skip('sends writes; not on prod');
-    const { env, switchClient } = lane.target;
-    const observer = new ScenarioObserver(env.serverLog, switchClient, run.scope().tag);
-    const probe = await probeSessionRoutes(switchClient, readSurface());
-    const serverErrors = await observer.finish();
+    const { switchClient } = lane.target;
+    const observer = watch.begin(switchClient, run.scope().tag);
+    let probe: Awaited<ReturnType<typeof probeSessionRoutes>>;
+    try {
+      probe = await probeSessionRoutes(switchClient, readSurface());
+    } finally {
+      observer.stop();
+    }
+    const serverErrors = observer.errors(null, console.log);
     console.log(
       `[session-required] probed ${probe.probed} session routes; ` +
         `${probe.notMounted} more are not mounted here (feature flags off)`
     );
     expect(probe.probed, 'no session route was probed').toBeGreaterThan(0);
     expect(probe.wrong, `answered without a session:\n  ${probe.wrong.join('\n  ')}\n`).toEqual([]);
-    expectNoServerErrors(serverErrors, observer.tag);
+    expectNoServerErrors(serverErrors, observer.tag, 'while this ran');
   }, 120_000);
 
-  // Last, so it sees whatever the run left the server in.
+  // Last, so they see whatever the run left the server in.
   it('the server is still ready after the run', async (context) => {
     if (!lane.target) return context.skip(lane.skip);
     await lane.target.switchClient.ready();
   });
-});
 
-function expectNoServerErrors(errors: ServerLogError[] | null, tag: string): void {
-  if (errors === null) return;
-  expect(
-    errors,
-    `the server logged errors while this ran:\n  ${describeErrors(errors, tag)}\n`
-  ).toEqual([]);
-}
+  it('the server logged no errors outside the scenarios', async (context) => {
+    if (!lane.target) return context.skip(lane.skip);
+    expectNoServerErrors(await watch.sweep(), null, 'outside any scenario');
+  });
+});

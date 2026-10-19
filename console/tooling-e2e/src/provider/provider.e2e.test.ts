@@ -1,8 +1,13 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { describeEnv } from '../core/env.ts';
-import { ARTIFACT_PREFIX } from '../core/run.ts';
+import { RunContext } from '../core/run.ts';
 import { admit, assertValidHeaders } from '../core/scenario.ts';
-import { describeErrors, describeServerLogCheck, ScenarioObserver } from '../core/server-log.ts';
+import {
+  describeErrors,
+  describeServerLogCheck,
+  expectNoServerErrors,
+  ServerLogWatch,
+} from '../core/server-log.ts';
 import { resolveLane, type LaneResolution } from '../core/suite.ts';
 import { setupHarness, teardownHarness, waitForSession, type Harness } from './harness.ts';
 import { formatResultsTable, SCENARIOS, type ScenarioResult } from './scenarios.ts';
@@ -21,16 +26,24 @@ assertValidHeaders(SCENARIOS.map((scenario) => scenario.header));
 
 let lane: LaneResolution;
 let harness: Harness | null = null;
+/** The scopes whose tags this run's scenario requests carry. */
+let scopes: RunContext;
+let watch: ServerLogWatch;
 const results: ScenarioResult[] = [];
 
 beforeAll(async () => {
   lane = await resolveLane('provider');
   if (!lane.target) return;
+  // Before setup, so whatever setup makes the server log is read too.
+  watch = new ServerLogWatch(lane.target.env.serverLog);
   // Nothing to set up when no scenario can run here — say, a target that
   // lacks the prerequisites every scenario shares.
   if (!SCENARIOS.some((scenario) => admit(scenario.header, lane.target!.env).run)) return;
 
   harness = await setupHarness(lane.target);
+  scopes = new RunContext(harness.runId);
+  // The first scope named the setup's agent and channel; scenarios start after it.
+  scopes.scope();
   console.log(
     [
       '',
@@ -59,6 +72,14 @@ beforeAll(async () => {
 afterAll(async () => {
   if (results.length > 0) console.log(formatResultsTable(results));
   await teardownHarness(harness);
+  // Teardown runs after the last test, so its errors fail the hook instead.
+  if (!lane.target) return;
+  const late = await watch.sweep();
+  if (late !== null && late.length > 0) {
+    throw new Error(
+      `the server logged errors after the last scenario (teardown):\n  ${describeErrors(late, null)}`
+    );
+  }
 });
 
 describe('provider lane', () => {
@@ -75,14 +96,16 @@ describe('provider lane', () => {
         return context.skip(admission.reason);
       }
       const h = harness!;
-      const observer = new ScenarioObserver(
-        lane.target.env.serverLog,
-        h.switch,
-        `${ARTIFACT_PREFIX}${h.runId}-${scenario.header.id}`
-      );
-      const result = await scenario.run(h);
+      const log = (message: string): void => console.log(`[${scenario.header.id}] ${message}`);
+      const observer = watch.begin(h.switch, scopes.scope().tag);
+      let result: ScenarioResult;
+      try {
+        result = await scenario.run(h);
+      } finally {
+        observer.stop();
+      }
       results.push(result);
-      const serverErrors = await observer.finish();
+      const serverErrors = observer.errors(result.ok ? null : result.details, log);
       if (!result.ok) {
         console.log(
           `${result.name} transcript:\n` +
@@ -92,18 +115,18 @@ describe('provider lane', () => {
         );
       }
       expect(result.ok, result.details).toBe(true);
-      if (serverErrors !== null) {
-        expect(
-          serverErrors,
-          `the server logged errors while this ran:\n  ${describeErrors(serverErrors, observer.tag)}\n`
-        ).toEqual([]);
-      }
+      expectNoServerErrors(serverErrors, observer.tag, 'while this ran');
     });
   }
 
-  // Last, so it sees whatever the run left the server in.
+  // Last, so they see whatever the run left the server in.
   it('the server is still ready after the run', async (context) => {
     if (!lane.target) return context.skip(lane.skip);
     await lane.target.switchClient.ready();
+  });
+
+  it('the server logged no errors outside the scenarios', async (context) => {
+    if (!lane.target) return context.skip(lane.skip);
+    expectNoServerErrors(await watch.sweep(), null, 'during setup or between scenarios');
   });
 });
