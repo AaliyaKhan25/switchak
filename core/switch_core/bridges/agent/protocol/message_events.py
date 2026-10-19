@@ -49,6 +49,8 @@ def message_event(
     body: str,
     thread_id: str | None,
     attachments: list[AttachmentRef] | None = None,
+    opening_message: str | None = None,
+    sender_role: str | None = None,
 ) -> AgentEvent:
     """Build the `message` event the agent receives, with any attached files.
 
@@ -81,6 +83,8 @@ def message_event(
             timestamp=event.timestamp,
             thread_id=thread_id,
             attachments=attachments or [],
+            opening_message=opening_message,
+            sender_role=sender_role,
         ),
     )
 

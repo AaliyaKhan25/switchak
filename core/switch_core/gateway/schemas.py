@@ -760,6 +760,13 @@ class ChangePasswordRequest(BaseModel):
     new_password: str = Field(min_length=PASSWORD_MIN_LENGTH)
 
 
+class DeleteAccountRequest(BaseModel):
+    """The account's own email, typed by the person as their confirmation:
+    an SSO account has no password to ask for."""
+
+    email: str
+
+
 class SignupRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     email: Annotated[
@@ -1014,6 +1021,11 @@ class MemberUpdateRequest(BaseModel):
     role: str
 
 
+class OidcLoginOptionView(BaseModel):
+    id: str
+    label: str
+
+
 class AuthConfigResponse(BaseModel):
     # Read unauthenticated by the login page to decide which login methods to
     # show. `oidc_provider_label` is the button text (e.g. "Okta").
@@ -1025,6 +1037,12 @@ class AuthConfigResponse(BaseModel):
     signup_enabled: bool
     oidc_enabled: bool
     oidc_provider_label: str | None
+    # The sign-in buttons for the OIDC provider (`id`, `label`); empty for one
+    # button labelled `oidc_provider_label`.
+    oidc_login_options: list[OidcLoginOptionView]
+    # Whether `/auth/oidc/login` can hand the sign-in back to an app listening
+    # on this computer (`return_to`), so the app may use the system browser.
+    oidc_browser_handoff: bool
     # Where a first sign-in lands (`SwitchConfig.gateway_signup_mode`), so the
     # page can say whether signing in also creates an account of your own.
     signup_mode: Literal["default_tenant", "invite_only", "open"]
@@ -1596,3 +1614,22 @@ class FeatureFlagState(BaseModel):
 
 class FeatureFlagsResponse(BaseModel):
     flags: list[FeatureFlagState]
+
+
+class SlackOwnAppSetup(BaseModel):
+    """What it takes to create a Slack app of your own for this server."""
+
+    manifest: dict[str, Any]
+    #: Slack's create-app page, already filled in with `manifest`.
+    create_url: str
+
+
+class SlackTokensCheck(BaseModel):
+    bot_token: str
+    app_token: str
+
+
+class SlackTokensChecked(BaseModel):
+    workspace_id: str
+    workspace_name: str
+    bot_name: str

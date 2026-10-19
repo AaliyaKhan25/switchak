@@ -16,7 +16,7 @@ import logging
 import time
 from collections.abc import AsyncIterator
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import (
     APIRouter,
@@ -98,6 +98,9 @@ class CreateChatRequest(CamelModel):
     agent_ids: list[str] | None = None
     name: str | None = None
     request_id: str
+    # What the agent says as it joins, instead of its usual line; older
+    # clients send none.
+    greeting: str | None = None
 
     def chosen_agents(self) -> list[str]:
         if (self.agent_id is None) == (self.agent_ids is None):
@@ -257,6 +260,7 @@ async def create_chat(
         agent_ids=req.chosen_agents(),
         name=req.name,
         request_id=req.request_id,
+        greeting=req.greeting,
     )
     async with tenant_session(service.session_factory, tenant_id) as session:
         return ChatEnvelope(
@@ -522,6 +526,8 @@ class _ChatStream:
         self.after = after
         self.cursors: dict[str, int] = {}
         self.announced: set[str] = set()
+        self.sent: dict[str, dict[str, Any]] = {}
+        self.resummarize = False
         self.dirty: set[str] = set()
         self.wake = asyncio.Event()
 
@@ -530,6 +536,7 @@ class _ChatStream:
         self.wake.set()
 
     def on_memberships(self) -> None:
+        self.resummarize = True
         self.wake.set()
 
     def close(self) -> None:
@@ -540,6 +547,7 @@ class _ChatStream:
     def _untrack(self, room_id: str, reason: RemovalReason) -> bytes:
         self.service.listener.unsubscribe(room_id, self.on_room)
         self.cursors.pop(room_id, None)
+        self.sent.pop(room_id, None)
         return _removed(room_id, reason)
 
     async def refresh(
@@ -552,6 +560,7 @@ class _ChatStream:
         """
         frames: list[bytes] = []
         service = self.service
+        resummarize, self.resummarize = self.resummarize, False
         if read is None:
             await service.sync_owned_rooms(self.tenant_id, self.user.id)
         async with tenant_session(service.session_factory, self.tenant_id) as session:
@@ -584,6 +593,7 @@ class _ChatStream:
             ]:
                 frames.append(_removed(room_id, "unlisted"))
                 self.announced.discard(room_id)
+                self.sent.pop(room_id, None)
             for room_id, room in readable.items():
                 if room_id in self.cursors:
                     continue
@@ -592,27 +602,28 @@ class _ChatStream:
                     if room_id in listed:
                         self.announced.add(room_id)
                 elif room_id in listed:
-                    summary = await _summary(
-                        service, session, self.tenant_id, self.user, room
-                    )
-                    frames.append(_frame("chat", summary.model_dump(by_alias=True)))
+                    frames.extend(await self._announce(session, room))
                     self.cursors[room_id] = await service.head_seq(session, room_id)
                     self.announced.add(room_id)
                 else:
                     self.cursors[room_id] = await service.head_seq(session, room_id)
                 service.listener.subscribe(room_id, self.on_room)
             for room_id, room in listed.items():
-                if room_id in self.announced:
-                    continue
-                summary = await _summary(
-                    service, session, self.tenant_id, self.user, room
-                )
-                frames.append(_frame("chat", summary.model_dump(by_alias=True)))
-                self.announced.add(room_id)
+                if room_id not in self.announced or resummarize:
+                    frames.extend(await self._announce(session, room))
+                    self.announced.add(room_id)
             for room_id in list(self.cursors) if read is None else read:
                 if room_id in readable:
                     frames.extend(await self._read(session, readable[room_id]))
         return frames, True
+
+    async def _announce(self, session: AsyncSession, room: Room) -> list[bytes]:
+        summary = await _summary(self.service, session, self.tenant_id, self.user, room)
+        dump = summary.model_dump(by_alias=True)
+        if self.sent.get(room.id) == dump:
+            return []
+        self.sent[room.id] = dump
+        return [_frame("chat", dump)]
 
     async def _read(self, session: AsyncSession, room: Room) -> list[bytes]:
         frames: list[bytes] = []

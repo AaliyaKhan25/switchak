@@ -16,6 +16,7 @@ export const CONSOLE_FEATURE_FLAGS = [
   'agent_management',
   'service_connections',
   'agent_chats',
+  'switch_buddy',
 ] as const;
 
 export type FeatureFlagKey = (typeof CONSOLE_FEATURE_FLAGS)[number];
@@ -24,6 +25,9 @@ export type FeatureFlags = Record<FeatureFlagKey, boolean>;
 
 /** One flag as the gateway serves it. */
 export type RemoteFeatureFlag = { key: string; enabled: boolean };
+
+/** The `error` of a server whose flags have not been asked for yet, as opposed to failed. */
+export const FLAGS_NOT_READ_YET = 'Not read yet';
 
 /** What Console last learned about one server's flags. */
 export type ServerFeatureFlags = {
