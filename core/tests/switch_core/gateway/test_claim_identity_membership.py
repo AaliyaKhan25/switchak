@@ -15,6 +15,7 @@ import pytest
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from switch_core.bridges.collaboration.models import DirectoryUser
 from switch_core.db.models import (
     TENANT_ZERO_ID,
     Client,
@@ -147,27 +148,35 @@ async def test_admin_can_claim_an_identity_for_a_member(
         ]
 
 
-class _Candidate:
-    def __init__(self, external_user_id: str) -> None:
-        self.external_user_id = external_user_id
-
-
-class _DirectoryAdapter:
-    def __init__(self, external_user_id: str) -> None:
-        self._external_user_id = external_user_id
-
-    async def search_directory_users(self, username: str) -> list[_Candidate]:
-        return [_Candidate(self._external_user_id)]
-
-
-class _ProvisioningCore:
-    """Provisions the identity in its own session, as the bridge's core does."""
+class _ProvisioningLifecycle:
+    """A running bridge whose directory lists one account Switch has not seen,
+    and which records it, from its own session, when asked to."""
 
     def __init__(
-        self, session_factory: async_sessionmaker[AsyncSession], bridge_id: str
+        self,
+        session_factory: async_sessionmaker[AsyncSession],
+        bridge_id: str,
+        external_user_id: str,
     ) -> None:
         self._session_factory = session_factory
         self._bridge_id = bridge_id
+        self._external_user_id = external_user_id
+
+    def get_adapter(self, _bridge_id: str) -> _ProvisioningLifecycle:
+        return self
+
+    def get(self, _bridge_id: str) -> _ProvisioningLifecycle:
+        return self
+
+    async def search_directory_users(self, _query: str) -> list[DirectoryUser]:
+        return [
+            DirectoryUser(
+                external_user_id=self._external_user_id,
+                username="user",
+                display_name="User",
+                email=None,
+            )
+        ]
 
     async def ensure_external_user(
         self, *, external_user_id: str, external_username: str
@@ -184,45 +193,33 @@ class _ProvisioningCore:
             return external_user
 
 
-class _Lifecycle:
-    def __init__(self, adapter: _DirectoryAdapter, core: _ProvisioningCore) -> None:
-        self._adapter = adapter
-        self._core = core
-
-    def get_adapter(self, bridge_id: str) -> _DirectoryAdapter:
-        return self._adapter
-
-    def get(self, bridge_id: str) -> _ProvisioningCore:
-        return self._core
-
-
-async def test_claiming_an_unseen_identity_answers_with_the_claim(
+async def test_claiming_an_account_switch_has_not_seen_links_it_to_the_caller(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
-    """The caller is loaded in the request's own session, as `get_current_user`
-    loads it, so provisioning the unseen identity must not leave the handler
-    reading an expired caller afterwards."""
+    # What a fresh deployment does on its first run: the seeded admin claims
+    # the seeded chat account before it has ever spoken. The caller is loaded
+    # in the request's own session, as authentication loads it.
     bridge_id, _seen, admin, _member, _outsider = await _setup(session_factory)
-    external_user_id = f"U{uuid.uuid4().hex[:8]}"
-    lifecycle = _Lifecycle(
-        _DirectoryAdapter(external_user_id),
-        _ProvisioningCore(session_factory, bridge_id),
-    )
+    unseen = f"U{uuid.uuid4().hex[:8]}"
 
     async with session_factory() as session:
         caller = await session.get(User, admin.id)
         assert caller is not None
-        summary = await claim_bridge_identity(
+        await claim_bridge_identity(
             bridge_id,
-            ClaimIdentityRequest(external_user_id=external_user_id, username="bob"),
+            ClaimIdentityRequest(external_user_id=unseen, username="user"),
             session,
             CollaborationBridgeStore(),
             _EXTERNAL_USERS,
             UserStore(),
-            lifecycle,  # type: ignore[arg-type]
+            _ProvisioningLifecycle(session_factory, bridge_id, unseen),  # type: ignore[arg-type]
             caller,
             True,
         )
 
-    assert summary.external_user_id == external_user_id
-    assert [claimant.user_id for claimant in summary.claimed_by] == [admin.id]
+    async with session_factory() as session:
+        provisioned = await _EXTERNAL_USERS.get_by_external_id(
+            session, bridge_id, unseen
+        )
+        assert provisioned is not None
+        assert await _EXTERNAL_USERS.claimant_ids(session, provisioned.id) == [admin.id]

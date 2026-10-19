@@ -13,6 +13,7 @@ function setup(
     create: vi.fn(create),
     created: vi.fn(),
     opened: vi.fn(),
+    warm: vi.fn(),
     failed: vi.fn(),
     findEmpty: vi.fn(findEmpty),
     newId: () => `req-${++id}`,
@@ -29,8 +30,10 @@ describe('DirectChatStarter', () => {
       agentIds: ['a1'],
       name: null,
       requestId: 'req-1',
+      greeting: null,
     });
     expect(deps.created).toHaveBeenCalledWith('s1', chat);
+    expect(deps.warm).not.toHaveBeenCalled();
   });
 
   it('ignores a second start for the same agent while one is in flight', async () => {
@@ -64,6 +67,7 @@ describe('DirectChatStarter', () => {
     await expect(starter.start('s1', 'a1')).resolves.toBe(existing);
     expect(deps.findEmpty).toHaveBeenCalledWith('a1');
     expect(deps.opened).toHaveBeenCalledWith(existing);
+    expect(deps.warm).toHaveBeenCalledWith('s1', 'a1', 'r2');
     expect(deps.create).not.toHaveBeenCalled();
   });
 

@@ -108,7 +108,7 @@ export async function listChats(server: SwitchServer): Promise<ChatSummary[]> {
  */
 export async function createChat(
   server: SwitchServer,
-  input: { agentIds: string[]; name: string | null; requestId: string }
+  input: { agentIds: string[]; name: string | null; requestId: string; greeting: string | null }
 ): Promise<ChatSummary> {
   const body: Record<string, string | string[]> = {
     ...(input.agentIds.length === 1
@@ -117,6 +117,8 @@ export async function createChat(
     requestId: input.requestId,
   };
   if (input.name) body.name = input.name;
+  // What its one agent says as it joins, in place of its usual line.
+  if (input.greeting !== null) body.greeting = input.greeting;
   return (await json(server, '/chats', chatCreatedSchema, { method: 'POST', body })).chat;
 }
 
@@ -220,12 +222,8 @@ export async function fetchChatMedia(
   };
 }
 
-export async function setChatHidden(
-  server: SwitchServer,
-  roomId: string,
-  hidden: boolean
-): Promise<void> {
-  await call(server, `${room(roomId)}/hidden`, { method: hidden ? 'PUT' : 'DELETE' });
+export async function archiveChat(server: SwitchServer, roomId: string): Promise<void> {
+  await call(server, `${room(roomId)}/archive`, { method: 'POST' });
 }
 
 /** Rename uses the room route: a chat's name is its room's name. */
