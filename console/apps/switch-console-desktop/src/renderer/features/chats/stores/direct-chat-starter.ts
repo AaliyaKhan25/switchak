@@ -11,6 +11,8 @@ export type DirectChatStarterDeps = {
   }) => Promise<ChatSummary>;
   created: (serverId: string, chat: ChatSummary) => void;
   opened: (chat: ChatSummary) => void;
+  /** Ask for the agent's session in a reused chat; creating one asks already. */
+  warm: (serverId: string, agentId: string, roomId: string) => void;
   failed: (message: string) => void;
   findEmpty: (agentId: string) => ChatSummary | null;
   newId: () => string;
@@ -18,7 +20,8 @@ export type DirectChatStarterDeps = {
 
 /**
  * Starts an unnamed direct chat with one agent. Reuses an existing empty chat
- * (one where the user has sent no messages) if one exists. A second start for
+ * (one where the user has sent no messages) if one exists, asking again for
+ * its agent's session, which may have stopped since. A second start for
  * the same agent while one is in flight is ignored. After a failure that may
  * have landed, the next start reuses its request id, so it resumes that chat
  * rather than making another.
@@ -33,6 +36,7 @@ export class DirectChatStarter {
     const existing = this.deps.findEmpty(agentId);
     if (existing) {
       this.deps.opened(existing);
+      this.deps.warm(serverId, agentId, existing.roomId);
       return existing;
     }
 

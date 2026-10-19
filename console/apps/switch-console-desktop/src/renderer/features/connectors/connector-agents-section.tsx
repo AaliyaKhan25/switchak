@@ -3,7 +3,6 @@ import { observer } from 'mobx-react-lite';
 import { useEffect, useState } from 'react';
 import { agentsStore } from '@renderer/features/locations/stores/agents-store';
 import { localAgentTabStore } from '@renderer/features/locations/stores/local-agent-tabs';
-import { agentTabStore } from '@renderer/features/managed-agents/agent-tab-store';
 import { useManagedAgents } from '@renderer/features/managed-agents/use-managed-agents';
 import { AgentAvatar } from '@renderer/lib/components/agent-avatar';
 import { agentProviderLabelFor } from '@renderer/lib/components/agent-picker';
@@ -53,7 +52,7 @@ import {
  * heading with the count, a card per agent, and an "Add agent" that opens a
  * search of the person's other agents under the cards. Adding one turns the
  * service on for it there and then; the cross on a card turns it off again.
- * A card opens the agent's Connections tab; an agent from another Console has
+ * A card opens the agent's Connections; an agent from another Console has
  * no page here, so its card is plain.
  */
 export const ConnectorAgentsSection = observer(function ConnectorAgentsSection({
@@ -190,13 +189,8 @@ export const ConnectorAgentsSection = observer(function ConnectorAgentsSection({
                 ) : (
                   <button
                     type="button"
-                    title={`Open ${agent.name}'s Connections tab`}
-                    onClick={() =>
-                      openAgentConnections(link, navigate, {
-                        local: localAgentTabStore,
-                        managed: agentTabStore,
-                      })
-                    }
+                    title={`Open ${agent.name}'s Connections`}
+                    onClick={() => openAgentConnections(link, navigate, localAgentTabStore)}
                     className="focus-visible:ring-ring flex min-w-0 flex-1 cursor-pointer items-center gap-3 rounded-sm text-left focus-visible:ring-2 focus-visible:outline-none"
                   >
                     {/* Stretched over the card, so the whole card opens the agent while
@@ -243,12 +237,12 @@ export const ConnectorAgentsSection = observer(function ConnectorAgentsSection({
       )}
       {!offersAddAgent(connection) && (
         <p className="text-xs text-foreground-muted">
-          Turn it on for an agent from the agent&apos;s Connections tab.
+          Turn it on for an agent from the agent&apos;s Connections.
         </p>
       )}
       {connection.slug === 'github' && usedBy.length > 0 && (
         <p className="text-xs text-foreground-muted">
-          Each agent has its own repositories and access, changed on its Connections tab.
+          Each agent has its own repositories and access, changed from its Connections.
         </p>
       )}
     </section>
@@ -261,7 +255,7 @@ export const ConnectorAgentsSection = observer(function ConnectorAgentsSection({
  * addresses it would have it act as the person. For GitHub, the repositories
  * and access every added agent gets are chosen above the search, and no
  * agent can be added until some are; each agent's own choice is on its
- * Connections tab.
+ * Connections.
  */
 const AddAgentPanel = observer(function AddAgentPanel({
   serverId,

@@ -425,15 +425,15 @@ describe('the agents on a connector page', () => {
     expect(OPEN_AGENT_NOTE).toBe('Others can address it; it would act as you.');
   });
 
-  it("sends the person to the agent's Connections tab where the server cannot list agents", () => {
+  it("sends the person to the agent's Connections where the server cannot list agents", () => {
     expect(agentsUnlistedText('Example')).toBe(
-      "This server can't list your agents here. Turn Example on for an agent from the agent's Connections tab."
+      "This server can't list your agents here. Turn Example on for an agent from the agent's Connections."
     );
   });
 
   it('says so when the person has no agents yet', () => {
     expect(noAgentsText('Example')).toBe(
-      "You have no agents in this workspace yet. Once you add one, turn Example on for it from the agent's Connections tab."
+      "You have no agents in this workspace yet. Once you add one, turn Example on for it from the agent's Connections."
     );
   });
 });

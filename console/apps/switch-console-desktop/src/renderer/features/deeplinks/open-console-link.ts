@@ -1,5 +1,5 @@
 import { toast } from 'sonner';
-import { agentTabStore } from '@renderer/features/managed-agents/agent-tab-store';
+import { isAgentSection } from '@renderer/features/managed-agents/agent-sections';
 import type { SettingsPageTab } from '@renderer/features/settings/components/SettingsPage';
 import { isBuddy } from '@renderer/features/switch-buddy/buddy-identity';
 import { switchServersStore } from '@renderer/features/switch-servers/switch-servers-store';
@@ -127,7 +127,7 @@ async function openOnServer(serverId: string, link: ConsoleLink): Promise<void> 
 }
 
 /**
- * switch-buddy's page: its agent page once it exists, on the tab the link
+ * switch-buddy's page: its agent page once it exists, on the section the link's tab
  * names, else the page that sets it up, where there are no tabs yet.
  */
 async function openBuddy(serverId: string, tab: string | null): Promise<void> {
@@ -137,11 +137,11 @@ async function openBuddy(serverId: string, tab: string | null): Promise<void> {
     appState.navigation.navigate('switchBuddy', { serverId });
     return;
   }
-  agentTabStore.setTab(buddy.agentId, tab === 'settings' || tab === 'connections' ? tab : 'chats');
   appState.navigation.navigate('managedAgent', {
     serverId,
     agentId: buddy.agentId,
     name: buddy.name,
+    ...(isAgentSection(tab) ? { section: tab } : {}),
   });
 }
 
@@ -155,7 +155,10 @@ async function openAgent(serverId: string, agentId: string, tab: string | null):
     });
     return;
   }
-  if (tab === 'chats' || tab === 'connections' || tab === 'settings')
-    agentTabStore.setTab(agentId, tab);
-  appState.navigation.navigate('managedAgent', { serverId, agentId, name: agent.name });
+  appState.navigation.navigate('managedAgent', {
+    serverId,
+    agentId,
+    name: agent.name,
+    ...(isAgentSection(tab) ? { section: tab } : {}),
+  });
 }

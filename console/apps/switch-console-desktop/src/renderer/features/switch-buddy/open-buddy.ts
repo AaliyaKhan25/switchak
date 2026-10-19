@@ -1,6 +1,5 @@
 import { focusComposerWhenOpened } from '@renderer/features/chats/components/chat-composer';
 import { chatsStore, chatTitler } from '@renderer/features/chats/stores/chats';
-import { agentTabStore } from '@renderer/features/managed-agents/agent-tab-store';
 import { switchServersStore } from '@renderer/features/switch-servers/switch-servers-store';
 import { failureText } from '@renderer/lib/errors/describe-failure';
 import { toast } from '@renderer/lib/hooks/use-toast';
@@ -45,7 +44,7 @@ async function buddyChat(
 }
 
 /**
- * Opens the person's buddy on its Chats tab, in its chat. When the chat cannot
+ * Opens the person's buddy's page, in its chat. When the chat cannot
  * be had the agent's page still opens, and a toast says why.
  */
 export async function openBuddyChat(
@@ -63,7 +62,6 @@ export async function openBuddyChat(
       variant: 'destructive',
     });
   }
-  agentTabStore.setTab(agent.agentId, 'chats');
   appState.navigation.navigate('managedAgent', {
     serverId,
     agentId: agent.agentId,

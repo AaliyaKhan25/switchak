@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
 import { LocalAgentTabStore } from '@renderer/features/locations/stores/local-agent-tabs';
-import { AgentTabStore } from '@renderer/features/managed-agents/agent-tab-store';
 import type { NavigateFnTyped } from '@renderer/lib/layout/navigation-provider';
 import type { Agent } from '@shared/core/agents/agents';
 import type { ManagedAgentView } from '@shared/core/managed-agents/managed-agents';
@@ -79,37 +78,35 @@ describe("a Used by chip's link", () => {
   });
 });
 
-describe("opening an agent's Connections tab", () => {
-  const stores = () => ({ local: new LocalAgentTabStore(), managed: new AgentTabStore() });
-
+describe("opening an agent's Connections", () => {
   it('selects the tab on a local agent, then opens its page', () => {
-    const tabs = stores();
+    const tabs = new LocalAgentTabStore();
     const navigate = vi.fn();
     openAgentConnections(
       agentLinkFor('switch-local', [LOCAL], null) as Parameters<typeof openAgentConnections>[0],
       navigate as unknown as NavigateFnTyped,
       tabs
     );
-    expect(tabs.local.tabFor('local-1')).toBe('connections');
+    expect(tabs.tabFor('local-1')).toBe('connections');
     expect(navigate).toHaveBeenCalledWith('location', {
       locationId: 'location-1',
       agentName: 'm1-cc',
     });
   });
 
-  it('selects the tab on a managed agent, then opens its page', () => {
-    const tabs = stores();
+  it("opens a managed agent's page on its Connections section", () => {
+    const tabs = new LocalAgentTabStore();
     const navigate = vi.fn();
     openAgentConnections(
       agentLinkFor('switch-managed', [], [MANAGED]) as Parameters<typeof openAgentConnections>[0],
       navigate as unknown as NavigateFnTyped,
       tabs
     );
-    expect(tabs.managed.tabFor('switch-managed')).toBe('connections');
     expect(navigate).toHaveBeenCalledWith('managedAgent', {
       serverId: 'server',
       agentId: 'switch-managed',
       name: 'M3',
+      section: 'connections',
     });
   });
 });

@@ -20,7 +20,7 @@ import { useParams } from '@renderer/lib/layout/navigation-provider';
  *
  * It used to be three tabs down a side nav, which asked the reader to know
  * which of them held what before they could look at anything. The page is short
- * enough to scroll instead. The one exception is Connections, a tab of its
+ * enough to scroll instead. The one exception is Connections, a page of its
  * own as on a managed agent's page, for an agent registered on a server with
  * service connections on.
  */
@@ -47,6 +47,7 @@ export const ActiveLocation = observer(function ActiveLocation() {
   return (
     <AgentEditsProvider>
       <div className="flex min-h-0 w-full flex-1 flex-col">
+        <AgentSaveBar />
         <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto">
           <div className="mx-auto flex w-full max-w-[900px] flex-col gap-10 px-8 pb-20">
             <AgentPageHeader />
@@ -55,9 +56,6 @@ export const ActiveLocation = observer(function ActiveLocation() {
             <SessionList />
           </div>
         </div>
-        {/* Outside the scroll area: an edit made at the top of the page should
-            not need scrolling to the bottom before it can be saved. */}
-        <AgentSaveBar />
       </div>
     </AgentEditsProvider>
   );

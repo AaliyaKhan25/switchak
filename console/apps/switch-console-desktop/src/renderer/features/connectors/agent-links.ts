@@ -1,12 +1,11 @@
 import type { LocalAgentTabStore } from '@renderer/features/locations/stores/local-agent-tabs';
-import type { AgentTabStore } from '@renderer/features/managed-agents/agent-tab-store';
 import { managedAgentLabel } from '@renderer/features/managed-agents/managed-agent-state';
 import type { NavigateFnTyped } from '@renderer/lib/layout/navigation-provider';
 import type { Agent } from '@shared/core/agents/agents';
 import type { ManagedAgentView } from '@shared/core/managed-agents/managed-agents';
 
 /**
- * Where an agent named on a connector's profile leads: its Connections tab,
+ * Where an agent named on a connector's profile leads: its Connections,
  * on the page this Console shows it on, or nowhere for an agent that lives in
  * another Console.
  */
@@ -48,17 +47,21 @@ export function agentLinkFor(
   return { kind: 'elsewhere', title: ELSEWHERE_TITLE };
 }
 
-/** Opens a linked agent's page on its Connections tab. */
+/** Opens a linked agent's page on its Connections. */
 export function openAgentConnections(
   link: Exclude<AgentLink, { kind: 'elsewhere' }>,
   navigate: NavigateFnTyped,
-  tabs: { local: LocalAgentTabStore; managed: AgentTabStore }
+  localTabs: LocalAgentTabStore
 ): void {
   if (link.kind === 'local') {
-    tabs.local.setTab(link.agentId, 'connections');
+    localTabs.setTab(link.agentId, 'connections');
     navigate('location', { locationId: link.locationId, agentName: link.agentName });
     return;
   }
-  tabs.managed.setTab(link.agentId, 'connections');
-  navigate('managedAgent', { serverId: link.serverId, agentId: link.agentId, name: link.name });
+  navigate('managedAgent', {
+    serverId: link.serverId,
+    agentId: link.agentId,
+    name: link.name,
+    section: 'connections',
+  });
 }

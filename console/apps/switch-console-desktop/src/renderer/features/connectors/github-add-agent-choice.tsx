@@ -35,7 +35,7 @@ export function GitHubAddAgentChoice({
           </p>
         ) : (
           <p className="flex-1 text-sm text-foreground-muted">
-            Agents you add get {summary}. Each can be changed later on its Connections tab.
+            Agents you add get {summary}. Each can be changed later from its Connections.
           </p>
         )}
         <Button

@@ -3,7 +3,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const navigate = vi.hoisted(() => vi.fn());
 const showModal = vi.hoisted(() => vi.fn());
 const toastError = vi.hoisted(() => vi.fn());
-const setTab = vi.hoisted(() => vi.fn());
 const list = vi.hoisted(() => vi.fn());
 const servers = vi.hoisted(() => ({
   activeServerId: 'srv-1' as string | null,
@@ -27,9 +26,6 @@ const navigation = vi.hoisted(() => ({
 vi.mock('@renderer/lib/stores/app-state', () => ({ appState: { navigation } }));
 vi.mock('@renderer/lib/modal/modal-provider', () => ({ showModal }));
 vi.mock('@renderer/lib/ipc', () => ({ rpc: { managedAgents: { list } } }));
-vi.mock('@renderer/features/managed-agents/agent-tab-store', () => ({
-  agentTabStore: { setTab },
-}));
 vi.mock('@renderer/features/switch-servers/switch-servers-store', () => ({
   switchServersStore: servers,
 }));
@@ -61,14 +57,24 @@ describe('openConsoleLink', () => {
     expect(showModal).toHaveBeenCalledWith('invitePeopleModal', { workspaceId: 'ws-1' });
   });
 
-  it('opens an agent on the tab it names', async () => {
+  it('opens an agent on the section its tab names', async () => {
     list.mockResolvedValueOnce([{ agentId: 'a-1', name: 'switch-buddy-ada' }]);
     await openConsoleLink('switchdash://open/agent/a-1?tab=settings');
-    expect(setTab).toHaveBeenCalledWith('a-1', 'settings');
     expect(navigate).toHaveBeenCalledWith('managedAgent', {
       serverId: 'srv-1',
       agentId: 'a-1',
       name: 'switch-buddy-ada',
+      section: 'settings',
+    });
+  });
+
+  it('opens an agent on its chat for the Chats tab', async () => {
+    list.mockResolvedValueOnce([{ agentId: 'a-1', name: 'reviewer' }]);
+    await openConsoleLink('switchdash://open/agent/a-1?tab=chats');
+    expect(navigate).toHaveBeenCalledWith('managedAgent', {
+      serverId: 'srv-1',
+      agentId: 'a-1',
+      name: 'reviewer',
     });
   });
 
@@ -84,12 +90,12 @@ describe('openConsoleLink', () => {
       { agentId: 'a-1', name: 'reviewer' },
       { agentId: 'b-1', name: 'switch-buddy-ada' },
     ]);
-    await openConsoleLink('switchdash://open/buddy?tab=settings');
-    expect(setTab).toHaveBeenCalledWith('b-1', 'settings');
+    await openConsoleLink('switchdash://open/buddy?tab=connections');
     expect(navigate).toHaveBeenCalledWith('managedAgent', {
       serverId: 'srv-1',
       agentId: 'b-1',
       name: 'switch-buddy-ada',
+      section: 'connections',
     });
   });
 

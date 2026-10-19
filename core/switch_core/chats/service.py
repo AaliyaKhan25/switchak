@@ -529,6 +529,28 @@ class ChatService:
             tenant_id, sorted(user_id for user_id in members if user_id is not None)
         )
 
+    async def agent_changed(self, tenant_id: str, agent_id: str) -> None:
+        """Wake the streams of everyone in a chat with this agent, so they
+        re-send its summaries. Does nothing with `agent_chats` off."""
+        if not self.agent_chats_enabled:
+            return
+        async with tenant_session(self.session_factory, tenant_id) as session:
+            members = (
+                await session.execute(
+                    select(Client.user_id)
+                    .distinct()
+                    .join(ClientRoom, ClientRoom.client_id == Client.id)
+                    .join(room_agents, room_agents.c.room_id == ClientRoom.room_id)
+                    .where(
+                        room_agents.c.agent_id == agent_id,
+                        Client.type == MEMBER_CLIENT_TYPE,
+                        Client.user_id.is_not(None),
+                    )
+                )
+            ).scalars()
+            user_ids = sorted(user_id for user_id in members if user_id is not None)
+        self._memberships_changed(tenant_id, user_ids)
+
     async def _make_lasting(self, tenant_id: str, user_id: str, room_id: str) -> None:
         async with tenant_session(self.session_factory, tenant_id) as session:
             await session.execute(
@@ -983,11 +1005,7 @@ class ChatService:
                 try:
                     created = await self._room_service.create_room(
                         RoomCreateConfig(
-                            name=name
-                            or "Chat with "
-                            + ", ".join(
-                                agent.display_name or agent.name for agent in agents
-                            ),
+                            name=name or "New chat",
                             description="Switch Console chat with "
                             + ", ".join(agent.name for agent in agents),
                             agent_ids=[agent.id for agent in agents],
@@ -1030,6 +1048,8 @@ class ChatService:
                 )
                 await session.commit()
         self._memberships_changed(tenant_id, [user.id])
+        if len(agents) == 1:
+            self._start_session(agents[0].id, room.id)
         return room
 
     async def stage_upload(
@@ -1341,22 +1361,23 @@ class ChatService:
                 )
             agent = await self._agent_store.get(session, agent_id)
             assert agent is not None
-            if agent.owner_id != user.id:
-                raise ChatError(
-                    403, "NOT_AGENT_OWNER", "Only the agent's owner can warm it."
-                )
             decision = await self._addressing.permitted(
                 session, agent=agent, room_id=room.id, sender=client.transport_user_id
             )
             if not decision.allowed:
                 raise ChatError(403, "AGENT_NOT_ALLOWED", decision.refusal)
+        self._start_session(agent_id, room.id)
+
+    def _start_session(self, agent_id: str, room_id: str) -> None:
+        """A hint to a controller-hosted agent: nothing waits for it. An agent
+        no controller hosts is started by the Console that runs it."""
         if not self._connections.controllers.is_bound(agent_id):
             return
-        if not self._connections.relay_warm(agent_id, room.id):
+        if not self._connections.relay_warm(agent_id, room_id):
             logger.warning(
-                "Could not warm agent %s for room %s: its controller is not connected or it is stopped",
+                "Could not start agent %s's session for room %s: its controller is not connected or it is stopped",
                 agent_id,
-                room.id,
+                room_id,
             )
 
     async def _posted(
