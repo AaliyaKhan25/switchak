@@ -7,8 +7,9 @@ const list = vi.hoisted(() => vi.fn());
 const servers = vi.hoisted(() => ({
   activeServerId: 'srv-1' as string | null,
   servers: [
-    { id: 'srv-1', gatewayUrl: 'http://localhost:3000' },
-    { id: 'srv-2', gatewayUrl: 'https://switch.example.com' },
+    { id: 'srv-1', url: 'http://localhost:8000', dashboardUrl: null },
+    { id: 'srv-2', url: 'https://switch.example.com', dashboardUrl: null },
+    { id: 'srv-3', url: 'https://old-api.example.com', dashboardUrl: 'https://old.example.com' },
   ],
   setActive: vi.fn(async (id: string) => {
     servers.activeServerId = id;
@@ -104,6 +105,12 @@ describe('openConsoleLink', () => {
     await openConsoleLink('switchdash://open/buddy?server=https%3A%2F%2Fswitch.example.com%2F');
     expect(servers.setActive).toHaveBeenCalledWith('srv-2');
     expect(navigate).toHaveBeenCalledWith('switchBuddy', { serverId: 'srv-2' });
+  });
+
+  it('knows an older server by the separate host its dashboard is on', async () => {
+    await openConsoleLink('switchdash://open/rooms?server=https%3A%2F%2Fold.example.com');
+    expect(servers.setActive).toHaveBeenCalledWith('srv-3');
+    expect(navigate).toHaveBeenCalledWith('serverRooms', { serverId: 'srv-3' });
   });
 
   it('refuses a server it is not connected to, and a malformed link', async () => {

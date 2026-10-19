@@ -64,35 +64,35 @@ import {
   serviceGrantWarningSchema,
   serviceGrantsSchema,
 } from '@shared/core/switch-servers/service-grants';
-import type {
-  AddressingPolicy,
-  AddTeamsTeamResult,
-  BridgeConfigField,
-  BridgeDirectoryUser,
-  ChatClaim,
-  ConnectedChat,
-  DeleteBridgeResult,
-  LinkedIdentity,
-  MessagingAppInstall,
-  MessagingApps,
-  RemoteAgentRoom,
-  RemoteAgentSummary,
-  RemoteBridge,
-  RemoteBridgeType,
-  RemoteExternalUser,
-  RemoteRoomDetail,
-  RemoteRoomGroup,
-  RemoteRoomRole,
-  RemoteRoomSummary,
-  RemoveTeamsTeamResult,
-  SwitchAuthConfig,
-  SwitchServer,
-  SwitchServerDeclaration,
-  SwitchUser,
-  TeamsTeam,
-  TeamsTeamsResult,
-  TrustSettings,
-  UpdateTrustSettingsParams,
+import {
+  type AddressingPolicy,
+  type AddTeamsTeamResult,
+  type BridgeConfigField,
+  type BridgeDirectoryUser,
+  type ChatClaim,
+  type ConnectedChat,
+  type DeleteBridgeResult,
+  type LinkedIdentity,
+  type MessagingAppInstall,
+  type MessagingApps,
+  type RemoteAgentRoom,
+  type RemoteAgentSummary,
+  type RemoteBridge,
+  type RemoteBridgeType,
+  type RemoteExternalUser,
+  type RemoteRoomDetail,
+  type RemoteRoomGroup,
+  type RemoteRoomRole,
+  type RemoteRoomSummary,
+  type RemoveTeamsTeamResult,
+  type SwitchAuthConfig,
+  type SwitchServer,
+  type SwitchServerDeclaration,
+  type SwitchUser,
+  type TeamsTeam,
+  type TeamsTeamsResult,
+  type TrustSettings,
+  type UpdateTrustSettingsParams,
 } from '@shared/core/switch-servers/switch-servers';
 import type {
   Invitation,
@@ -104,11 +104,12 @@ import type {
 import type { WorkspaceRole } from '@shared/core/workspaces/workspaces';
 import { extractAuthCookie, reauthenticateManagedServer, refreshSession } from './auth';
 import { consoleIdentityHeaders } from './console-identity';
+import { NoManagementApiError } from './server-address';
 import { getSessionCookie, setSessionCookie } from './servers-store';
 
 /** The gateway management API is mounted under `/gateway` on the server. */
 function gatewayUrl(server: SwitchServer, path: string): string {
-  return `${server.gatewayUrl}/gateway${path}`;
+  return `${server.url}/gateway${path}`;
 }
 
 /** Renew the session once the stored JWT is within this window of its `exp`, so
@@ -349,7 +350,7 @@ export async function gatewayRequest(
       noteManagedServerUnanswered(server);
       throw new GatewayError(
         'network',
-        `Could not reach ${server.gatewayUrl}: ${cause instanceof Error ? cause.message : String(cause)}`
+        `Could not reach ${server.url}: ${cause instanceof Error ? cause.message : String(cause)}`
       );
     }
   };
@@ -371,7 +372,22 @@ export async function gatewayRequest(
   if (response.status === 401) {
     throw new GatewayError('unauthorized', 'Switch session expired — please sign in again.', 401);
   }
+  if (answeredWithPage(response)) {
+    throw new NoManagementApiError(server.name, server.url, response.status);
+  }
   return response;
+}
+
+/**
+ * Whether something other than switch-core answered a `/gateway` call: every
+ * answer the management API gives is JSON, its 404 included, so a page that
+ * comes back successfully (a catch-all serving a web app) or as a 404 (a proxy
+ * with no route for the path) is not from it. A proxy's 502 page means the
+ * server is down, which the caller reports as it is.
+ */
+function answeredWithPage(response: Response): boolean {
+  const html = (response.headers.get('content-type') ?? '').toLowerCase().startsWith('text/html');
+  return html && (response.ok || response.status === 404);
 }
 
 /** The `retryable` beside `detail` in a coded refusal, or undefined without one. */
@@ -3376,7 +3392,7 @@ export async function startGitHubConnection(
   server: SwitchServer,
   input: { port: number; state: string; completion_secret: string }
 ) {
-  if (!isHttpsOrLoopback(new URL(server.gatewayUrl)))
+  if (!isHttpsOrLoopback(new URL(server.url)))
     throw new Error('GitHub connections require HTTPS, unless the server is on this computer.');
   const value = z.object({ id: z.string().regex(/^[A-Za-z0-9_-]{43}$/), url: z.string() }).parse(
     await (
@@ -3388,8 +3404,13 @@ export async function startGitHubConnection(
     ).json()
   );
   const url = new URL(value.url);
+  // Core names its public address, which on an older server whose dashboard
+  // has a host of its own is not where Console opens dashboard pages.
   if (
-    url.origin !== new URL(server.gatewayUrl).origin ||
+    !isHttpsOrLoopback(url) ||
+    ![server.url, server.dashboardUrl].some(
+      (own) => own !== null && new URL(own).origin === url.origin
+    ) ||
     url.pathname !== '/gateway/provider-connections/github/authorize' ||
     url.searchParams.get('state') !== value.id ||
     url.username ||
@@ -3452,15 +3473,16 @@ const serviceFlows = (service: string) =>
  *
  * Core's authorize step is at its public address (`GATEWAY_PUBLIC_URL`), the
  * host the vendor returns the browser to and whose cookie ties that return to
- * the browser. A server that serves its gateway and its API on two hosts has it
- * on the API's, so either of the server's own origins is accepted, over HTTPS.
+ * the browser. That is normally the server's own address; an older server that
+ * still keeps its dashboard on a host of its own may name that host instead, so
+ * either is accepted, over HTTPS.
  */
 export async function startServiceConnection(
   server: SwitchServer,
   service: string,
   input: { port: number; state: string; completion_secret: string }
 ): Promise<ServiceFlowStart> {
-  if (!isHttpsOrLoopback(new URL(server.gatewayUrl)))
+  if (!isHttpsOrLoopback(new URL(server.url)))
     throw new Error('Service connections require HTTPS, unless the server is on this computer.');
   const value = serviceFlowStartSchema.parse(
     await (
@@ -3478,7 +3500,9 @@ export async function startServiceConnection(
     !url.password &&
     (value.mode === 'core'
       ? isHttpsOrLoopback(url) &&
-        [server.gatewayUrl, server.apiUrl].some((own) => new URL(own).origin === url.origin) &&
+        [server.url, server.dashboardUrl].some(
+          (own) => own !== null && new URL(own).origin === url.origin
+        ) &&
         url.pathname === `/gateway${serviceFlows(service)}/authorize` &&
         url.searchParams.get('state') === value.id
       : url.protocol === 'https:' &&
@@ -3804,8 +3828,7 @@ export async function giveMachineLogin(
 ): Promise<{ operationId: string; revision: number }> {
   // The login is sealed, but the key it was sealed to came from this server:
   // over plain HTTP anyone in between could have handed over their own.
-  const gateway = new URL(server.gatewayUrl);
-  if (!isHttpsOrLoopback(gateway))
+  if (!isHttpsOrLoopback(new URL(server.url)))
     throw new Error('Giving a machine a provider login requires HTTPS.');
   const res = await managementFetch(
     server,

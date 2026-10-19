@@ -338,8 +338,7 @@ function currentPage(
 
   return (
     <ExternalServerStep
-      initialGatewayUrl={null}
-      initialApiUrl={null}
+      initialUrl={null}
       initialName={null}
       serverId={null}
       isEdit={false}
