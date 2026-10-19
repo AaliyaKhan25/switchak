@@ -1,5 +1,9 @@
-import { describe, expect, it } from 'vitest';
-import { parseScenarioCases, summaryLine, summaryMarkdown } from './ci-summary.ts';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { describe, expect, it, vi } from 'vitest';
+import { main, parseScenarioCases, summaryLine, summaryMarkdown } from './ci-summary.ts';
+import { LANES } from './core/env.ts';
 
 const REPORT = `<?xml version="1.0" encoding="UTF-8" ?>
 <testsuites name="vitest tests" tests="4">
@@ -42,5 +46,25 @@ describe('CI run summary', () => {
     );
     expect(summaryMarkdown('fast on ephemeral', cases)).toContain('expected 200 to be 404 \\|');
     expect(summaryMarkdown('fast on dev', [])).toContain('holds no end-to-end scenarios');
+  });
+});
+
+describe('CI run summary, as the workflow calls it', () => {
+  it('takes every lane, and refuses one that is not', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'e2e-ci-summary-'));
+    const report = path.join(dir, 'junit.xml');
+    writeFileSync(report, REPORT);
+    vi.stubEnv('GITHUB_OUTPUT', '');
+    const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    try {
+      for (const lane of LANES) {
+        expect(() => main([report, lane, `${lane} lane on ephemeral`])).not.toThrow();
+      }
+      expect(() => main([report, 'nightly', 'title'])).toThrow(/Usage/);
+    } finally {
+      write.mockRestore();
+      vi.unstubAllEnvs();
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

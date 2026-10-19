@@ -7,10 +7,9 @@ import { RunContext } from '../core/run.ts';
 import { admit, assertValidHeaders } from '../core/scenario.ts';
 import { IssuedSecrets } from '../core/secrets.ts';
 import {
-  describeErrors,
   describeServerLogCheck,
-  ScenarioObserver,
-  type ServerLogError,
+  expectNoServerErrors,
+  ServerLogWatch,
 } from '../core/server-log.ts';
 import { resolveLane, type LaneResolution } from '../core/suite.ts';
 import { Fixtures } from '../fixtures/fixtures.ts';
@@ -34,12 +33,14 @@ assertValidHeaders(BROWSER_SCENARIOS.map((scenario) => scenario.header));
 const run = new RunContext();
 let lane: LaneResolution;
 let browser: Browser | null = null;
+let watch: ServerLogWatch;
 
 beforeAll(async () => {
   lane = await resolveLane('browser');
   if (!lane.target) return;
   console.log(`browser lane run ${run.runId}: ${describeEnv(lane.target.env)}`);
   console.log(`  ${describeServerLogCheck(lane.target.env.serverLog)}`);
+  watch = new ServerLogWatch(lane.target.env.serverLog);
   if (lane.target.env.gatewayUiUrl !== null) browser = await chromium.launch();
 }, 120_000);
 
@@ -69,7 +70,11 @@ describe('browser lane', () => {
       const names = run.scope();
       const fixtures = new Fixtures(env, names, switchClient, mattermost);
       const log = (message: string): void => console.log(`[${scenario.header.id}] ${message}`);
-      const browserContext = await browser.newContext();
+      // The page's own /gateway requests carry the scope's tag too, so an
+      // error the server logs serving one is attributed to this scenario.
+      const browserContext = await browser.newContext({
+        extraHTTPHeaders: { 'X-Request-Id': `${names.tag}-ui` },
+      });
       const page = await browserContext.newPage();
       const ui = new GatewayUi(
         browserContext,
@@ -78,40 +83,40 @@ describe('browser lane', () => {
         env.switch,
         new IssuedSecrets(env.secretsFile)
       );
-      const observer = new ScenarioObserver(env.serverLog, switchClient, names.tag);
+      const observer = watch.begin(switchClient, names.tag);
       let failure: unknown = null;
+      let problems: string[];
+      let leftovers: string[];
       try {
-        await scenario.run({ env, names, switchClient, fixtures, ui, log });
-      } catch (error) {
-        failure = error;
+        try {
+          await scenario.run({ env, names, switchClient, fixtures, ui, log });
+        } catch (error) {
+          failure = error;
+        }
+        problems = [...ui.recorded()];
+        if ((failure !== null || problems.length > 0) && env.outputDir !== null) {
+          const dir = path.join(env.outputDir, 'screenshots');
+          mkdirSync(dir, { recursive: true });
+          const file = path.join(dir, `${scenario.header.id}.png`);
+          await ui.screenshot(file);
+          log(`screenshot of the last page: ${file}`);
+        }
+        await browserContext.close();
+        leftovers = await fixtures.teardown();
+      } finally {
+        observer.stop();
       }
-      const problems = [...ui.recorded()];
-      if ((failure !== null || problems.length > 0) && env.outputDir !== null) {
-        const dir = path.join(env.outputDir, 'screenshots');
-        mkdirSync(dir, { recursive: true });
-        const file = path.join(dir, `${scenario.header.id}.png`);
-        await ui.screenshot(file);
-        log(`screenshot of the last page: ${file}`);
-      }
-      await browserContext.close();
-      const leftovers = await fixtures.teardown();
       for (const line of leftovers) log(`teardown: ${line}`);
-      const serverErrors = await observer.finish();
-      if (serverErrors !== null && serverErrors.length > 0) {
-        log(`the server logged errors:\n  ${describeErrors(serverErrors, observer.tag)}`);
-      }
+      const serverErrors = observer.errors(failure, log);
       if (failure !== null) throw failure;
       expect(problems, `the pages went wrong:\n  ${problems.join('\n  ')}\n`).toEqual([]);
       if (!env.keepArtifacts) expect(leftovers, 'teardown left artefacts behind').toEqual([]);
-      expectNoServerErrors(serverErrors, observer.tag);
+      expectNoServerErrors(serverErrors, observer.tag, 'while this ran');
     });
   }
-});
 
-function expectNoServerErrors(errors: ServerLogError[] | null, tag: string): void {
-  if (errors === null) return;
-  expect(
-    errors,
-    `the server logged errors while this ran:\n  ${describeErrors(errors, tag)}\n`
-  ).toEqual([]);
-}
+  it('the server logged no errors outside the scenarios', async (context) => {
+    if (!lane.target) return context.skip(lane.skip);
+    expectNoServerErrors(await watch.sweep(), null, 'outside any scenario');
+  });
+});

@@ -10,7 +10,7 @@
  * get as far as its suite, and a summary that read "0 passed" would hide that.
  */
 import { appendFileSync, readFileSync } from 'node:fs';
-import type { Lane } from './core/env.ts';
+import { isLane, LANES, type Lane } from './core/env.ts';
 import { message } from './core/suite.ts';
 
 export type CaseStatus = 'pass' | 'fail' | 'skip';
@@ -92,10 +92,10 @@ export function summaryMarkdown(title: string, cases: readonly ScenarioCase[]): 
   ].join('\n');
 }
 
-function main(argv: readonly string[]): void {
+export function main(argv: readonly string[]): void {
   const [reportPath, lane, title] = argv;
-  if (!reportPath || (lane !== 'fast' && lane !== 'provider') || !title) {
-    throw new Error('Usage: ci-summary.ts <junit.xml> <fast|provider> <title>');
+  if (!reportPath || lane === undefined || !isLane(lane) || !title) {
+    throw new Error(`Usage: ci-summary.ts <junit.xml> <${LANES.join('|')}> <title>`);
   }
   let xml: string;
   try {

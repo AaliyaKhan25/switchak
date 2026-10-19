@@ -22,6 +22,13 @@ import { fileURLToPath } from 'node:url';
  */
 export type Lane = 'fast' | 'provider' | 'browser';
 
+/** Every lane: the one list anything that takes a lane by name checks against. */
+export const LANES: readonly Lane[] = ['fast', 'provider', 'browser'];
+
+export function isLane(raw: string): raw is Lane {
+  return (LANES as readonly string[]).includes(raw);
+}
+
 /**
  * What the target is. Scenarios declare which they may run against.
  *
@@ -185,8 +192,8 @@ export function laneFrom(
 ): Lane | null {
   const raw = reader(source, file)('SWITCH_E2E_LANE');
   if (raw === undefined) return null;
-  if (raw === 'fast' || raw === 'provider' || raw === 'browser') return raw;
-  throw new Error(`SWITCH_E2E_LANE must be 'fast', 'provider' or 'browser' — got '${raw}'.`);
+  if (isLane(raw)) return raw;
+  throw new Error(`SWITCH_E2E_LANE must be one of ${LANES.join(', ')} — got '${raw}'.`);
 }
 
 /**

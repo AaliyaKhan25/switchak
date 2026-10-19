@@ -136,8 +136,12 @@ Each scenario gets a fresh browser context, signed out. What it needs in the
 server it creates over HTTP through the same fixtures as the fast lane. Beyond
 its own assertions, a scenario fails on anything that went wrong on its pages:
 an uncaught page error, a console error, a `/gateway` request the server
-answered with a 5xx (or any 4xx once signed in), or an error banner. A failed
-scenario's last page is saved under `screenshots/` in the output directory.
+answered with a 5xx (or any 4xx once signed in), or an error banner. A
+request is blamed on the page that made it, and one the browser cancelled
+itself (the page moved on mid-request) is not a problem. A page counts as
+loaded once no `/gateway` request has been in flight for half a second; one
+still waiting after 15 s is a problem too. A failed scenario's last page is
+saved under `screenshots/` in the output directory.
 
 | Scenario | What it drives |
 | --- | --- |
