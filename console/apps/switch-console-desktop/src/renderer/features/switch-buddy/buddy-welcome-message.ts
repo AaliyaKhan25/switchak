@@ -26,7 +26,7 @@ export function buddyWelcomeMessage({
     'Some tips:',
     '',
     '**👫 If you want your team to talk to me**',
-    '- In my Settings tab, set “Who can talk to this agent” to “Anyone”.',
+    '- In my Agent settings, set “Who can talk to your agent” to “Anyone”.',
     '- Then invite your team members to the channel I’m in.',
     '',
     '**➕ If you want to add me to another channel**',
