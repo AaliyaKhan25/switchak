@@ -228,17 +228,21 @@ on every PR with no server.
   - every declared agent operation, gated groups included. One definition
     serves both MCP and the HTTP front door, so this is the agent surface
     whichever door an agent uses;
-  - every gateway route, with every feature flag on, and what it authenticates
-    with: `session`, `operator-token` (the hosted controller's machine routes)
-    or `none`.
+  - every gateway route, with every feature flag on. Each one records what it
+    authenticates with (`session`, `operator-token` for the hosted controller's
+    machine routes, or `none`) and which feature flags it is mounted behind.
+
+  Every setting the script builds the app with is pinned in the script, so a
+  developer's `.env` cannot change the snapshot. Agent management's routes are
+  mounted through the same function `Management.install` uses.
 
   The backend CI job runs the script with `--check`, so a route added without
   regenerating fails there. Once the snapshot is regenerated, the gate fails
   until the new route is accounted for.
-- **What counts as covered.** An entry in some scenario's `covers`. Operation
-  names and `/gateway/…` routes are checked against the snapshot, so a renamed
-  route fails as a stale claim. Agent-bridge routes (`/agents/…`) are not
-  snapshotted yet and pass unchecked.
+- **What counts as covered.** An entry in some scenario's `covers`. Every
+  operation name and route is checked against the snapshot, so a renamed route
+  or a typo fails as a stale claim. The one exception is agent-bridge routes
+  (`/agents/…`), which are not snapshotted yet and are taken on trust.
 - **`exemptions.json`** has three lists:
   - `exempt`: deliberately not covered end to end, each with its reason (it
     needs a real third-party sign-in, say).
@@ -250,11 +254,12 @@ on every PR with no server.
     removed. Never add to it: a new route needs a scenario or an `exempt` entry
     with its reason.
 - **A check derived from the snapshot.** The fast lane checks that every
-  `session` route the deployment mounts answers 401 to a request carrying no
-  credential. It reads which routes are mounted from the deployment's own
-  OpenAPI document, so routes behind flags that are off are left out and
-  counted. This check counts nothing towards coverage, but it applies to every
-  new route automatically.
+  `session` route answers 401 to a request carrying no credential. It skips
+  only the routes behind a feature flag the deployment has off: the snapshot
+  names each route's flags, and `GET /gateway/feature-flags` says which are on.
+  Routes left out of the OpenAPI document are probed like any other. This check
+  counts nothing towards coverage, but it applies to every new route
+  automatically.
 
 ## In CI
 

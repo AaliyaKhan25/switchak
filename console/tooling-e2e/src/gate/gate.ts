@@ -26,7 +26,12 @@ export type RouteAuth = 'session' | 'operator-token' | 'none';
 
 export interface ServerSurface {
   operations: string[];
-  gatewayRoutes: { route: string; auth: RouteAuth }[];
+  gatewayRoutes: {
+    route: string;
+    auth: RouteAuth;
+    /** The feature flags the route is mounted behind; it exists only with all of them on. */
+    flags: string[];
+  }[];
 }
 
 export interface Exemptions {
@@ -35,7 +40,12 @@ export interface Exemptions {
   backlog: string[];
 }
 
-const SURFACE_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'surface');
+const SURFACE_DIR = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '..',
+  '..',
+  'surface'
+);
 
 export function readSurface(): ServerSurface {
   return JSON.parse(
@@ -55,9 +65,16 @@ export function readExemptions(): Exemptions {
   };
 }
 
-/** What the gate is about: operations, and routes under `/gateway`. */
-function inScope(entry: string): boolean {
-  return !entry.includes(' ') || entry.includes(' /gateway/');
+/**
+ * Route prefixes the snapshot does not hold yet, so a `covers` entry under one
+ * is taken on trust. Any other route has to be one the snapshot has: a typo
+ * would otherwise read as coverage while the real route stays uncovered.
+ */
+const UNCHECKED_ROUTE_PREFIXES = ['/agents/'];
+
+function unchecked(entry: string): boolean {
+  const [, path] = entry.split(' ', 2);
+  return path !== undefined && UNCHECKED_ROUTE_PREFIXES.some((prefix) => path.startsWith(prefix));
 }
 
 /** Every problem, so one pass fixes them all. Empty when the gate passes. */
@@ -72,11 +89,11 @@ export function coverageProblems(
   const coveredBy = new Map<string, string[]>();
   for (const header of headers) {
     for (const entry of header.covers) {
-      if (!inScope(entry)) continue;
+      if (unchecked(entry)) continue;
       if (!known.has(entry)) {
         problems.push(
           `${header.id} covers '${entry}', which the server does not have ` +
-            `(renamed or removed? the snapshot is surface/server-surface.json)`
+            `(renamed, removed, or a typo? the snapshot is surface/server-surface.json)`
         );
         continue;
       }
@@ -86,7 +103,8 @@ export function coverageProblems(
 
   const backlog = new Set(exemptions.backlog);
   for (const entry of exemptions.backlog) {
-    if (!known.has(entry)) problems.push(`backlog lists '${entry}', which the server does not have`);
+    if (!known.has(entry))
+      problems.push(`backlog lists '${entry}', which the server does not have`);
     else if (coveredBy.has(entry)) {
       problems.push(
         `backlog lists '${entry}', which ${coveredBy.get(entry)!.join(', ')} now covers — remove it`

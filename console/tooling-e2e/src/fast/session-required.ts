@@ -11,9 +11,11 @@ import type { ServerSurface } from '../gate/gate.ts';
  * catches a session check that a refactor dropped, which the snapshot would
  * only show as a route moving to `none` in a diff.
  *
- * Only routes the deployment mounts are probed, read from its own OpenAPI
- * document: a route behind a feature flag it has off answers 404 for that
- * reason alone. Path parameters get a well-formed id that names nothing: the
+ * A route behind a feature flag the deployment has off is not mounted, and
+ * answers 404 for that reason alone, so the probe skips exactly those: the
+ * snapshot names each route's flags, and the deployment says which it has on.
+ * Every other session route is probed, whether or not it appears in the
+ * deployment's OpenAPI document. Path parameters get a well-formed id that names nothing: the
  * session check runs before the route ever looks the id up.
  */
 
@@ -26,7 +28,7 @@ export function probePath(route: string): { method: string; path: string } {
 
 export interface SessionProbe {
   probed: number;
-  /** Session routes in the snapshot this deployment does not mount. */
+  /** Session routes behind a feature flag this deployment has off. */
   notMounted: number;
   /** Each probed route that did not answer 401, with what it answered. */
   wrong: string[];
@@ -36,11 +38,11 @@ export async function probeSessionRoutes(
   switchClient: SwitchClient,
   surface: ServerSurface
 ): Promise<SessionProbe> {
-  const mounted = await switchClient.mountedGatewayRoutes();
+  const enabled = await switchClient.enabledFeatureFlags();
   const result: SessionProbe = { probed: 0, notMounted: 0, wrong: [] };
-  for (const { route, auth } of surface.gatewayRoutes) {
+  for (const { route, auth, flags } of surface.gatewayRoutes) {
     if (auth !== 'session') continue;
-    if (!mounted.has(route)) {
+    if (!flags.every((flag) => enabled.has(flag))) {
       result.notMounted += 1;
       continue;
     }

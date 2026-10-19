@@ -9,12 +9,17 @@ so the surface it reads is a committed snapshot:
 * every declared agent operation, gated groups included — one definition
   serves both the MCP server and the HTTP front door, so this is the agent
   surface whichever door an agent uses;
-* every gateway route as `METHOD /gateway/path`, with every feature flag on and
-  agent management mounted, and what it authenticates with: a signed-in
-  session (`session`), the hosted controller's operator token
-  (`operator-token`), or nothing (`none`). The gate requires each route that
-  takes nothing to be listed with a reason, and the fast lane checks that each
-  `session` route refuses a request without one.
+* every gateway route as `METHOD /gateway/path` (path parameters as OpenAPI
+  writes them, convertors dropped), with every feature flag on, and:
+  - what it authenticates with: a signed-in session (`session`), the hosted
+    controller's operator token (`operator-token`), or nothing (`none`). The
+    gate requires each route that takes nothing to be listed with a reason;
+  - the feature flags it is mounted behind, found by building the app with
+    each flag off in turn. The fast lane probes every `session` route whose
+    flags the deployment has on, and expects a 401 without a session.
+
+Every setting comes from this script, never from the environment, so a
+developer's `.env` (which `just` exports) cannot change what it writes.
 
 Usage:
     uv run --project core python scripts/e2e_surface.py           # write it
@@ -37,6 +42,7 @@ from unittest.mock import MagicMock
 from fastapi import FastAPI
 from fastapi.dependencies.models import Dependant
 from fastapi.routing import APIRoute
+from pydantic_settings import BaseSettings, PydanticBaseSettingsSource
 from starlette.routing import Route
 
 from switch_core.bridges.agent.operations import declared_operations
@@ -51,8 +57,7 @@ from switch_core.gateway.auth import (
     get_current_user_in_transaction,
 )
 from switch_core.gateway.hosted_controller import controller_session
-from switch_core.management.gateway_routes import router as management_router
-from switch_core.management.wiring import GATEWAY_PREFIX
+from switch_core.management.wiring import mount_gateway_routes
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SNAPSHOT = REPO_ROOT / "console" / "tooling-e2e" / "surface" / "server-surface.json"
@@ -100,9 +105,23 @@ _COLLABORATORS = (
 )
 
 
-def _config() -> SwitchConfig:
-    return SwitchConfig(
-        _env_file=None,  # type: ignore[call-arg]
+class _PinnedConfig(SwitchConfig):
+    """`SwitchConfig` that reads only the arguments it is given."""
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        return (init_settings,)
+
+
+def _config(flags: frozenset[str]) -> SwitchConfig:
+    return _PinnedConfig(
         db_host="db",
         db_port="5432",
         db_user="switch",
@@ -114,19 +133,21 @@ def _config() -> SwitchConfig:
         gateway_admin_email="admin@example.com",
         gateway_admin_password="placeholder",
         controller_token_secret="0" * 64,
-        feature_flags_enabled=",".join(sorted(KNOWN_FEATURE_FLAGS)),
+        feature_flags_enabled=",".join(sorted(flags)),
     )
 
 
-def gateway_app() -> FastAPI:
+def gateway_app(config: SwitchConfig) -> FastAPI:
     app = create_gateway_app(
         **{name: MagicMock() for name in _COLLABORATORS},
         install_service=None,
         invite_mailer=None,
-        config=_config(),
+        config=config,
     )
-    # What `Management.install` mounts when the agent_management flag is on.
-    app.include_router(management_router, prefix=GATEWAY_PREFIX)
+    # `create_management` builds agent management only with its flag on, and
+    # `Management.install` then mounts its gateway routes through this.
+    if config.agent_management_enabled:
+        mount_gateway_routes(app)
     return app
 
 
@@ -155,7 +176,8 @@ def _auth(route: Route) -> str:
     return "none"
 
 
-def gateway_routes(app: FastAPI) -> list[dict[str, str]]:
+def _routes_by_key(app: FastAPI) -> dict[str, str]:
+    """Each route's `METHOD /gateway/path`, and what it authenticates with."""
     routes: dict[str, str] = {}
     for route in app.routes:
         if not isinstance(route, Route):
@@ -166,18 +188,42 @@ def gateway_routes(app: FastAPI) -> list[dict[str, str]]:
         for method in sorted(route.methods or ()):
             if method == "HEAD":
                 continue
-            key = f"{method} /gateway{route.path}"
+            # `path_format` is the path as OpenAPI and a client write it:
+            # `{file:path}` becomes `{file}`.
+            key = f"{method} /gateway{route.path_format}"
             if key in routes:
                 raise ValueError(f"Gateway route {key} is mounted twice.")
             routes[key] = _auth(route)
-    return [{"route": key, "auth": routes[key]} for key in sorted(routes)]
+    return routes
+
+
+def gateway_routes() -> list[dict[str, Any]]:
+    every = frozenset(KNOWN_FEATURE_FLAGS)
+    routes = _routes_by_key(gateway_app(_config(every)))
+    gated_by: dict[str, list[str]] = {key: [] for key in routes}
+    for flag in sorted(every):
+        without = _routes_by_key(gateway_app(_config(every - {flag})))
+        unexpected = sorted(set(without) - set(routes))
+        if unexpected:
+            raise ValueError(
+                f"Turning the {flag} flag off mounts routes that are absent with "
+                f"every flag on: {unexpected}. The snapshot assumes a flag only "
+                "ever adds routes."
+            )
+        for key in routes:
+            if key not in without:
+                gated_by[key].append(flag)
+    return [
+        {"route": key, "auth": routes[key], "flags": gated_by[key]}
+        for key in sorted(routes)
+    ]
 
 
 def render() -> str:
     surface = {
         "_generated": "by scripts/e2e_surface.py; do not edit. Run `just e2e-surface`.",
         "operations": sorted(declared_operations()),
-        "gatewayRoutes": gateway_routes(gateway_app()),
+        "gatewayRoutes": gateway_routes(),
     }
     return json.dumps(surface, indent=2) + "\n"
 

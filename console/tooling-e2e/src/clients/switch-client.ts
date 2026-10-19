@@ -207,23 +207,13 @@ export class SwitchClient {
     return response.status;
   }
 
-  /**
-   * The gateway routes this deployment mounts, as `METHOD /gateway/path`, from
-   * its own OpenAPI document (served without a session). Routes behind a
-   * feature flag the deployment has off are not in it.
-   */
-  async mountedGatewayRoutes(): Promise<Set<string>> {
-    const document = await this.request<{ paths: Record<string, Record<string, unknown>> }>(
+  /** `GET /gateway/feature-flags` — the flags this deployment has turned on. */
+  async enabledFeatureFlags(): Promise<Set<string>> {
+    const body = await this.gateway<{ flags: { key: string; enabled: boolean }[] }>(
       'GET',
-      '/gateway/openapi.json'
+      '/feature-flags'
     );
-    const routes = new Set<string>();
-    for (const [path, operations] of Object.entries(document.paths)) {
-      for (const method of Object.keys(operations)) {
-        routes.add(`${method.toUpperCase()} /gateway${path}`);
-      }
-    }
-    return routes;
+    return new Set(body.flags.filter((flag) => flag.enabled).map((flag) => flag.key));
   }
 
   /** `GET /health` — the reachability probe the suite skips on. */

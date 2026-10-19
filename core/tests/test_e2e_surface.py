@@ -56,9 +56,23 @@ def test_flag_gated_routes_are_included() -> None:
 def test_the_environment_does_not_change_the_snapshot(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Settings the script does not pin, each of which would either fail the
+    build or change what it mounts if the environment leaked in."""
     before = surface.render()
-    monkeypatch.setenv("FEATURE_FLAGS_ENABLED", "")
+    monkeypatch.setenv("GATEWAY_SIGNUP_MODE", "open")
+    monkeypatch.setenv("HOSTED_LAUNCH_CAPACITY", "1")
+    monkeypatch.setenv("GITHUB_APP_CONFIG_PATH", "/nonexistent/github-app.json")
     assert surface.render() == before
+
+
+def test_each_route_names_the_flags_it_is_mounted_behind() -> None:
+    routes = {
+        entry["route"]: entry["flags"]
+        for entry in json.loads(surface.render())["gatewayRoutes"]
+    }
+    assert routes["POST /gateway/rooms"] == []
+    assert routes["POST /gateway/management/agents"] == ["agent_management"]
+    assert routes["GET /gateway/service-connections"] == ["service_connections"]
 
 
 def test_operations_include_gated_groups() -> None:

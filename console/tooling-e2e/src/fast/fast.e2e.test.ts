@@ -3,8 +3,8 @@ import { describeEnv } from '../core/env.ts';
 import { RunContext } from '../core/run.ts';
 import { admit, assertValidHeaders } from '../core/scenario.ts';
 import { resolveLane, type LaneResolution } from '../core/suite.ts';
-import { readSurface } from '../gate/gate.ts';
 import { Fixtures } from '../fixtures/fixtures.ts';
+import { readSurface } from '../gate/gate.ts';
 import { FAST_SCENARIOS } from './index.ts';
 import { probeSessionRoutes } from './session-required.ts';
 

@@ -22,13 +22,20 @@ describe('coverage gate', () => {
 const SURFACE: ServerSurface = {
   operations: ['list_rooms', 'post_message'],
   gatewayRoutes: [
-    { route: 'POST /gateway/rooms', auth: 'session' },
-    { route: 'POST /gateway/auth/login', auth: 'none' },
+    { route: 'POST /gateway/rooms', auth: 'session', flags: [] },
+    { route: 'POST /gateway/auth/login', auth: 'none', flags: [] },
   ],
 };
 
 function header(id: string, covers: string[]): ScenarioHeader {
-  return { id, covers, needsProvider: false, environments: ['ephemeral'], owner: 'platform', requires: [] };
+  return {
+    id,
+    covers,
+    needsProvider: false,
+    environments: ['ephemeral'],
+    owner: 'platform',
+    requires: [],
+  };
 }
 
 function exemptions(overrides: Partial<Exemptions>): Exemptions {
@@ -41,7 +48,9 @@ function exemptions(overrides: Partial<Exemptions>): Exemptions {
 }
 
 describe('coverage gate rules', () => {
-  const covering = [header('rooms', ['list_rooms', 'POST /gateway/rooms', 'GET /agents/{agent_id}/ops'])];
+  const covering = [
+    header('rooms', ['list_rooms', 'POST /gateway/rooms', 'GET /agents/{agent_id}/ops']),
+  ];
 
   it('passes when everything is covered, exempt or in the backlog', () => {
     expect(coverageProblems(SURFACE, exemptions({}), covering)).toEqual([]);
@@ -50,12 +59,17 @@ describe('coverage gate rules', () => {
   it('fails on a new operation or route nothing accounts for', () => {
     const grown: ServerSurface = {
       operations: [...SURFACE.operations, 'archive_room'],
-      gatewayRoutes: [...SURFACE.gatewayRoutes, { route: 'DELETE /gateway/rooms/{room_id}', auth: 'session' }],
+      gatewayRoutes: [
+        ...SURFACE.gatewayRoutes,
+        { route: 'DELETE /gateway/rooms/{room_id}', auth: 'session', flags: [] },
+      ],
     };
     const problems = coverageProblems(grown, exemptions({}), covering);
     expect(problems).toHaveLength(2);
     expect(problems.join('\n')).toContain("'archive_room' is covered by no scenario");
-    expect(problems.join('\n')).toContain("'DELETE /gateway/rooms/{room_id}' is covered by no scenario");
+    expect(problems.join('\n')).toContain(
+      "'DELETE /gateway/rooms/{room_id}' is covered by no scenario"
+    );
   });
 
   it('fails on a backlog entry a scenario now covers, and on stale entries', () => {
@@ -65,17 +79,27 @@ describe('coverage gate rules', () => {
       covering
     );
     expect(problems.join('\n')).toContain("backlog lists 'list_rooms', which rooms now covers");
-    expect(problems.join('\n')).toContain("backlog lists 'gone_operation', which the server does not have");
+    expect(problems.join('\n')).toContain(
+      "backlog lists 'gone_operation', which the server does not have"
+    );
   });
 
-  it('fails on a header covering what the server does not have, ignoring the agent bridge', () => {
+  it('fails on a header covering what the server does not have, trusting only agent-bridge routes', () => {
     const problems = coverageProblems(SURFACE, exemptions({}), [
       ...covering,
-      header('stale', ['list_room', 'GET /gateway/nowhere', 'POST /agents/register-known']),
+      header('stale', [
+        'list_room',
+        'GET /gateway/nowhere',
+        'POST /gatway/rooms',
+        'POST gateway/rooms',
+        'POST /agents/register-known',
+      ]),
     ]);
-    expect(problems).toHaveLength(2);
+    expect(problems).toHaveLength(4);
     expect(problems.join('\n')).toContain("stale covers 'list_room'");
     expect(problems.join('\n')).toContain("stale covers 'GET /gateway/nowhere'");
+    expect(problems.join('\n')).toContain("stale covers 'POST /gatway/rooms'");
+    expect(problems.join('\n')).toContain("stale covers 'POST gateway/rooms'");
   });
 
   it('wants a reason for every exemption, and for every route that takes no credential', () => {
@@ -84,7 +108,9 @@ describe('coverage gate rules', () => {
       exemptions({ exempt: { 'POST /gateway/auth/login': ' ' }, unauthenticated: {} }),
       covering
     );
-    expect(problems.join('\n')).toContain("exempt lists 'POST /gateway/auth/login' without a reason");
+    expect(problems.join('\n')).toContain(
+      "exempt lists 'POST /gateway/auth/login' without a reason"
+    );
     expect(problems.join('\n')).toContain("'POST /gateway/auth/login' takes no credential");
   });
 
