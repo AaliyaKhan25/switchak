@@ -101,7 +101,7 @@ jobs:
         env:
           AGENT_TYPE: ${{ inputs.agent_type }}
         run: |
-          case "$LANE" in fast|provider|browser) ;; *) echo "::error::Unknown lane '$LANE'."; exit 1 ;; esac
+          case "$LANE" in fast|provider|browser|agentic) ;; *) echo "::error::Unknown lane '$LANE'."; exit 1 ;; esac
           case "$TARGET" in ephemeral|dev|staging) ;; *) echo "::error::Unknown environment '$TARGET'."; exit 1 ;; esac
           case "$LANE" in provider|agentic) REAL_SESSION=1 ;; *) REAL_SESSION=0 ;; esac
           if [ "$REAL_SESSION" = 1 ] && [ "$TARGET" != ephemeral ]; then
