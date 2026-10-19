@@ -196,7 +196,7 @@ const RoomStateDisclosure = observer(function RoomStateDisclosure() {
       <DisclosureBar>
         Sign in to {signedOut.map((s) => s.name).join(', ')} to see{' '}
         {signedOut.length === 1 ? 'its' : 'their'} rooms.{' '}
-        <DisclosureAction onClick={() => navigate('server', { serverId: signedOut[0].id })}>
+        <DisclosureAction onClick={() => navigate('server', { serverId: signedOut[0].serverId })}>
           Sign in
         </DisclosureAction>
       </DisclosureBar>

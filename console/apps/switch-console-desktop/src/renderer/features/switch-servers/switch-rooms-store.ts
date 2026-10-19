@@ -366,13 +366,13 @@ export class SwitchRoomsStore {
    * Not a fault and not retryable — the user has to sign in. Reporting it as a
    * failure with a retry button offers an action that cannot work.
    */
-  get workspacesNotSignedIn(): { id: string; name: string }[] {
-    return this.namedWorkspacesInScope(
-      this.unreachableWorkspaceIds.filter((id) => {
-        const serverId = workspacesStore.serverIdFor(id);
-        return serverId !== null && serverAvailability(serverId) === 'signed-out';
-      })
-    );
+  get workspacesNotSignedIn(): { id: string; name: string; serverId: string }[] {
+    return this.namedWorkspacesInScope(this.unreachableWorkspaceIds).flatMap((workspace) => {
+      const serverId = workspacesStore.serverIdFor(workspace.id);
+      return serverId !== null && serverAvailability(serverId) === 'signed-out'
+        ? [{ ...workspace, serverId }]
+        : [];
+    });
   }
 
   private namedWorkspacesInScope(workspaceIds: string[]): { id: string; name: string }[] {
