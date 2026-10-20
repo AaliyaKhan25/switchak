@@ -57,9 +57,12 @@ With `SWITCH_E2E_LANE` unset every end-to-end scenario is skipped, which is
 what `pnpm -r test` and PR CI see. The unit tests (configuration, the read-only
 guard, naming, scenario headers) run either way.
 
-Housekeeping after an interrupted run deletes every `e2e-*` agent and room on
-the Switch server and archives every `e2e-*` Mattermost channel older than the
-age you give, and nothing else. The age floor is what lets a scheduled wipe of a
+Housekeeping after an interrupted run deletes every agent and room on the
+Switch server, and archives every Mattermost channel, that is named the way the
+harness names things (`e2e-<six-character run id><scope letter>-<role>`) and is
+older than the age you give, and nothing else. A name that merely starts with
+`e2e-` is not enough: people name their own test agents and rooms that way on a
+shared deployment. The age floor is what lets a scheduled wipe of a
 deployed environment run while a suite is in progress; make it longer than the
 longest run. `0` takes everything, which is only right when nothing else is
 running against the server:

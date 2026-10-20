@@ -1,10 +1,12 @@
 /**
  * Remove artefacts that interrupted runs left behind: Switch agents, Switch
- * rooms and Mattermost channels whose names start with `e2e-` and that are
- * older than `--older-than <minutes>`.
+ * rooms and Mattermost channels named the way the harness names things
+ * (`e2e-<runId><scope>-<role>`, see `isHarnessArtifact`) and older than
+ * `--older-than <minutes>`.
  *
- * Scoped strictly to that prefix — an operator's real agents and their rooms are
- * never in scope, and the script prints everything it touches. The age floor is
+ * Scoped strictly to that shape, not just the `e2e-` prefix: people name their
+ * own test agents and rooms `e2e-…` too. The script prints everything it
+ * touches. The age floor is
  * what lets a scheduled wipe of a deployed environment run while a suite is in
  * progress: a run's own artefacts are younger than the floor, so it is left
  * alone. Pick a floor longer than the longest run; `0` takes everything, which
@@ -12,7 +14,7 @@
  *
  *     SWITCH_E2E_LANE=fast node --experimental-strip-types src/cleanup.ts --older-than 120
  */
-import { ARTIFACT_PREFIX } from './core/run.ts';
+import { isHarnessArtifact } from './core/run.ts';
 import { message, resolveLane } from './core/suite.ts';
 
 export async function cleanup(
@@ -24,7 +26,7 @@ export async function cleanup(
   const { env, switchClient, mattermost } = lane.target;
   const cutoff = Date.now() - olderThanMinutes * 60_000;
   const stale = (name: string, createdMs: number): boolean =>
-    name.startsWith(ARTIFACT_PREFIX) && createdMs <= cutoff;
+    isHarnessArtifact(name) && createdMs <= cutoff;
   let failures = 0;
 
   for (const room of await switchClient.listRooms()) {
