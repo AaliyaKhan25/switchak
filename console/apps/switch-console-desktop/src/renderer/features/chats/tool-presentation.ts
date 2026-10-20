@@ -335,7 +335,7 @@ export function shortPath(path: string): string {
   return parts.length > 3 ? `…/${parts.slice(-3).join('/')}` : path;
 }
 
-const COUNTED: Record<ToolKind, (count: number) => string> = {
+const COUNTED: Record<Exclude<ToolKind, 'switch'>, (count: number) => string> = {
   shell: (n) => `Ran ${n} ${n === 1 ? 'command' : 'commands'}`,
   read: (n) => `Read ${n} ${n === 1 ? 'file' : 'files'}`,
   edit: (n) => `Edited ${n} ${n === 1 ? 'file' : 'files'}`,
@@ -343,7 +343,6 @@ const COUNTED: Record<ToolKind, (count: number) => string> = {
   web: (n) => `Searched the web ${n} ${n === 1 ? 'time' : 'times'}`,
   agent: (n) => `Ran ${n} ${n === 1 ? 'agent' : 'agents'}`,
   todo: (n) => `Updated the to-do list${n === 1 ? '' : ` ${n} times`}`,
-  switch: (n) => `Took ${n} Switch ${n === 1 ? 'action' : 'actions'}`,
   mcp: (n) => `Called ${n} ${n === 1 ? 'tool' : 'tools'}`,
   other: (n) => `Used ${n} ${n === 1 ? 'tool' : 'tools'}`,
 };
@@ -354,8 +353,11 @@ const COUNTED: Record<ToolKind, (count: number) => string> = {
  * when every call shares it, and null when they are mixed.
  */
 export function summarizeTools(kinds: ToolKind[]): { label: string; kind: ToolKind | null } {
-  const counts = new Map<ToolKind, number>();
-  for (const kind of kinds) counts.set(kind, (counts.get(kind) ?? 0) + 1);
+  const counts = new Map<Exclude<ToolKind, 'switch'>, number>();
+  for (const kind of kinds) {
+    const counted = kind === 'switch' ? 'other' : kind;
+    counts.set(counted, (counts.get(counted) ?? 0) + 1);
+  }
   const parts = [...counts].map(([kind, count], index) => {
     const text = COUNTED[kind](count);
     return index === 0 ? text : text.charAt(0).toLowerCase() + text.slice(1);
