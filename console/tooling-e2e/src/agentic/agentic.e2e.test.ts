@@ -187,7 +187,7 @@ describe('agentic lane', () => {
 
       ledger.assertWithin(`${scenario.header.id} started`);
       const names = scopes.scope();
-      const observer = watch.begin(h.switch, names.tag);
+      const observer = watch.begin(h.switch, names.tag, scenario.header.id);
       const turns: Turn[] = [];
       let facts: FactResult[] = [];
       let failure: unknown = null;

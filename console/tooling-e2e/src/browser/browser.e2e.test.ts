@@ -83,7 +83,7 @@ describe('browser lane', () => {
         env.switch,
         new IssuedSecrets(env.secretsFile)
       );
-      const observer = watch.begin(switchClient, names.tag);
+      const observer = watch.begin(switchClient, names.tag, scenario.header.id);
       let failure: unknown = null;
       let problems: string[];
       let leftovers: string[];

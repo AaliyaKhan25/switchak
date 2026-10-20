@@ -97,7 +97,7 @@ describe('provider lane', () => {
       }
       const h = harness!;
       const log = (message: string): void => console.log(`[${scenario.header.id}] ${message}`);
-      const observer = watch.begin(h.switch, scopes.scope().tag);
+      const observer = watch.begin(h.switch, scopes.scope().tag, scenario.header.id);
       let result: ScenarioResult;
       try {
         result = await scenario.run(h);

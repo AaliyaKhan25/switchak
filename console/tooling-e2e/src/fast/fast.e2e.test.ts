@@ -57,7 +57,7 @@ describe('fast lane', () => {
       const names = run.scope();
       const fixtures = new Fixtures(env, names, switchClient, mattermost);
       const log = (message: string): void => console.log(`[${scenario.header.id}] ${message}`);
-      const observer = watch.begin(switchClient, names.tag);
+      const observer = watch.begin(switchClient, names.tag, scenario.header.id);
       let failure: unknown = null;
       let leftovers: string[];
       try {
@@ -89,7 +89,7 @@ describe('fast lane, derived checks', () => {
     if (!lane.target) return context.skip(lane.skip);
     if (lane.target.env.environment === 'prod') return context.skip('sends writes; not on prod');
     const { switchClient } = lane.target;
-    const observer = watch.begin(switchClient, run.scope().tag);
+    const observer = watch.begin(switchClient, run.scope().tag, 'session-required');
     let probe: Awaited<ReturnType<typeof probeSessionRoutes>>;
     try {
       probe = await probeSessionRoutes(switchClient, readSurface());
@@ -120,7 +120,7 @@ describe('fast lane, derived checks', () => {
     const names = run.scope();
     const fixtures = new Fixtures(env, names, switchClient, mattermost);
     const log = (message: string): void => console.log(`[cross-tenant] ${message}`);
-    const observer = watch.begin(switchClient, names.tag);
+    const observer = watch.begin(switchClient, names.tag, 'cross-tenant');
     let failure: unknown = null;
     let probe: CrossTenantProbe | null = null;
     let leftovers: string[];

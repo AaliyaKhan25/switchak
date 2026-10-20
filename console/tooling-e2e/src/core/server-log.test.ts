@@ -100,7 +100,7 @@ describe('server log watch', () => {
     const file = logFile([record('info', 'booted')]);
     const watch = new ServerLogWatch(file);
     append(file, [record('error', 'during setup')]);
-    const observer = watch.begin(tagger, 'e2e-abc123b');
+    const observer = watch.begin(tagger, 'e2e-abc123b', 'some-scenario');
     append(file, [record('error', 'in the scenario', 'e2e-abc123b-1')]);
     observer.stop();
     expect(observer.errors(null, () => {})?.map((error) => error.message)).toEqual([
@@ -116,7 +116,7 @@ describe('server log watch', () => {
   it("never lets an unreadable log replace the scenario's own failure", () => {
     const file = logFile([record('info', 'booted'), record('info', 'more')]);
     const watch = new ServerLogWatch(file);
-    const observer = watch.begin(tagger, 'e2e-abc123b');
+    const observer = watch.begin(tagger, 'e2e-abc123b', 'some-scenario');
     truncateSync(file, 10);
     const said: string[] = [];
     expect(observer.errors(new Error('the scenario failed'), (line) => said.push(line))).toBe(null);
@@ -126,7 +126,7 @@ describe('server log watch', () => {
 
   it('is off, reading nothing, without a log', async () => {
     const watch = new ServerLogWatch(null);
-    expect(watch.begin(tagger, 'e2e-abc123b').errors(null, () => {})).toBe(null);
+    expect(watch.begin(tagger, 'e2e-abc123b', 'some-scenario').errors(null, () => {})).toBe(null);
     expect(await watch.sweep()).toBe(null);
   });
 });

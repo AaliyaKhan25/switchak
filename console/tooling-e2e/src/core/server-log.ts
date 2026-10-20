@@ -209,8 +209,13 @@ export class ServerLogWatch {
    * Start watching a scenario: what was logged since the last read is set
    * aside as outside any scenario, and the client tags its requests with
    * `tag` until the observer stops.
+   *
+   * Which scenario a tag belongs to is printed, whether or not this process
+   * reads the server's log: a deployment whose log is read elsewhere (after
+   * the run, from its log system) names a scenario by this line.
    */
-  begin(client: Taggable, tag: string): ScenarioObserver {
+  begin(client: Taggable, tag: string, scenario: string): ScenarioObserver {
+    console.log(`[${scenario}] requests tagged ${tag}-<n>`);
     if (this.cursor !== null) this.outside.push(...this.cursor.take());
     client.tagRequests(tag);
     return new ScenarioObserver(this.cursor, client, tag);
