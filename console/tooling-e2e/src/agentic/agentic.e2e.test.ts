@@ -226,7 +226,9 @@ describe('agentic lane', () => {
         const history = await h.switch.roomHistory(h.witness, active.room.id, 100);
         const lost = undelivered(
           turns,
-          history.map((event) => event.body)
+          history
+            .toSorted((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0))
+            .map((event) => event.body)
         );
         if (lost.length > 0) {
           throw new Error(

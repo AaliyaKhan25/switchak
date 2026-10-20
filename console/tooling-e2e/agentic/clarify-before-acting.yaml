@@ -20,7 +20,7 @@ facts:
     matches: '\?'
   - id: plan-mentions-local-time
     turn: any
-    matches: 'local|time ?zone'
+    matches: '\blocal|\btime ?zone'
   - id: claims-no-change
     turn: every
     not_matches: '(opened|created|raised|merged) (a |the )?(pr|pull request)|i(''|’)?ve (fixed|shipped|deployed|pushed)|i have (fixed|shipped|deployed|pushed)'

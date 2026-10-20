@@ -64,10 +64,41 @@ function checkFact(fact: Fact, replies: readonly string[]): FactResult {
   }
 }
 
-/** The human messages that are not in the room's history: written by the driver, never delivered. */
+/**
+ * The human messages that are not in the room's history: written by the
+ * driver, never delivered.
+ *
+ * `history` is the room's message bodies, oldest first. Each driver message
+ * has to match a body of its own, later than the one the message before it
+ * matched, so a lost "Yes." is not covered by an earlier "Yes." or by a longer
+ * message that contains it. A body matches when it is the message, or the
+ * message after a leading mention (the bridge carries the human's
+ * `@agent ...` as written). Both are compared after `normalise`, so a
+ * platform's spacing or quote style does not read as a lost message.
+ */
 export function undelivered(turns: readonly Turn[], history: readonly string[]): string[] {
-  return turns
-    .filter((turn) => turn.from === 'human' || turn.from === 'channel')
-    .map((turn) => turn.text)
-    .filter((text) => !history.some((body) => body.includes(text)));
+  const bodies = history.map(normalise);
+  const lost: string[] = [];
+  let next = 0;
+  for (const turn of turns) {
+    if (turn.from !== 'human' && turn.from !== 'channel') continue;
+    const text = normalise(turn.text);
+    const index = bodies.findIndex(
+      (body, i) =>
+        i >= next && (body === text || (body.startsWith('@') && body.endsWith(` ${text}`)))
+    );
+    if (index === -1) lost.push(turn.text);
+    else next = index + 1;
+  }
+  return lost;
+}
+
+/** Unicode compatibility forms folded, curly quotes made straight, runs of whitespace made one space. */
+export function normalise(text: string): string {
+  return text
+    .normalize('NFKC')
+    .replace(/[\u2018\u2019\u201A\u2032]/g, "'")
+    .replace(/[\u201C\u201D\u201E\u2033]/g, '"')
+    .replace(/\s+/g, ' ')
+    .trim();
 }

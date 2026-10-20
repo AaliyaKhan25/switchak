@@ -23,7 +23,7 @@ facts:
     matches: '-- ?payments-release'
   - id: names-a-weekday
     turn: first
-    matches: 'monday|tuesday|wednesday|thursday'
+    matches: '\b(monday|tuesday|wednesday|thursday)'
 rubric:
   - id: follows-the-room
     criterion: Every reply from the agent ends with the line "-- payments-release", as the room's instructions require.

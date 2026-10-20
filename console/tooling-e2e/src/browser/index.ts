@@ -75,12 +75,24 @@ const createRoom: BrowserScenario = {
     await ui.page.getByRole('textbox', { name: /^Description/ }).fill(description);
     await ui.page.getByRole('combobox', { name: 'Agents' }).fill(agent.name);
     await ui.page.getByRole('option').filter({ hasText: agent.name }).click();
+    // The room is known from the create call's answer, not from where the page
+    // goes next, so it is removed even if the page never gets there.
+    const created = ui.page.waitForResponse(
+      (response) =>
+        response.request().method() === 'POST' &&
+        new URL(response.url()).pathname.endsWith('/gateway/rooms'),
+      { timeout: 15_000 }
+    );
     await ui.page.getByRole('button', { name: 'Create', exact: true }).click();
-
-    await expect.poll(() => ui.path(), { timeout: 15_000 }).toMatch(/^\/rooms\/[0-9a-f-]{36}$/);
-    const roomId = ui.path().slice('/rooms/'.length);
+    const response = await created;
+    expect(response.status(), 'the create call failed').toBeLessThan(300);
+    const roomId = ((await response.json()) as { id?: unknown }).id;
+    if (typeof roomId !== 'string') {
+      throw new Error(`the create call answered without a room id: ${await response.text()}`);
+    }
     fixtures.defer(`room ${name} (${roomId})`, () => switchClient.deleteRoom(roomId));
     log(`created room ${name} (${roomId}) from the form`);
+    await expect.poll(() => ui.path(), { timeout: 15_000 }).toBe(`/rooms/${roomId}`);
 
     const room = await switchClient.getRoom(roomId);
     expect(room.name).toBe(name);

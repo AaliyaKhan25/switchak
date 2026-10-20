@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AgentRef, RoomDetail } from '../clients/switch-client.ts';
-import { crossTenantPath, type OtherTenant } from './cross-tenant.ts';
+import { crossTenantPath, probeOrder, type OtherTenant } from './cross-tenant.ts';
 import { isHtml } from './session-required.ts';
 
 const OTHER: OtherTenant = {
@@ -30,6 +30,27 @@ describe('crossTenantPath', () => {
 
   it('skips a route without parameters', () => {
     expect(crossTenantPath('GET /gateway/rooms', OTHER)).toBeNull();
+  });
+});
+
+describe('probeOrder', () => {
+  it('puts reads first, then every write, then deletes', () => {
+    const routes = [
+      'DELETE /gateway/rooms/{room_id}',
+      'POST /gateway/rooms/{room_id}/archive',
+      'GET /gateway/rooms/{room_id}',
+      'PATCH /gateway/rooms/{room_id}',
+      'PUT /gateway/tenants/{tenant_id}/members/{user_id}',
+      'GET /gateway/agents/{agent_id}',
+    ];
+    expect(routes.toSorted((a, b) => probeOrder(a) - probeOrder(b))).toEqual([
+      'GET /gateway/rooms/{room_id}',
+      'GET /gateway/agents/{agent_id}',
+      'POST /gateway/rooms/{room_id}/archive',
+      'PATCH /gateway/rooms/{room_id}',
+      'PUT /gateway/tenants/{tenant_id}/members/{user_id}',
+      'DELETE /gateway/rooms/{room_id}',
+    ]);
   });
 });
 

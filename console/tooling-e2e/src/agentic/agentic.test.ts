@@ -61,6 +61,15 @@ describe('agentic scenario files', () => {
     ).toThrow(/'room' may not set 'name'[\s\S]*'room' may not set 'agents'/);
   });
 
+  it("refuses a room text the server's templating would change", () => {
+    const templated = `${SCENARIO}room:\n  instructions: Report to {$creator} and {team}.\n  docs:\n    - name: '{x}'\n`;
+    expect(() => parseScenario('some-scenario.yaml', templated)).toThrow(
+      /placeholder '\{\$creator\}'[\s\S]*placeholder '\{team\}'[\s\S]*placeholder '\{x\}'/
+    );
+    const braces = `${SCENARIO}room:\n  instructions: 'Reply in JSON, like {"ok": true}.'\n`;
+    expect(parseScenario('some-scenario.yaml', braces).room).not.toBeNull();
+  });
+
   it('refuses a scenario with no facts, and facts that cannot be checked', () => {
     const noFacts = SCENARIO.replace(/facts:[\s\S]*?rubric:/, 'rubric:');
     expect(() => parseScenario('some-scenario.yaml', noFacts)).toThrow(/at least one fact/);
@@ -173,6 +182,23 @@ describe('facts', () => {
       'Which release do you mean?',
     ];
     expect(undelivered(turns, history)).toEqual(['The payments one.']);
+  });
+
+  it('does not count a short message as delivered because a longer or earlier body contains it', () => {
+    const short: Turn[] = [
+      { from: 'human', text: 'Yes.' },
+      { from: 'agent', text: 'Done.' },
+      { from: 'human', text: 'Yes.' },
+    ];
+    expect(undelivered(short, ['@e2e-abc123b-claude Yes.'])).toEqual(['Yes.']);
+    expect(undelivered(short, ['Yes. Ship it.', '@e2e-abc123b-claude Yes.'])).toEqual(['Yes.']);
+  });
+
+  it("matches across a platform's spacing and quote style", () => {
+    const quoted: Turn[] = [{ from: 'human', text: 'It\u2019s  the   "payments" one.' }];
+    expect(
+      undelivered(quoted, ["@e2e-abc123b-claude It's the \u201Cpayments\u201D one.\n"])
+    ).toEqual([]);
   });
 });
 

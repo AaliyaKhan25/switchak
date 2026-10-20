@@ -65,6 +65,21 @@ export interface Fact {
 /** What a scenario's `room:` may say. The rest of a room document is the harness's to fill in. */
 const ROOM_KEYS = new Set(['description', 'instructions', 'roles', 'docs']);
 
+/** The server's room-template placeholder, `{name}` or `{$name}` (`PLACEHOLDER_RE` in `rooms_yaml.py`). */
+const PLACEHOLDER = /\{\$?[A-Za-z_][A-Za-z0-9_]*\}/g;
+
+function placeholdersIn(node: unknown): string[] {
+  if (typeof node === 'string') return node.match(PLACEHOLDER) ?? [];
+  if (Array.isArray(node)) return node.flatMap(placeholdersIn);
+  if (typeof node === 'object' && node !== null) {
+    return Object.entries(node).flatMap(([key, value]) => [
+      ...placeholdersIn(key),
+      ...placeholdersIn(value),
+    ]);
+  }
+  return [];
+}
+
 /** Where the scenario files live: `console/tooling-e2e/agentic/`. */
 export const AGENTIC_SCENARIO_DIR = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -166,6 +181,11 @@ export function parseScenario(file: string, raw: string): AgenticScenario {
             `'room' may not set '${key}' (only ${[...ROOM_KEYS].join(', ')}; the harness names the room and picks its bridge and members)`
           );
         }
+      }
+      for (const placeholder of new Set(placeholdersIn(room))) {
+        problems.push(
+          `'room' contains the placeholder '${placeholder}': the server fills placeholders in a room document and has no way to escape one, so the agent would read other text than the scenario wrote`
+        );
       }
     }
   }

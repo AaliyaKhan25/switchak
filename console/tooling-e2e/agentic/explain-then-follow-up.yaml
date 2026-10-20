@@ -15,7 +15,7 @@ max_turns: 3
 facts:
   - id: explains-timing
     turn: first
-    matches: 'concurren|simultaneous|same time|order|timing|interleav'
+    matches: '\b(concurren|simultaneous|same time|race|ordering|order of|timing|interleav)'
   - id: shows-python
     turn: any
     matches: '```|import (threading|asyncio|multiprocessing)|def [a-z_]+\('

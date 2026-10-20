@@ -111,6 +111,8 @@ export function eventText(event: AgentEvent): string {
 export interface RouteProbe {
   status: number;
   contentType: string;
+  /** The `X-Request-Id` the request carried, which the server's log lines for it name; null untagged. */
+  requestId: string | null;
 }
 
 export class SwitchHttpError extends Error {
@@ -162,8 +164,9 @@ export class SwitchClient {
   private readonly environment: Environment;
   private readonly issued: IssuedSecrets;
   private gatewayCookie: string | null = null;
-  private requestTag: string | null = null;
-  private requestCount = 0;
+  // Shared with every client `as()` makes, so one scenario's requests carry
+  // one tag, numbered without repeats, whichever user sent them.
+  private tagging: { tag: string | null; count: number } = { tag: null, count: 0 };
 
   constructor(env: SwitchEnv, environment: Environment, issued: IssuedSecrets) {
     this.apiUrl = env.apiUrl;
@@ -181,14 +184,14 @@ export class SwitchClient {
    * server stamps on each log line it writes while serving it. `null` stops.
    */
   tagRequests(tag: string | null): void {
-    this.requestTag = tag;
-    this.requestCount = 0;
+    this.tagging.tag = tag;
+    this.tagging.count = 0;
   }
 
   private requestId(): Record<string, string> {
-    if (this.requestTag === null) return {};
-    this.requestCount += 1;
-    return { 'X-Request-Id': `${this.requestTag}-${this.requestCount}` };
+    if (this.tagging.tag === null) return {};
+    this.tagging.count += 1;
+    return { 'X-Request-Id': `${this.tagging.tag}-${this.tagging.count}` };
   }
 
   private async request<T>(method: string, path: string, init: SwitchRequest = {}): Promise<T> {
@@ -242,26 +245,33 @@ export class SwitchClient {
 
   private async probe(method: string, path: string, cookie: string | null): Promise<RouteProbe> {
     assertAllowed(this.environment, method, path);
+    const tag = this.requestId();
     const response = await fetch(`${this.apiUrl}${path}`, {
       method,
       headers: {
         Accept: 'application/json',
         ...(cookie === null ? {} : { Cookie: cookie }),
-        ...this.requestId(),
+        ...tag,
       },
       redirect: 'manual',
       signal: AbortSignal.timeout(30_000),
     });
     await response.body?.cancel();
-    return { status: response.status, contentType: response.headers.get('content-type') ?? '' };
+    return {
+      status: response.status,
+      contentType: response.headers.get('content-type') ?? '',
+      requestId: tag['X-Request-Id'] ?? null,
+    };
   }
 
   /**
    * The same server, signed in as someone else. Shares this client's record of
-   * issued credentials, so the other session is scanned for too.
+   * issued credentials, so the other session is scanned for too, and its
+   * request tagging, so a scenario observing this client sees the other's
+   * requests as its own.
    */
   as(email: string, password: string): SwitchClient {
-    return new SwitchClient(
+    const other = new SwitchClient(
       {
         apiUrl: this.apiUrl,
         agentRegistrationToken: this.registrationToken,
@@ -271,6 +281,8 @@ export class SwitchClient {
       this.environment,
       this.issued
     );
+    other.tagging = this.tagging;
+    return other;
   }
 
   /** `POST /gateway/users` — a user in the signed-in admin's workspace. `role: 'admin'` makes a deployment operator. */
@@ -567,14 +579,38 @@ export class SwitchClient {
     if (result.room_id === undefined) {
       throw new Error(`from-yaml did not make one room: ${JSON.stringify(result)}`);
     }
+    const roomId = result.room_id;
     if (result.failed_attachments !== undefined && result.failed_attachments.length > 0) {
-      await this.deleteRoom(result.room_id);
-      throw new Error(
-        `from-yaml made room ${result.room_id} without part of what it was given, so it was deleted: ` +
-          JSON.stringify(result.failed_attachments)
+      throw await this.withRoomDeleted(
+        roomId,
+        new Error(
+          `from-yaml made room ${roomId} without part of what it was given: ` +
+            JSON.stringify(result.failed_attachments)
+        )
       );
     }
-    return this.getRoom(result.room_id);
+    try {
+      return await this.getRoom(roomId);
+    } catch (error) {
+      throw await this.withRoomDeleted(roomId, error);
+    }
+  }
+
+  /** Delete a room a call made before failing, and return the failure, saying whether the room went too. */
+  private async withRoomDeleted(roomId: string, failure: unknown): Promise<Error> {
+    const reason = failure instanceof Error ? failure.message : String(failure);
+    try {
+      await this.deleteRoom(roomId);
+      return new Error(`${reason} (room ${roomId} was deleted)`, { cause: failure });
+    } catch (cleanup) {
+      const why = cleanup instanceof Error ? cleanup.message : String(cleanup);
+      return new Error(
+        `${reason} (and room ${roomId} could not be deleted, delete it by hand: ${why})`,
+        {
+          cause: failure,
+        }
+      );
+    }
   }
 
   /**

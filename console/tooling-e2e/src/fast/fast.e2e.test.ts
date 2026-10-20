@@ -10,7 +10,7 @@ import {
 import { resolveLane, type LaneResolution } from '../core/suite.ts';
 import { Fixtures } from '../fixtures/fixtures.ts';
 import { readSurface } from '../gate/gate.ts';
-import { otherTenantAndProber, probeCrossTenant } from './cross-tenant.ts';
+import { otherTenantAndProber, probeCrossTenant, type CrossTenantProbe } from './cross-tenant.ts';
 import { FAST_SCENARIOS } from './index.ts';
 import { probeSessionRoutes } from './session-required.ts';
 
@@ -107,45 +107,59 @@ describe('fast lane, derived checks', () => {
   }, 120_000);
 
   // Makes a workspace and two users, none of which can be deleted, so only on
-  // a stack that is thrown away after the run.
+  // a stack that is thrown away after the run: not on `local`, which is a
+  // developer's own and lives on.
   it("a workspace member is refused another workspace's rooms and agents", async (context) => {
     if (!lane.target) return context.skip(lane.skip);
-    const { environment } = lane.target.env;
-    if (environment !== 'ephemeral' && environment !== 'local') {
+    const { env, switchClient, mattermost } = lane.target;
+    if (env.environment !== 'ephemeral') {
       return context.skip(
-        `leaves a workspace and users behind, which cannot be deleted; not on ${environment}`
+        `leaves a workspace and users behind, which cannot be deleted; only on ephemeral, not ${env.environment}`
       );
     }
-    const { switchClient } = lane.target;
     const names = run.scope();
+    const fixtures = new Fixtures(env, names, switchClient, mattermost);
+    const log = (message: string): void => console.log(`[cross-tenant] ${message}`);
     const observer = watch.begin(switchClient, names.tag);
-    let probe: Awaited<ReturnType<typeof probeCrossTenant>>;
-    let removeRoom: () => Promise<void>;
+    let failure: unknown = null;
+    let probe: CrossTenantProbe | null = null;
+    let leftovers: string[];
     try {
-      const { other, owner, prober } = await otherTenantAndProber(switchClient, names);
-      probe = await probeCrossTenant(
-        prober,
-        readSurface(),
-        await switchClient.enabledFeatureFlags(),
-        other
-      );
-      removeRoom = () => owner.deleteRoom(other.room.id);
+      try {
+        const { other, prober } = await otherTenantAndProber(switchClient, names, fixtures);
+        probe = await probeCrossTenant(
+          prober,
+          readSurface(),
+          await switchClient.enabledFeatureFlags(),
+          other
+        );
+      } catch (error) {
+        failure = error;
+      }
+      leftovers = await fixtures.teardown();
     } finally {
       observer.stop();
     }
-    const serverErrors = observer.errors(null, console.log);
-    console.log(
-      `[cross-tenant] ${probe.refused} routes refused; ${probe.inconclusive.length} answered neither way; ` +
+    for (const line of leftovers) log(`teardown: ${line}`);
+    const serverErrors = observer.errors(failure, log);
+    for (const error of serverErrors ?? []) {
+      const route = error.requestId === null ? undefined : probe?.routeOf.get(error.requestId);
+      if (route !== undefined) log(`the error at ${error.timestamp} was logged serving ${route}`);
+    }
+    if (failure !== null) throw failure;
+    if (probe === null) throw new Error('the probe neither ran nor failed');
+    log(
+      `${probe.refused} routes refused; ${probe.inconclusive.length} answered neither way; ` +
         `${probe.unprobed} take a parameter the other workspace has nothing for`
     );
-    for (const line of probe.inconclusive) console.log(`[cross-tenant] inconclusive: ${line}`);
+    for (const line of probe.inconclusive) log(`inconclusive: ${line}`);
     expect(probe.refused, 'no route refused the other workspace').toBeGreaterThan(0);
     expect(
       probe.wrong,
       `served another workspace's resource:\n  ${probe.wrong.join('\n  ')}\n`
     ).toEqual([]);
+    if (!env.keepArtifacts) expect(leftovers, 'teardown left artefacts behind').toEqual([]);
     expectNoServerErrors(serverErrors, observer.tag, 'while this ran');
-    await removeRoom();
   }, 180_000);
 
   // Last, so they see whatever the run left the server in.

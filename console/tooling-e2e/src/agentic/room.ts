@@ -45,12 +45,17 @@ export async function provisionScenarioRoom(
   const remove = async (log: (message: string) => void): Promise<void> => {
     try {
       await switchClient.deleteRoom(room.id);
-      if (channelId !== null) {
-        const left = await mattermost.getChannel(channelId);
-        if (!left.delete_at) await mattermost.archiveChannel(channelId);
-      }
     } catch (error) {
-      log(`could not remove room ${room.name} (${room.id}) — delete it by hand: ${message(error)}`);
+      log(`could not delete room ${room.name} (${room.id}) — delete it by hand: ${message(error)}`);
+    }
+    if (channelId === null) return;
+    try {
+      const left = await mattermost.getChannel(channelId);
+      if (!left.delete_at) await mattermost.archiveChannel(channelId);
+    } catch (error) {
+      log(
+        `could not archive Mattermost channel ${channelId} of room ${room.name} — archive it by hand: ${message(error)}`
+      );
     }
   };
   try {

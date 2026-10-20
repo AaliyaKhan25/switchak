@@ -1,5 +1,6 @@
 import type { AgentRef, RoomDetail, SwitchClient } from '../clients/switch-client.ts';
 import type { NameScope } from '../core/run.ts';
+import type { Fixtures } from '../fixtures/fixtures.ts';
 import type { ServerSurface } from '../gate/gate.ts';
 import { isHtml } from './session-required.ts';
 
@@ -25,7 +26,8 @@ import { isHtml } from './session-required.ts';
  *   not failed: a validation error answered before the tenant is checked is
  *   not a leak.
  *
- * Workspaces cannot be deleted, so this runs only on a throwaway stack.
+ * Workspaces and users cannot be deleted, so this runs only on a stack that
+ * is thrown away after the run. The room and the agent are removed.
  */
 
 export interface CrossTenantProbe {
@@ -37,6 +39,8 @@ export interface CrossTenantProbe {
   inconclusive: string[];
   /** Served, changed or broke on another workspace's resource, with what. */
   wrong: string[];
+  /** The route each request id was sent to, to name the route behind a server log line. */
+  routeOf: Map<string, string>;
 }
 
 export interface OtherTenant {
@@ -45,11 +49,16 @@ export interface OtherTenant {
   agent: AgentRef;
 }
 
-/** Make the second workspace, its room and its agent, and the plain member who probes it. */
+/**
+ * Make the second workspace, its room and its agent, and the plain member who
+ * probes it. The room and the agent are deferred to `fixtures` as each is
+ * made, so a failure part way still removes what was made.
+ */
 export async function otherTenantAndProber(
   admin: SwitchClient,
-  names: NameScope
-): Promise<{ other: OtherTenant; owner: SwitchClient; prober: SwitchClient }> {
+  names: NameScope,
+  fixtures: Fixtures
+): Promise<{ other: OtherTenant; prober: SwitchClient }> {
   const password = `e2e-${names.runId}-${crypto.randomUUID()}`;
   const ownerEmail = `${names.name('owner')}@e2e.invalid`;
   const proberEmail = `${names.name('prober')}@e2e.invalid`;
@@ -66,6 +75,9 @@ export async function otherTenantAndProber(
     name: names.name('theirs'),
     description: `Switch end-to-end harness, another workspace's agent (run ${names.runId}).`,
   });
+  fixtures.defer(`the other workspace's agent ${agent.name}`, () =>
+    owner.deleteAgentByName(agent.name)
+  );
   const room = await owner.createRoom({
     name: names.name('their-room'),
     description: `Switch end-to-end harness, another workspace's room (run ${names.runId}).`,
@@ -73,7 +85,17 @@ export async function otherTenantAndProber(
     agentNames: [agent.name],
     userNames: [],
   });
-  return { other: { tenantId, room, agent }, owner, prober: admin.as(proberEmail, password) };
+  fixtures.defer(`the other workspace's room ${room.name} (${room.id})`, () =>
+    owner.deleteRoom(room.id)
+  );
+  return { other: { tenantId, room, agent }, prober: admin.as(proberEmail, password) };
+}
+
+/** 0 for a read, 1 for a write, 2 for a delete; ties keep the snapshot's order. */
+export function probeOrder(route: string): number {
+  const method = route.split(' ', 1)[0];
+  if (method === 'GET' || method === 'HEAD') return 0;
+  return method === 'DELETE' ? 2 : 1;
 }
 
 export function crossTenantPath(
@@ -105,22 +127,33 @@ export async function probeCrossTenant(
   enabledFlags: ReadonlySet<string>,
   other: OtherTenant
 ): Promise<CrossTenantProbe> {
-  const result: CrossTenantProbe = { refused: 0, unprobed: 0, inconclusive: [], wrong: [] };
-  // Reads first: a leaking DELETE would otherwise turn every later probe of the
-  // same resource into a 404 that looks like a refusal.
+  const result: CrossTenantProbe = {
+    refused: 0,
+    unprobed: 0,
+    inconclusive: [],
+    wrong: [],
+    routeOf: new Map(),
+  };
+  // Reads, then writes, then deletes: a write that leaked could archive or
+  // move the resource, and a delete that leaked removes it, either way turning
+  // every later probe of it into a 404 that looks like a refusal.
   const routes = surface.gatewayRoutes
     .filter(
       ({ auth, route, flags }) =>
         auth === 'session' && /\{/.test(route) && flags.every((f) => enabledFlags.has(f))
     )
-    .sort((a, b) => Number(a.route.startsWith('DELETE ')) - Number(b.route.startsWith('DELETE ')));
+    .sort((a, b) => probeOrder(a.route) - probeOrder(b.route));
   for (const { route } of routes) {
     const target = crossTenantPath(route, other);
     if (target === null) {
       result.unprobed += 1;
       continue;
     }
-    const { status, contentType } = await prober.statusWithSession(target.method, target.path);
+    const { status, contentType, requestId } = await prober.statusWithSession(
+      target.method,
+      target.path
+    );
+    if (requestId !== null) result.routeOf.set(requestId, route);
     const answered = `${route} -> ${status} ${contentType || '(no content type)'}`;
     if (isHtml(contentType) || status < 400 || status >= 500) result.wrong.push(answered);
     else if (status === 403 || status === 404) result.refused += 1;

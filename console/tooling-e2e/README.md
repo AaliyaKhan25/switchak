@@ -305,7 +305,17 @@ a room of its own, provisioned through the gateway's `POST /rooms/from-yaml`
 from the same document an agent's `create_room_from_yaml` takes. A scenario
 may set `description`, `instructions`, `roles` and `docs`; the harness names
 the room and picks its bridge and members (the agent, the bridge's witness
-bot, the human). The room is removed afterwards.
+bot, the human). The room is removed afterwards. Its text may not contain a
+`{name}` placeholder: the server fills those in a room document and cannot
+escape one, so the agent would read something other than what the facts and
+the judge are checked against.
+
+A fact's pattern is matched anywhere in a reply, so give it word boundaries
+(`\bten\b`, not `ten`, which matches "often"), and prefer `any` to `last`
+where the agent may answer in an earlier reply than the final one.
+
+The delivery check matches each driver message to a room message of its own,
+in order, after folding spacing and quote style; a leading mention is allowed.
 
 - **The driver** is a model playing the human. After each reply it writes the
   next message from the persona, the goal and the conversation so far, or
@@ -444,9 +454,11 @@ on every PR with no server.
     (`tenant_id`, `room_id`, `agent_id`, `agent_name`) with that workspace's
     values. 403 or 404 passes; 2xx, 3xx, 5xx or an HTML page fails. Other 4xx
     answers (mostly a body the probe did not send) are listed as
-    inconclusive. The prober is not the harness admin: a deployment admin
-    may cross workspaces by design. Workspaces and users cannot be deleted,
-    so this runs only on `ephemeral` and `local`.
+    inconclusive. Reads go first, then writes, then deletes, so a write or
+    delete that leaked cannot turn the probes after it into 404s. The prober
+    is not the harness admin: a deployment admin may cross workspaces by
+    design. The room and the agent are removed afterwards, but workspaces
+    and users cannot be deleted, so this runs only on `ephemeral`.
 
 ## In CI
 
