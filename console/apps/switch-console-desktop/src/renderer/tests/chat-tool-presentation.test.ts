@@ -166,6 +166,10 @@ describe('summarizeTools', () => {
       kind: null,
     });
     expect(summarizeTools(['read', 'read'])).toEqual({ label: 'Read 2 files', kind: 'read' });
+    expect(summarizeTools(['switch', 'switch', 'shell'])).toEqual({
+      label: 'Used 2 tools and ran 1 command',
+      kind: null,
+    });
   });
 });
 

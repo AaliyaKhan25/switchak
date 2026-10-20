@@ -9,8 +9,10 @@ import {
   ServerStatusPill,
   serverState,
 } from '@renderer/features/switch-servers/server-presentation';
+import { switchRoomsStore } from '@renderer/features/switch-servers/switch-rooms-store';
 import { switchServersStore } from '@renderer/features/switch-servers/switch-servers-store';
 import { AgentAvatar } from '@renderer/lib/components/agent-avatar';
+import { BridgeIcon, hasBridgeIcon } from '@renderer/lib/components/bridge-icon';
 import { Titlebar } from '@renderer/lib/components/titlebar/Titlebar';
 import { TitlebarBreadcrumb } from '@renderer/lib/components/titlebar/titlebar-breadcrumb';
 import { failureText } from '@renderer/lib/errors/describe-failure';
@@ -25,7 +27,13 @@ import {
   DropdownMenuTrigger,
 } from '@renderer/lib/ui/dropdown-menu';
 import type { ManagedAgentView } from '@shared/core/managed-agents/managed-agents';
-import { AgentChats, agentSectionLabel, openAgentChat, useAgentSection } from './agent-chats';
+import {
+  AgentChats,
+  agentSectionLabel,
+  openAgentChat,
+  openAgentRoom,
+  useAgentSection,
+} from './agent-chats';
 import { type AgentSection, isAgentSection } from './agent-sections';
 import { ManagedAgentPage } from './managed-agent-page';
 import { managedAgentLabel } from './managed-agent-state';
@@ -40,6 +48,8 @@ type ManagedAgentParams = {
   roomId?: string;
   /** Shown instead of a chat when set. */
   section?: AgentSection;
+  /** A room the agent is in, summarised instead of a chat when set. */
+  room?: string;
 };
 
 const ManagedAgentTitlebar = observer(function ManagedAgentTitlebar() {
@@ -50,7 +60,9 @@ const ManagedAgentTitlebar = observer(function ManagedAgentTitlebar() {
   const label = agent ? managedAgentLabel(agent) : params.name;
   const chatsOn = useFeatureFlags(params.serverId).agent_chats;
   const { section } = useAgentSection(params.serverId, agent, params.section);
-  const chat = chatsOn && agent && !section ? openAgentChat(agent, params.roomId) : null;
+  const room = chatsOn && agent ? openAgentRoom(agent, params.room, section) : null;
+  const chat = chatsOn && agent && !section && !room ? openAgentChat(agent, params.roomId) : null;
+  const roomBridge = room && switchRoomsStore.roomBridgeTypeById(room);
   const activities = useAgentActivities(params.serverId, chat ?? undefined);
   const crumb = {
     key: 'agent',
@@ -90,8 +102,13 @@ const ManagedAgentTitlebar = observer(function ManagedAgentTitlebar() {
       rightClassName="min-w-0 flex-1 justify-between gap-3 pl-4 [-webkit-app-region:drag]"
       rightSlot={
         <>
-          <span className="truncate text-sm font-medium">
-            {section ? agentSectionLabel(section) : chat?.name}
+          <span className="flex min-w-0 items-center gap-1.5 truncate text-sm font-medium">
+            {room && hasBridgeIcon(roomBridge) && <BridgeIcon bridgeType={roomBridge} size={16} />}
+            {section
+              ? agentSectionLabel(section)
+              : room
+                ? (switchRoomsStore.roomNameById(room) ?? room)
+                : chat?.name}
           </span>
           <div className="flex shrink-0 items-center gap-1.5 [-webkit-app-region:no-drag]">
             {server &&
@@ -216,7 +233,8 @@ export const managedAgentView = {
       typeof value.agentId !== 'string' ||
       typeof value.name !== 'string' ||
       (value.roomId !== undefined && typeof value.roomId !== 'string') ||
-      (value.section !== undefined && !isAgentSection(value.section))
+      (value.section !== undefined && !isAgentSection(value.section)) ||
+      (value.room !== undefined && typeof value.room !== 'string')
     )
       return { ok: false, redirect: 'home', discardParams: true };
     return { ok: true };
