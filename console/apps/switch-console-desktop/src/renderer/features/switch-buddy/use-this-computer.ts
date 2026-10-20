@@ -89,6 +89,16 @@ export function useThisComputer(serverId: string, workspaceId: string) {
   }, [serverId, machines]);
 
   const machine = machines.data?.find((m) => m.local?.kind === 'this-computer') ?? null;
+  const reported = machine !== null && machine.providers.length > 0;
+
+  // Console's own check of the providers, made as onboarding opened: what
+  // the page goes by until this computer's controller reports.
+  const early = useQuery({
+    queryKey: ['provider-precheck'],
+    queryFn: () => rpc.embeddedController.precheckedProviders(),
+    enabled: !reported,
+    refetchInterval: 1_000,
+  });
   const state: ThisComputer = setupError
     ? { kind: 'failed', error: setupError }
     : machines.data === null
@@ -99,7 +109,8 @@ export function useThisComputer(serverId: string, workspaceId: string) {
       : machine && machine.providers.length > 0
         ? { kind: 'ready', machine }
         : { kind: 'starting' };
-  return { state, recheck };
+  const earlyProviders = !reported && early.data && early.data.length > 0 ? early.data : null;
+  return { state, recheck, earlyProviders };
 }
 
 /** How many providers this computer last reported ready. */

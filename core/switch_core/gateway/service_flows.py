@@ -150,10 +150,25 @@ async def start(
     return {"id": body.state, "url": url, "mode": flow.mode}
 
 
+_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+def _secure_cookie(request: Request) -> bool:
+    """Whether the flow's cookie is marked Secure: always, except on a server
+    reached over plain http on this computer's own address, such as one
+    Switch Console runs. Some browsers drop a Secure cookie set over http
+    even there, and on the loopback address nothing in between could read it.
+    """
+    return not (
+        request.url.scheme == "http" and request.url.hostname in _LOOPBACK_HOSTS
+    )
+
+
 @router.get("/authorize")
 async def authorize(
     service: str,
     state: str,
+    request: Request,
     broker: Annotated[ServiceBroker, Depends(get_service_broker)],
     flows: Annotated[ServiceFlows, Depends(get_service_flows)],
 ) -> Response:
@@ -176,7 +191,7 @@ async def authorize(
         _cookie(state),
         nonce,
         max_age=600,
-        secure=True,
+        secure=_secure_cookie(request),
         httponly=True,
         samesite="lax",
         path=_cookie_path(service),
@@ -211,7 +226,7 @@ async def callback(
     response.delete_cookie(
         _cookie(state),
         path=_cookie_path(service),
-        secure=True,
+        secure=_secure_cookie(request),
         httponly=True,
         samesite="lax",
     )

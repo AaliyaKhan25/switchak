@@ -1,5 +1,6 @@
 import type * as React from 'react';
 import {
+  defaultComponents,
   defaultRehypePlugins,
   defaultUrlTransform,
   Streamdown,
@@ -9,10 +10,12 @@ import {
 } from 'streamdown';
 import type { PluggableList } from 'unified';
 import { followConsoleLink } from '@renderer/features/deeplinks/console-link-handler';
+import { BridgeIcon, hasBridgeIcon } from '@renderer/lib/components/bridge-icon';
 import { confirmOpenExternalLink } from '@renderer/lib/open-external-link';
 import { cn } from '@renderer/utils/utils';
 import { CONSOLE_LINK_PREFIX, CONSOLE_LINK_SCHEME } from '@shared/core/deeplinks/console-links';
 import { CodeBlock } from './code-block';
+import { PLATFORM_LOGO_PREFIX, platformOfLogoUrl } from './platform-logo';
 
 const HTTP_URL_PATTERN = /^https?:\/\//i;
 
@@ -30,9 +33,9 @@ const REHYPE_PLUGINS: PluggableList = [
 type SanitizeSchema = { protocols?: Record<string, string[]> };
 
 /**
- * The sanitizer, letting links to Console pages keep their `href`: its schema
- * allows web and mail links only, and a `switchdash:` one would arrive
- * stripped, as text marked blocked.
+ * The sanitizer, letting links to Console pages keep their `href`, and
+ * messaging-app logos their `src`: its schema allows web and mail addresses
+ * only, and a `switchdash:` one would arrive stripped, as text marked blocked.
  */
 function withConsoleLinks(sanitize: PluggableList[number]): PluggableList[number] {
   const [plugin, schema] = sanitize as [unknown, SanitizeSchema];
@@ -43,14 +46,21 @@ function withConsoleLinks(sanitize: PluggableList[number]): PluggableList[number
       protocols: {
         ...schema.protocols,
         href: [...(schema.protocols?.href ?? []), CONSOLE_LINK_SCHEME],
+        src: [...(schema.protocols?.src ?? []), CONSOLE_LINK_SCHEME],
       },
     },
   ] as PluggableList[number];
 }
 
-/** Links to Console pages pass; everything else gets the usual unsafe-protocol filter. */
+/**
+ * Links to Console pages and messaging-app logos pass; everything else gets
+ * the usual unsafe-protocol filter.
+ */
 const urlTransform: UrlTransform = (url, key, node) =>
-  url.startsWith(CONSOLE_LINK_PREFIX) ? url : defaultUrlTransform(url, key, node);
+  (key === 'href' && url.startsWith(CONSOLE_LINK_PREFIX)) ||
+  (key === 'src' && url.startsWith(PLATFORM_LOGO_PREFIX))
+    ? url
+    : defaultUrlTransform(url, key, node);
 
 type WithChildren = { children?: React.ReactNode } & ExtraProps;
 
@@ -92,8 +102,32 @@ function ChatCode({
   );
 }
 
+/**
+ * A messaging app where the message names one with its logo: the logo and the
+ * app's name (the image's alt text) in bold, inline and on one line; any other
+ * image as usual.
+ */
+function ChatImage(props: React.ComponentProps<'img'> & ExtraProps) {
+  const platform = platformOfLogoUrl(props.src);
+  if (platform === null) {
+    const DefaultImage = defaultComponents.img;
+    return <DefaultImage {...props} />;
+  }
+  return (
+    <span className="inline-flex items-baseline gap-1 whitespace-nowrap">
+      {hasBridgeIcon(platform) && (
+        <span aria-hidden className="translate-y-[2px]">
+          <BridgeIcon bridgeType={platform} size={14} />
+        </span>
+      )}
+      <strong className="font-semibold">{props.alt}</strong>
+    </span>
+  );
+}
+
 const COMPONENTS: Components = {
   a: ChatLink,
+  img: ChatImage,
   code: ChatCode,
   p: ({ children }: WithChildren) => <p className="my-2 leading-relaxed">{children}</p>,
   h1: ({ children }: WithChildren) => (

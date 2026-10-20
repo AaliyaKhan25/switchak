@@ -6,7 +6,12 @@ import { vertexCredentialFixture, writeNodeCli } from '@switch-console/agent-pro
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { silentLogger } from './log';
 import { type AgentObservation, emptyObservation } from './runtime';
-import { type AgentAssignment, type SealedLoginResponse, statusReportSchema } from './schemas';
+import {
+  type AgentAssignment,
+  type ProviderStatus,
+  type SealedLoginResponse,
+  statusReportSchema,
+} from './schemas';
 import { SealedLogins } from './sealed-logins';
 import {
   mapAgentProcess,
@@ -287,6 +292,74 @@ describe('ProviderStatuses', () => {
     await statuses.check('claude');
     expect(changes).toBe(6);
     expect(statuses.snapshot().find((s) => s.provider === 'claude')?.auth).toBe('missing');
+  });
+});
+
+describe('ProviderStatuses taking checks made before it started', () => {
+  function statuses(clock: () => number) {
+    const runtime = new FakeRuntime();
+    let changes = 0;
+    const providers = new ProviderStatuses({
+      locator: new FakeLocator(),
+      runtime,
+      sealed: null,
+      probeCwd: '/tmp',
+      now: clock,
+      log: silentLogger,
+      onChange: () => changes++,
+    });
+    return { providers, runtime, changes: () => changes };
+  }
+
+  function seeded(
+    provider: string,
+    auth: 'ok' | 'missing',
+    at: number,
+    installed = true
+  ): { status: ProviderStatus; path: string | null } {
+    return {
+      status: {
+        provider,
+        installed,
+        version: installed ? '1.0.0' : null,
+        auth: installed ? auth : 'unknown',
+        auth_source: installed && auth === 'ok' ? 'local' : null,
+        checked_at: new Date(at).toISOString(),
+      },
+      path: installed ? `/bin/${provider}` : null,
+    };
+  }
+
+  it('reports a provider signed in on its own, or not installed, without checking it again', async () => {
+    const { providers, runtime, changes } = statuses(() => NOW);
+    providers.seed([seeded('claude', 'ok', NOW - 1_000), seeded('cursor', 'ok', NOW, false)]);
+    expect(changes()).toBe(1);
+    expect(providers.snapshot().map((status) => [status.provider, status.auth])).toEqual([
+      ['claude', 'ok'],
+      ['cursor', 'unknown'],
+    ]);
+    await providers.refreshStale();
+    // Every provider but the two seeded is checked here.
+    expect(runtime.probes).toBe(3);
+    expect(await providers.binaryPath('claude')).toBe('/bin/claude');
+  });
+
+  it('checks for itself what a login given to the machine could change, and what is stale', async () => {
+    const { providers, changes } = statuses(() => NOW);
+    providers.seed([
+      seeded('codex', 'missing', NOW),
+      seeded('claude', 'ok', NOW - PROVIDER_TTL_MS),
+    ]);
+    expect(changes()).toBe(0);
+    expect(providers.snapshot()).toEqual([]);
+  });
+
+  it('leaves a provider it has already checked as it found it', async () => {
+    const { providers } = statuses(() => NOW);
+    await providers.check('claude');
+    const own = providers.snapshot().find((status) => status.provider === 'claude');
+    providers.seed([seeded('claude', 'ok', NOW + 5)]);
+    expect(providers.snapshot().find((status) => status.provider === 'claude')).toEqual(own);
   });
 });
 

@@ -30,3 +30,17 @@ export function shownAgentSection(
 ): AgentSection | null {
   return chosen !== undefined && sections.includes(chosen) ? chosen : null;
 }
+
+/**
+ * The room whose summary shows: the one chosen, unless a section shows instead
+ * or the agent is no longer in it. While its rooms load it is taken on trust,
+ * so a reopened page does not flash a chat first.
+ */
+export function shownAgentRoom(
+  chosen: string | undefined,
+  section: AgentSection | null,
+  rooms: readonly { roomId: string }[] | undefined
+): string | null {
+  if (chosen === undefined || section !== null) return null;
+  return rooms === undefined || rooms.some((room) => room.roomId === chosen) ? chosen : null;
+}

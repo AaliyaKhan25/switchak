@@ -2,9 +2,10 @@ import { makeAutoObservable, runInAction } from 'mobx';
 import { workspacesStore } from '@renderer/features/workspaces/workspaces-store';
 import { failureText } from '@renderer/lib/errors/describe-failure';
 import { rpc } from '@renderer/lib/ipc';
-import type {
-  RemoteAgentRoom,
-  RemoteRoomSummary,
+import {
+  dashboardOrigin,
+  type RemoteAgentRoom,
+  type RemoteRoomSummary,
 } from '@shared/core/switch-servers/switch-servers';
 import { UNBRIDGED_FILTER_VALUE } from '@shared/view-state';
 import { serverAvailability } from './server-availability';
@@ -130,7 +131,7 @@ export class SwitchRoomsStore {
     if (!serverId) return null;
     const server = switchServersStore.servers.find((s) => s.id === serverId);
     if (!server) return null;
-    const base = server.gatewayUrl.replace(/\/+$/, '');
+    const base = dashboardOrigin(server).replace(/\/+$/, '');
     return `${base}/rooms/${roomId}`;
   }
 
@@ -142,7 +143,7 @@ export class SwitchRoomsStore {
   gatewayAgentUrl(serverId: string, switchAgentId: string): string | null {
     const server = switchServersStore.servers.find((s) => s.id === serverId);
     if (!server) return null;
-    const base = server.gatewayUrl.replace(/\/+$/, '');
+    const base = dashboardOrigin(server).replace(/\/+$/, '');
     return `${base}/agents/${switchAgentId}`;
   }
 
@@ -366,13 +367,13 @@ export class SwitchRoomsStore {
    * Not a fault and not retryable — the user has to sign in. Reporting it as a
    * failure with a retry button offers an action that cannot work.
    */
-  get workspacesNotSignedIn(): { id: string; name: string }[] {
-    return this.namedWorkspacesInScope(
-      this.unreachableWorkspaceIds.filter((id) => {
-        const serverId = workspacesStore.serverIdFor(id);
-        return serverId !== null && serverAvailability(serverId) === 'signed-out';
-      })
-    );
+  get workspacesNotSignedIn(): { id: string; name: string; serverId: string }[] {
+    return this.namedWorkspacesInScope(this.unreachableWorkspaceIds).flatMap((workspace) => {
+      const serverId = workspacesStore.serverIdFor(workspace.id);
+      return serverId !== null && serverAvailability(serverId) === 'signed-out'
+        ? [{ ...workspace, serverId }]
+        : [];
+    });
   }
 
   private namedWorkspacesInScope(workspaceIds: string[]): { id: string; name: string }[] {
