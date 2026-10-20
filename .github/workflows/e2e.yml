@@ -22,6 +22,8 @@ name: E2E
 # GitHub Environment, whose protection rules decide which refs may run it:
 #
 #   e2e-provider  secret ANTHROPIC_API_KEY, for the controller's Claude Code
+#                 (and the agentic lane's driver and judge); open to main and
+#                 to the release tags, switch-v*
 #
 # Runs are strict (SWITCH_E2E_STRICT=1): a scenario that cannot run fails
 # rather than skips.

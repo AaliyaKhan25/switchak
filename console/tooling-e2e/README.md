@@ -417,12 +417,14 @@ hand.
 | Every PR, and every push to main (`pr-ci.yml`) | fast | ephemeral | yes |
 | After a merge to main (`e2e-scheduled.yml`) | provider | ephemeral | no |
 | Nightly (`e2e-scheduled.yml`) | provider | ephemeral | no |
-| By hand only, for now (`e2e.yml`, dispatch) | agentic | ephemeral | no |
+| A release tag, candidates included (`e2e-scheduled.yml`) | fast; provider; agentic | ephemeral | no |
+| By hand (`e2e.yml`, dispatch) | any | ephemeral | no |
 
 - **Secrets.** An ephemeral fast run generates every secret it uses on the
   runner, so it works the same on a fork PR. Every other run reads its secrets
   from the GitHub Environment `e2e-provider`, which holds `ANTHROPIC_API_KEY`
-  and whose protection rules decide which branches may use it.
+  and whose protection rules decide which refs may use it: `main`, and the
+  release tags (`switch-v*`).
 - **Artifacts.** The output directory is uploaded only after it passes two
   scans. The first (`scan-artifacts.sh`) looks for the exact secret values the
   run used: the ones it was configured with, plus every credential the server
@@ -434,7 +436,8 @@ hand.
 - **Reporting.** Each run writes a scenario table to the job summary. Reports
   go to the webhook in the repository secret `E2E_NOTIFY_WEBHOOK_URL`:
   - one summary each night;
-  - a report when the provider lane fails after a merge.
+  - a report when the provider lane fails after a merge;
+  - a report for every release tag, pass or fail.
 
 ## Against a deployed environment
 
