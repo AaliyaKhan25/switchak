@@ -1,3 +1,4 @@
+import type { FeatureFlags } from '@shared/core/feature-flags/feature-flags';
 import type { ManagedAgentView } from '@shared/core/managed-agents/managed-agents';
 
 /** The template every person's buddy is created from, served by the server. */
@@ -44,6 +45,32 @@ export function buddyAgentName(
  */
 export function isBuddy(agent: Pick<ManagedAgentView, 'name'>): boolean {
   return agent.name === NAME_PREFIX || agent.name.startsWith(`${NAME_PREFIX}-`);
+}
+
+/**
+ * Whether the server offers switch-buddy and the person has none yet: it is
+ * waiting on an AI provider. Not while their agents are still unknown, so a
+ * buddy that exists is never drawn as missing.
+ */
+export function buddyIsPending({
+  onboardingBuilt,
+  serverId,
+  flags,
+  agents,
+}: {
+  onboardingBuilt: boolean;
+  serverId: string | null;
+  flags: Pick<FeatureFlags, 'switch_buddy' | 'agent_management'>;
+  agents: Pick<ManagedAgentView, 'name'>[] | null | undefined;
+}): boolean {
+  return (
+    onboardingBuilt &&
+    serverId !== null &&
+    flags.switch_buddy &&
+    flags.agent_management &&
+    Array.isArray(agents) &&
+    !agents.some(isBuddy)
+  );
 }
 
 /** The first name to greet someone by: the first word of their name. */

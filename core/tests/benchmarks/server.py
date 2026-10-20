@@ -525,7 +525,7 @@ async def _serve(
             room_role_store=session_env.room_role_store,
             external_user_store=session_env.external_user_store,
             connections=connections,
-            frontend_base_url=config.frontend_base_url,
+            frontend_base_url=config.dashboard_base_url,
             message_telemetry=message_telemetry,
         ),
         message_store=session_env.message_store,
@@ -639,6 +639,7 @@ async def _serve(
         approval_outcomes=ApprovalOutcomes(activity_listener, activity),
         controller_auth=None,
         trust_client=NullTrustClient(),
+        gateway_ui=None,
         connections=connections,
     )
 

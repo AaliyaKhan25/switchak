@@ -1,5 +1,5 @@
 import { observer } from 'mobx-react-lite';
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { buddyIntroStore } from '@renderer/features/switch-buddy/buddy-intro-store';
 import { BuddyStep } from '@renderer/features/switch-buddy/buddy-step';
 import { openBuddyChat } from '@renderer/features/switch-buddy/open-buddy';
@@ -12,6 +12,7 @@ import { switchServersStore } from '@renderer/features/switch-servers/switch-ser
 import { useSwitchCloud } from '@renderer/features/switch-servers/use-switch-cloud';
 import { workspacesStore } from '@renderer/features/workspaces/workspaces-store';
 import { describeFailure } from '@renderer/lib/errors/describe-failure';
+import { rpc } from '@renderer/lib/ipc';
 import { useNavigate } from '@renderer/lib/layout/navigation-provider';
 import { report } from '@renderer/lib/telemetry/report';
 import { WizardChromeProvider } from '@renderer/lib/ui/wizard-frame';
@@ -23,6 +24,7 @@ import type { SwitchServer } from '@shared/core/switch-servers/switch-servers';
 import type { RendererTelemetryEvents } from '@shared/core/telemetry/renderer-events';
 import { CreateWorkspacePage } from './create-workspace-page';
 import { type CloudChoiceState, HowToRunPage } from './how-to-run-page';
+import { OnboardingIntro } from './onboarding-intro';
 import { onboardingStore, type OnboardingPage } from './onboarding-store';
 import { PickWorkspacePage } from './pick-workspace-page';
 import { WelcomePage } from './welcome-page';
@@ -97,6 +99,12 @@ function funnelPath(page: OnboardingPage): RendererTelemetryEvents['onboarding_p
 export const OnboardingFlow = observer(function OnboardingFlow() {
   const { navigate } = useNavigate();
   const page = onboardingStore.page;
+  // switch-buddy runs on this computer at the end, whatever server is chosen:
+  // its providers are checked now, while the person signs in, so the buddy's
+  // page knows what is signed in by the time it opens.
+  useEffect(() => {
+    void rpc.embeddedController.precheckProviders();
+  }, []);
   // Every page as it opens, so the last one an install reports is where it
   // stopped.
   useEffect(() => {
@@ -177,7 +185,10 @@ export const OnboardingFlow = observer(function OnboardingFlow() {
 
   return (
     <WizardChromeProvider chrome="page" exit={exit}>
-      {currentPage(server, cloudChoice, goTo, finish, finishWithBuddy)}
+      {/* Keyed by page, so each one opens afresh, with its entrance. */}
+      <Fragment key={page}>
+        {currentPage(server, cloudChoice, goTo, finish, finishWithBuddy)}
+      </Fragment>
     </WizardChromeProvider>
   );
 });
@@ -233,6 +244,8 @@ function currentPage(
 ) {
   switch (onboardingStore.page) {
     case 'welcome':
+      if (onboardingStore.introPending)
+        return <OnboardingIntro onDone={() => onboardingStore.introPlayed()} />;
       return (
         <WelcomePage
           onContinue={() => goTo('howToRun')}
@@ -325,8 +338,7 @@ function currentPage(
 
   return (
     <ExternalServerStep
-      initialGatewayUrl={null}
-      initialApiUrl={null}
+      initialUrl={null}
       initialName={null}
       serverId={null}
       isEdit={false}
