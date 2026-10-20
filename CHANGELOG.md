@@ -44,7 +44,23 @@ version of their own to them without also giving them a release of their own.
 
 ### [Unreleased]
 
+### [0.31.0] - 2026-10-20
+
 #### Added
+- **switch-core can run as multiple replicas.** The multi-pod stack lets more
+  than one switch-core replica serve a deployment: membership and signals cross
+  pods, agent events are read from Postgres rather than an in-memory buffer so
+  any replica serves them, and cross-replica idempotency ids keep a retried
+  write from being applied twice (#886, #815, #858).
+- **One address per Switch server.** A deployment is reached at a single address
+  instead of separate gateway and API hosts, simplifying ingress and the public
+  URL configuration (#753).
+- **Agents can follow a conversation without being `@`-mentioned.** An agent can
+  be set to pick up messages in a thread it is part of without being tagged each
+  time (#869).
+- **Templates create managed agents through agent management** (#851).
+- **Event-loop stall probe.** switch-core measures event-loop stalls with a
+  100 ms probe and reports them, so a blocked loop is visible (#713).
 - **The server's operator sets up connector apps from the dashboard.** A
   Connectors page, beside Users and for the operator alone, sets up the
   GitHub App and Google Workspace's OAuth client (and any static client the
@@ -136,6 +152,8 @@ version of their own to them without also giving them a release of their own.
   agents with whether each holds a grant and whether others can address it.
 
 #### Changed
+- **A caller repeating a refused request is answered with 429 from memory,**
+  rather than re-doing the refused work each time (#750).
 - **Console links work on chat platforms.** A `switchdash://open/...` link an
   agent posts reaches Slack, Discord, Telegram and Teams as a clickable https
   link to the new public `GET /deeplink/open/{page}`, which opens that page in
