@@ -12,8 +12,21 @@
  * thing is for.
  */
 
-/** Everything the harness creates starts with this. The cleanup script deletes by it. */
+/** Everything the harness creates starts with this. */
 export const ARTIFACT_PREFIX = 'e2e-';
+
+/**
+ * The whole shape of a name {@link NameScope.name} builds: the prefix, a
+ * six-character run id, a scope letter, then the role. The cleanup script
+ * deletes by this, not by the prefix alone: people name their own test
+ * agents and rooms `e2e-…` on a shared deployment too, and those are not the
+ * harness's to remove.
+ */
+const ARTIFACT_NAME = /^e2e-[a-z0-9]{6}[a-z]-[a-z0-9._-]+$/;
+
+export function isHarnessArtifact(name: string): boolean {
+  return ARTIFACT_NAME.test(name);
+}
 
 /**
  * Mattermost usernames: lowercase, 3-22 chars, `[a-z0-9._-]`, must start

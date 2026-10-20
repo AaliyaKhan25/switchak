@@ -9,7 +9,7 @@ import { FAST_SCENARIOS } from '../fast/index.ts';
 import { SCENARIOS as PROVIDER_SCENARIOS } from '../provider/scenarios.ts';
 import { laneFrom, loadEnv, MissingConfigError, strictFrom, type HarnessEnv } from './env.ts';
 import { assertAllowed, ReadOnlyEnvironmentError } from './guard.ts';
-import { isValidMattermostUsername, RunContext } from './run.ts';
+import { isHarnessArtifact, isValidMattermostUsername, RunContext } from './run.ts';
 import { admit, assertValidHeaders, headerProblems, type ScenarioHeader } from './scenario.ts';
 import { IssuedSecrets } from './secrets.ts';
 
@@ -198,6 +198,25 @@ describe('admission', () => {
     expect(
       admit(needsBoth, env({ strict: true, noMattermost: true, gatewayUiUrl: null }))
     ).toMatchObject({ run: false, failure: true });
+  });
+});
+
+describe('cleanup scope', () => {
+  it('takes every name the harness builds, and none of the e2e- names people choose', () => {
+    const scope = new RunContext('k3x9q2').scope();
+    for (const role of ['sender', 'room', 'hub.a', 'm-1']) {
+      expect(isHarnessArtifact(scope.name(role))).toBe(true);
+    }
+    for (const name of [
+      'e2e-709-slack',
+      'e2e-bundle-6d5e40',
+      'e2e-hub-isolated',
+      'e2e-hub-shared',
+      'e2e-k3x9q2a',
+      'my-e2e-k3x9q2a-x',
+    ]) {
+      expect(isHarnessArtifact(name)).toBe(false);
+    }
   });
 });
 
