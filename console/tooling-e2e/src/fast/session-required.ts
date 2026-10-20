@@ -4,7 +4,10 @@ import type { ServerSurface } from '../gate/gate.ts';
 /**
  * A check derived from the surface snapshot rather than written per route:
  * every gateway route that takes a signed-in session answers 401 to a request
- * that carries none.
+ * that carries none, and answers it as the API rather than with the gateway
+ * SPA's HTML page. A deployment that serves the SPA and the API from one host
+ * falls back to the page for any path it does not route, so an API route that
+ * went missing would otherwise look like a page that loaded.
  *
  * It covers nothing in the coverage gate's sense — a 401 says nothing about
  * what the route does — but it is free for every route the server adds, and
@@ -30,8 +33,13 @@ export interface SessionProbe {
   probed: number;
   /** Session routes behind a feature flag this deployment has off. */
   notMounted: number;
-  /** Each probed route that did not answer 401, with what it answered. */
+  /** Each probed route that did not answer 401, or answered with HTML, with what it answered. */
   wrong: string[];
+}
+
+/** Whether a response is a web page rather than an API answer. */
+export function isHtml(contentType: string): boolean {
+  return contentType.toLowerCase().includes('text/html');
 }
 
 export async function probeSessionRoutes(
@@ -47,9 +55,11 @@ export async function probeSessionRoutes(
       continue;
     }
     const { method, path } = probePath(route);
-    const status = await switchClient.statusWithoutCredentials(method, path);
+    const { status, contentType } = await switchClient.statusWithoutCredentials(method, path);
     result.probed += 1;
-    if (status !== 401) result.wrong.push(`${route} -> ${status}`);
+    if (status !== 401 || isHtml(contentType)) {
+      result.wrong.push(`${route} -> ${status} ${contentType || '(no content type)'}`);
+    }
   }
   return result;
 }

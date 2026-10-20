@@ -10,6 +10,7 @@ import {
 import { resolveLane, type LaneResolution } from '../core/suite.ts';
 import { Fixtures } from '../fixtures/fixtures.ts';
 import { readSurface } from '../gate/gate.ts';
+import { otherTenantAndProber, probeCrossTenant } from './cross-tenant.ts';
 import { FAST_SCENARIOS } from './index.ts';
 import { probeSessionRoutes } from './session-required.ts';
 
@@ -104,6 +105,48 @@ describe('fast lane, derived checks', () => {
     expect(probe.wrong, `answered without a session:\n  ${probe.wrong.join('\n  ')}\n`).toEqual([]);
     expectNoServerErrors(serverErrors, observer.tag, 'while this ran');
   }, 120_000);
+
+  // Makes a workspace and two users, none of which can be deleted, so only on
+  // a stack that is thrown away after the run.
+  it("a workspace member is refused another workspace's rooms and agents", async (context) => {
+    if (!lane.target) return context.skip(lane.skip);
+    const { environment } = lane.target.env;
+    if (environment !== 'ephemeral' && environment !== 'local') {
+      return context.skip(
+        `leaves a workspace and users behind, which cannot be deleted; not on ${environment}`
+      );
+    }
+    const { switchClient } = lane.target;
+    const names = run.scope();
+    const observer = watch.begin(switchClient, names.tag);
+    let probe: Awaited<ReturnType<typeof probeCrossTenant>>;
+    let removeRoom: () => Promise<void>;
+    try {
+      const { other, owner, prober } = await otherTenantAndProber(switchClient, names);
+      probe = await probeCrossTenant(
+        prober,
+        readSurface(),
+        await switchClient.enabledFeatureFlags(),
+        other
+      );
+      removeRoom = () => owner.deleteRoom(other.room.id);
+    } finally {
+      observer.stop();
+    }
+    const serverErrors = observer.errors(null, console.log);
+    console.log(
+      `[cross-tenant] ${probe.refused} routes refused; ${probe.inconclusive.length} answered neither way; ` +
+        `${probe.unprobed} take a parameter the other workspace has nothing for`
+    );
+    for (const line of probe.inconclusive) console.log(`[cross-tenant] inconclusive: ${line}`);
+    expect(probe.refused, 'no route refused the other workspace').toBeGreaterThan(0);
+    expect(
+      probe.wrong,
+      `served another workspace's resource:\n  ${probe.wrong.join('\n  ')}\n`
+    ).toEqual([]);
+    expectNoServerErrors(serverErrors, observer.tag, 'while this ran');
+    await removeRoom();
+  }, 180_000);
 
   // Last, so they see whatever the run left the server in.
   it('the server is still ready after the run', async (context) => {

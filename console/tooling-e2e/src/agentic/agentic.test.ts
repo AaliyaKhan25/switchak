@@ -1,7 +1,18 @@
+import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import type { UsageTotal } from '../clients/switch-client.ts';
+import { checkFacts, undelivered } from './facts.ts';
 import { parseAnswer } from './model.ts';
-import { parseVerdicts } from './roles.ts';
+import {
+  DRIVER_SYSTEM,
+  driverPrompt,
+  DRIVER_VERSION,
+  JUDGE_SYSTEM,
+  judgePrompt,
+  JUDGE_VERSION,
+  parseVerdicts,
+  type Turn,
+} from './roles.ts';
 import { AGENTIC_SCENARIO_DIR, loadAgenticScenarios, parseScenario } from './scenario-file.ts';
 import { BudgetExceededError, Ledger, priceOf, usageCostUsd } from './spend.ts';
 
@@ -13,6 +24,10 @@ persona: Someone.
 goal: Something.
 opening: Hello?
 max_turns: 2
+facts:
+  - id: says-hello
+    turn: any
+    matches: hello
 rubric:
   - id: replies
     criterion: The agent replies.
@@ -30,6 +45,49 @@ describe('agentic scenario files', () => {
     expect(scenario.setupMessages).toEqual([]);
     expect(scenario.rubric).toEqual([{ id: 'replies', criterion: 'The agent replies.' }]);
     expect(scenario.header.requires).toEqual(['mattermost', 'agentic-models']);
+    expect(scenario.room).toBeNull();
+    expect(scenario.facts).toEqual([
+      { id: 'says-hello', turn: 'any', pattern: /hello/i, expect: 'matches' },
+    ]);
+  });
+
+  it('takes a room with what a scenario may set, and refuses what the harness sets', () => {
+    const withRoom = `${SCENARIO}room:\n  instructions: Sign every message.\n`;
+    expect(parseScenario('some-scenario.yaml', withRoom).room).toEqual({
+      instructions: 'Sign every message.',
+    });
+    expect(() =>
+      parseScenario('some-scenario.yaml', `${SCENARIO}room:\n  name: mine\n  agents: [x]\n`)
+    ).toThrow(/'room' may not set 'name'[\s\S]*'room' may not set 'agents'/);
+  });
+
+  it('refuses a scenario with no facts, and facts that cannot be checked', () => {
+    const noFacts = SCENARIO.replace(/facts:[\s\S]*?rubric:/, 'rubric:');
+    expect(() => parseScenario('some-scenario.yaml', noFacts)).toThrow(/at least one fact/);
+    const badFacts = SCENARIO.replace(
+      /facts:[\s\S]*?rubric:/,
+      `facts:
+  - id: both
+    turn: any
+    matches: a
+    not_matches: b
+  - id: broken
+    turn: any
+    matches: '('
+  - id: when
+    turn: sometimes
+    matches: a
+rubric:`
+    );
+    let message = '';
+    try {
+      parseScenario('some-scenario.yaml', badFacts);
+    } catch (error) {
+      message = (error as Error).message;
+    }
+    expect(message).toContain("fact 'both' needs exactly one of");
+    expect(message).toContain("fact 'broken': '(' is not a regular expression");
+    expect(message).toContain("fact 'when': 'turn' must be one of");
   });
 
   it('names every problem in a bad file at once', () => {
@@ -65,6 +123,87 @@ rubric:
     ]) {
       expect(message).toContain(problem);
     }
+  });
+});
+
+describe('facts', () => {
+  const turns: Turn[] = [
+    { from: 'channel', text: 'Earlier chatter.' },
+    { from: 'human', text: 'Which day?' },
+    { from: 'agent', text: 'Which release do you mean?' },
+    { from: 'human', text: 'The payments one.' },
+    { from: 'agent', text: 'Tuesday. -- payments-release' },
+  ];
+  const fact = (
+    turn: 'first' | 'last' | 'any' | 'every',
+    source: string,
+    expect: 'matches' | 'not_matches' = 'matches'
+  ) => ({
+    id: `${turn}-${expect}`,
+    turn,
+    pattern: new RegExp(source, 'i'),
+    expect,
+  });
+
+  it("checks the agent's replies, and only those, as the fact says", () => {
+    const results = checkFacts(
+      [
+        fact('first', '\\?'),
+        fact('last', 'tuesday'),
+        fact('any', 'payments-release'),
+        fact('every', 'payments-release'),
+        fact('every', 'friday', 'not_matches'),
+        fact('any', 'earlier chatter'),
+      ],
+      turns
+    );
+    expect(results.map((result) => result.holds)).toEqual([true, true, true, false, true, false]);
+    expect(results[3]!.detail).toContain('reply 1 of 2');
+  });
+
+  it('fails every fact when the agent never replied', () => {
+    const [result] = checkFacts([fact('every', 'x', 'not_matches')], turns.slice(0, 2));
+    expect(result).toMatchObject({ holds: false, detail: 'the agent never replied' });
+  });
+
+  it("finds the driver's messages that never reached the room", () => {
+    const history = [
+      'Earlier chatter.',
+      '@e2e-abc123b-claude Which day?',
+      'Which release do you mean?',
+    ];
+    expect(undelivered(turns, history)).toEqual(['The payments one.']);
+  });
+});
+
+describe('prompt versions', () => {
+  const sha = (text: string) => createHash('sha256').update(text).digest('hex').slice(0, 16);
+  const scenario = parseScenario('some-scenario.yaml', SCENARIO);
+  const turns: Turn[] = [
+    { from: 'human', text: 'Hello?' },
+    { from: 'agent', text: 'Hello.' },
+  ];
+
+  // Changing a prompt changes its hash. Bump its version in roles.ts, then put
+  // the new hash here, so every report says which prompt produced it.
+  it('pins the driver prompt to its version', () => {
+    expect({
+      version: DRIVER_VERSION,
+      sha: sha(DRIVER_SYSTEM + driverPrompt(scenario, turns)),
+    }).toEqual({
+      version: 1,
+      sha: '9051058c1f87af25',
+    });
+  });
+
+  it('pins the judge prompt to its version', () => {
+    expect({
+      version: JUDGE_VERSION,
+      sha: sha(JUDGE_SYSTEM + judgePrompt(scenario, turns)),
+    }).toEqual({
+      version: 1,
+      sha: 'f6555f985305dfcd',
+    });
   });
 });
 

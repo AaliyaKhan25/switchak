@@ -55,6 +55,43 @@ const roomFromList: BrowserScenario = {
   },
 };
 
+/**
+ * A room made in the gateway's own form exists in the backend as asked: an
+ * internal room (no bridge, so no platform channel is made on a shared
+ * deployment) with the agent picked in the form as its member. Made from the
+ * gateway rather than by adding a bot on the platform, which is the path
+ * where the first bot added to a new channel creates no room.
+ */
+const createRoom: BrowserScenario = {
+  header: browserHeader('gateway-create-room', ['POST /gateway/rooms']),
+  async run({ ui, fixtures, names, switchClient, log }) {
+    const agent = await fixtures.agent('member');
+    const name = names.name('ui-room');
+    const description = `Made in the gateway form by the Switch end-to-end harness (run ${names.runId}). Safe to delete.`;
+    await ui.signIn();
+    await ui.page.getByRole('button', { name: 'New room' }).click();
+    await expect.poll(() => ui.path()).toBe('/rooms/new');
+    await ui.page.getByRole('textbox', { name: /^Name/ }).fill(name);
+    await ui.page.getByRole('textbox', { name: /^Description/ }).fill(description);
+    await ui.page.getByRole('combobox', { name: 'Agents' }).fill(agent.name);
+    await ui.page.getByRole('option').filter({ hasText: agent.name }).click();
+    await ui.page.getByRole('button', { name: 'Create', exact: true }).click();
+
+    await expect.poll(() => ui.path(), { timeout: 15_000 }).toMatch(/^\/rooms\/[0-9a-f-]{36}$/);
+    const roomId = ui.path().slice('/rooms/'.length);
+    fixtures.defer(`room ${name} (${roomId})`, () => switchClient.deleteRoom(roomId));
+    log(`created room ${name} (${roomId}) from the form`);
+
+    const room = await switchClient.getRoom(roomId);
+    expect(room.name).toBe(name);
+    expect(room.bridgeId, 'the room was asked for with no bridge').toBeNull();
+    expect(room.externalChannelId).toBeNull();
+    expect(room.agentIds).toEqual([agent.id]);
+    await expect.poll(() => ui.page.getByRole('heading', { name }).isVisible()).toBe(true);
+    await ui.settled();
+  },
+};
+
 /** Signing out ends the session: the app returns to the login form and stays there. */
 const signOut: BrowserScenario = {
   header: browserHeader('gateway-sign-out', ['POST /gateway/auth/logout']),
@@ -71,5 +108,6 @@ export const BROWSER_SCENARIOS: readonly BrowserScenario[] = [
   signIn,
   everyPage,
   roomFromList,
+  createRoom,
   signOut,
 ];

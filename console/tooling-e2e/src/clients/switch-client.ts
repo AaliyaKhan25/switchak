@@ -107,6 +107,12 @@ export function eventText(event: AgentEvent): string {
   return typeof body === 'string' ? body : '';
 }
 
+/** What a route answered to a probe: its status, and what it said its body was. */
+export interface RouteProbe {
+  status: number;
+  contentType: string;
+}
+
 export class SwitchHttpError extends Error {
   readonly status: number;
   readonly body: string;
@@ -221,16 +227,89 @@ export class SwitchClient {
    * key, no body. For the check that every route which takes a session refuses
    * a request without one.
    */
-  async statusWithoutCredentials(method: string, path: string): Promise<number> {
+  async statusWithoutCredentials(method: string, path: string): Promise<RouteProbe> {
+    return this.probe(method, path, null);
+  }
+
+  /**
+   * What a request with this client's signed-in session, and no body, gets:
+   * its status and content type. For the check that one workspace's member
+   * is refused another workspace's resources.
+   */
+  async statusWithSession(method: string, path: string): Promise<RouteProbe> {
+    return this.probe(method, path, await this.gatewayLogin());
+  }
+
+  private async probe(method: string, path: string, cookie: string | null): Promise<RouteProbe> {
     assertAllowed(this.environment, method, path);
     const response = await fetch(`${this.apiUrl}${path}`, {
       method,
-      headers: { Accept: 'application/json', ...this.requestId() },
+      headers: {
+        Accept: 'application/json',
+        ...(cookie === null ? {} : { Cookie: cookie }),
+        ...this.requestId(),
+      },
       redirect: 'manual',
       signal: AbortSignal.timeout(30_000),
     });
     await response.body?.cancel();
-    return response.status;
+    return { status: response.status, contentType: response.headers.get('content-type') ?? '' };
+  }
+
+  /**
+   * The same server, signed in as someone else. Shares this client's record of
+   * issued credentials, so the other session is scanned for too.
+   */
+  as(email: string, password: string): SwitchClient {
+    return new SwitchClient(
+      {
+        apiUrl: this.apiUrl,
+        agentRegistrationToken: this.registrationToken,
+        gatewayAdminEmail: email,
+        gatewayAdminPassword: password,
+      },
+      this.environment,
+      this.issued
+    );
+  }
+
+  /** `POST /gateway/users` — a user in the signed-in admin's workspace. `role: 'admin'` makes a deployment operator. */
+  async createUser(params: {
+    name: string;
+    email: string;
+    password: string;
+    role: 'user' | 'admin';
+  }): Promise<{ id: string }> {
+    return this.gateway<{ id: string }>('POST', '/users', params);
+  }
+
+  /**
+   * `POST /gateway/tenants` — create a workspace. The caller becomes its owner
+   * and the server re-mints their session into it, so from here on this client
+   * acts in the new workspace.
+   */
+  async createTenant(name: string): Promise<string> {
+    const { parsed, response } = await this.rawRequest('POST', '/gateway/tenants', {
+      cookie: await this.gatewayLogin(),
+      body: { name },
+    });
+    const cookie = sessionCookieFrom(response);
+    if (!cookie) throw new Error('Creating a workspace returned no switch_auth cookie for it.');
+    this.issued.record(cookie.slice('switch_auth='.length));
+    this.gatewayCookie = cookie;
+    return (parsed as { id: string }).id;
+  }
+
+  /** `POST /gateway/agents/register` — an agent owned by the signed-in user, in their current workspace. */
+  async registerAgentAsUser(params: { name: string; description: string }): Promise<AgentRef> {
+    const body = await this.gateway<{ id: string; api_key: string }>('POST', '/agents/register', {
+      agent_type: 'opencode',
+      name: params.name,
+      description: params.description,
+      options: { auto_session: false },
+    });
+    this.issued.record(body.api_key);
+    return { id: body.id, name: params.name };
   }
 
   /** `GET /gateway/feature-flags` — the flags this deployment has turned on. */
@@ -458,14 +537,44 @@ export class SwitchClient {
 
   /** The bridge id of the default collaboration bridge of `type`. */
   async defaultBridgeId(type: string): Promise<string> {
+    return (await this.defaultBridge(type)).id;
+  }
+
+  /** The default collaboration bridge of `type`: its id, and the display name a room document names it by. */
+  async defaultBridge(type: string): Promise<{ id: string; displayName: string }> {
     const rows = await this.gateway<
-      { id: string; bridge_type: string; is_default?: boolean; enabled?: boolean }[]
+      { id: string; bridge_type: string; display_name: string; is_default?: boolean }[]
     >('GET', '/collaborations');
     const ofType = rows.filter((row) => row.bridge_type === type);
     if (ofType.length === 0) {
       throw new Error(`No ${type} collaboration bridge registered on this Switch server`);
     }
-    return (ofType.find((row) => row.is_default) ?? ofType[0]!).id;
+    const row = ofType.find((candidate) => candidate.is_default) ?? ofType[0]!;
+    return { id: row.id, displayName: row.display_name };
+  }
+
+  /**
+   * `POST /gateway/rooms/from-yaml` — provision one room from a room document,
+   * as the signed-in admin; the gateway's side of `create_room_from_yaml`.
+   * Anything the room was given that could not be attached is a failure, not a
+   * room that is quietly missing part of its setup.
+   */
+  async createRoomFromYaml(yaml: string): Promise<RoomDetail> {
+    const result = await this.gateway<{
+      room_id?: string;
+      failed_attachments?: unknown[];
+    }>('POST', '/rooms/from-yaml', { yaml });
+    if (result.room_id === undefined) {
+      throw new Error(`from-yaml did not make one room: ${JSON.stringify(result)}`);
+    }
+    if (result.failed_attachments !== undefined && result.failed_attachments.length > 0) {
+      await this.deleteRoom(result.room_id);
+      throw new Error(
+        `from-yaml made room ${result.room_id} without part of what it was given, so it was deleted: ` +
+          JSON.stringify(result.failed_attachments)
+      );
+    }
+    return this.getRoom(result.room_id);
   }
 
   /**

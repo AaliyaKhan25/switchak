@@ -27,16 +27,25 @@ const LABEL: Record<Turn['from'], string> = {
   channel: 'channel, earlier, not addressed to the agent',
 };
 
+/**
+ * The prompts' versions, recorded in every report so a verdict can be traced
+ * to the prompt that produced it. Bump one with any change to that role's
+ * prompt; `agentic.test.ts` pins a hash of each, so a change that forgets to
+ * fails there.
+ */
+export const DRIVER_VERSION = 1;
+export const JUDGE_VERSION = 1;
+
 /** What the driver answers when the human has nothing more to say. */
 export const DONE = 'DONE';
 
-const DRIVER_SYSTEM = `You play a human in a team chat channel, talking to an AI agent that is a member of the channel. You are testing nothing and know nothing about tests: you are the person described, with the goal described.
+export const DRIVER_SYSTEM = `You play a human in a team chat channel, talking to an AI agent that is a member of the channel. You are testing nothing and know nothing about tests: you are the person described, with the goal described.
 
 Write only the next message you would send: plain text, as you would type it in chat, with no quotation marks, no name prefix and no @mention (one is added for you). Keep it short and natural.
 
 If your goal is met, or the agent has made clear it cannot help further, reply with exactly ${DONE} and nothing else.`;
 
-const JUDGE_SYSTEM = `You grade a conversation between a human and an AI agent in a team chat channel against a list of criteria. Judge only what the transcript shows. Grade each criterion on its own: one failure does not fail the others. If the transcript does not show enough to decide a criterion, it fails.
+export const JUDGE_SYSTEM = `You grade a conversation between a human and an AI agent in a team chat channel against a list of criteria. Judge only what the transcript shows. Grade each criterion on its own: one failure does not fail the others. If the transcript does not show enough to decide a criterion, it fails.
 
 Answer with JSON only, no prose and no code fence, in exactly this shape:
 {"verdicts": [{"id": "<criterion id>", "pass": true, "reason": "<one sentence>"}]}
@@ -46,6 +55,24 @@ export function transcriptText(turns: readonly Turn[]): string {
   return turns.map((turn) => `[${LABEL[turn.from]}] ${turn.text}`).join('\n\n');
 }
 
+export function driverPrompt(scenario: AgenticScenario, turns: readonly Turn[]): string {
+  const humanTurns = turns.filter((turn) => turn.from === 'human').length;
+  return [
+    `Who you are:\n${scenario.persona}`,
+    `Your goal:\n${scenario.goal}`,
+    `The conversation so far:\n${transcriptText(turns)}`,
+    `You have sent ${humanTurns} of at most ${scenario.maxTurns} messages. Write your next message, or ${DONE}.`,
+  ].join('\n\n');
+}
+
+export function judgePrompt(scenario: AgenticScenario, turns: readonly Turn[]): string {
+  return [
+    `What the human wanted:\n${scenario.goal}`,
+    `Criteria:\n${scenario.rubric.map((item) => `- ${item.id}: ${item.criterion}`).join('\n')}`,
+    `Transcript:\n${transcriptText(turns)}`,
+  ].join('\n\n');
+}
+
 export async function driverTurn(
   client: ModelClient,
   model: string,
@@ -53,17 +80,11 @@ export async function driverTurn(
   scenario: AgenticScenario,
   turns: readonly Turn[]
 ): Promise<{ message: string | null; costUsd: number }> {
-  const humanTurns = turns.filter((turn) => turn.from === 'human').length;
   const answer = await client.ask({
     model,
     maxUsd,
     system: DRIVER_SYSTEM,
-    prompt: [
-      `Who you are:\n${scenario.persona}`,
-      `Your goal:\n${scenario.goal}`,
-      `The conversation so far:\n${transcriptText(turns)}`,
-      `You have sent ${humanTurns} of at most ${scenario.maxTurns} messages. Write your next message, or ${DONE}.`,
-    ].join('\n\n'),
+    prompt: driverPrompt(scenario, turns),
   });
   const message = answer.text.replace(/^["“]|["”]$/g, '').trim();
   return { message: message === DONE || message === '' ? null : message, costUsd: answer.costUsd };
@@ -90,11 +111,7 @@ export async function judge(
     model,
     maxUsd,
     system: JUDGE_SYSTEM,
-    prompt: [
-      `What the human wanted:\n${scenario.goal}`,
-      `Criteria:\n${scenario.rubric.map((item) => `- ${item.id}: ${item.criterion}`).join('\n')}`,
-      `Transcript:\n${transcriptText(turns)}`,
-    ].join('\n\n'),
+    prompt: judgePrompt(scenario, turns),
   });
   const parsed = parseVerdicts(
     answer.text,

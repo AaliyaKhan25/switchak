@@ -20,8 +20,17 @@ import {
   type Harness,
 } from '../provider/harness.ts';
 import { exchange, postUnaddressed } from './conversation.ts';
+import { checkFacts, undelivered, type FactResult } from './facts.ts';
 import { ModelClient } from './model.ts';
-import { driverTurn, judge, type Judgement, type Turn } from './roles.ts';
+import {
+  driverTurn,
+  DRIVER_VERSION,
+  judge,
+  JUDGE_VERSION,
+  type Judgement,
+  type Turn,
+} from './roles.ts';
+import { provisionScenarioRoom, type ScenarioRoom } from './room.ts';
 import { AGENTIC_SCENARIO_DIR, loadAgenticScenarios } from './scenario-file.ts';
 import { describeUsage, Ledger, usageCostUsd } from './spend.ts';
 
@@ -30,22 +39,26 @@ import { describeUsage, Ledger, usageCostUsd } from './spend.ts';
  * Runs when `SWITCH_E2E_LANE=agentic`, on the same setup as the provider lane
  * (one agent on a headless controller, one Mattermost channel).
  *
- * For each scenario a driver model plays the human, from the scenario's
- * persona and goal, until the goal is met or `max_turns` runs out; then a
- * judge model grades the transcript against the rubric.
+ * For each scenario, in its own room when it declares one, a driver model
+ * plays the human, from the scenario's persona and goal, until the goal is met
+ * or `max_turns` runs out. Then the deterministic checks; then, only if they
+ * all passed, a judge model grades the transcript against the rubric.
  *
  * What fails a scenario is what can be decided without a model: the agent did
- * not answer, the server logged an error, or the run reached its spending
- * limit. The judge's verdicts are reported, per criterion, in the run's
- * output and in `agentic/<id>.json` under SWITCH_E2E_OUTPUT_DIR, but do not
- * fail the scenario: a model's grade is evidence to read, not a gate, until
- * it has a record of agreeing with people.
+ * not answer, a message the driver wrote never reached the room, one of the
+ * scenario's facts does not hold, the server logged an error, or the run
+ * reached its spending limit. The judge's verdicts are reported, per
+ * criterion, in the run's output and in `agentic/<id>.json` under
+ * SWITCH_E2E_OUTPUT_DIR, with the prompt versions that produced them, but do
+ * not fail the scenario: a model's grade is evidence to read, not a gate,
+ * until it has a record of agreeing with people.
  */
 
 const SCENARIOS = loadAgenticScenarios(AGENTIC_SCENARIO_DIR);
 assertValidHeaders(SCENARIOS.map((scenario) => scenario.header));
 
 const REPLY_DEADLINE_MS = Number(process.env.SWITCH_E2E_REPLY_TIMEOUT_MS ?? 5 * 60_000);
+const SESSION_DEADLINE_MS = Number(process.env.SWITCH_E2E_SESSION_TIMEOUT_MS ?? 120_000);
 /** The most a single driver or judge call may spend. */
 const CALL_LIMIT_USD = 0.5;
 /** How long to wait for Switch's usage count to stop moving after a conversation. */
@@ -55,6 +68,9 @@ interface ScenarioReport {
   id: string;
   turns: Turn[];
   failure: string | null;
+  facts: FactResult[];
+  driver: { model: string; version: number };
+  judge: { model: string; version: number };
   judgement: Judgement | null;
   agentUsd: number;
   harnessUsd: number;
@@ -93,16 +109,14 @@ beforeAll(async () => {
       `  ${describeEnv(env)}`,
       `  ${describeServerLogCheck(env.serverLog)}`,
       `  driver   ${env.agentic.driverModel}`,
-      `  judge    ${env.agentic.judgeModel} (reported, does not fail a scenario)`,
+      `  driver prompt v${DRIVER_VERSION}, judge prompt v${JUDGE_VERSION}`,
+      `  judge    ${env.agentic.judgeModel} (runs once the facts hold; reported, does not fail a scenario)`,
       `  limit    $${ledger.budgetUsd.toFixed(2)}`,
       `  agent    ${harness.agent.name} in ${harness.channel.name}`,
       '',
     ].join('\n')
   );
-  const status = await waitForSession(
-    harness,
-    Number(process.env.SWITCH_E2E_SESSION_TIMEOUT_MS ?? 120_000)
-  );
+  const status = await waitForSession(harness, SESSION_DEADLINE_MS);
   console.log(`  Switch reports the agent as '${status}' in the room — running scenarios.\n`);
 }, 600_000);
 
@@ -172,19 +186,27 @@ describe('agentic lane', () => {
       };
 
       ledger.assertWithin(`${scenario.header.id} started`);
-      const observer = watch.begin(h.switch, scopes.scope().tag);
+      const names = scopes.scope();
+      const observer = watch.begin(h.switch, names.tag);
       const turns: Turn[] = [];
+      let facts: FactResult[] = [];
       let failure: unknown = null;
+      let own: ScenarioRoom | null = null;
       try {
+        if (scenario.room !== null) {
+          own = await provisionScenarioRoom(h, scenario, names, SESSION_DEADLINE_MS);
+          log(`in its own room, ${own.harness.room.name}`);
+        }
+        const active = own?.harness ?? h;
         for (const message of scenario.setupMessages) {
-          await postUnaddressed(h, message);
+          await postUnaddressed(active, message);
           turns.push({ from: 'channel', text: message });
         }
         let next: string | null = scenario.opening;
         while (next !== null) {
           turns.push({ from: 'human', text: next });
           log(`human: ${next}`);
-          const reply = await exchange(h, next, REPLY_DEADLINE_MS);
+          const reply = await exchange(active, next, REPLY_DEADLINE_MS);
           turns.push(reply);
           log(`agent: ${reply.text.replace(/\s+/g, ' ').slice(0, 300)}`);
           ledger.setAgent(usageCostUsd(await agentUsage()));
@@ -200,10 +222,33 @@ describe('agentic lane', () => {
           spendOnHarness(driven.costUsd);
           next = driven.message;
         }
+
+        const history = await h.switch.roomHistory(h.witness, active.room.id, 100);
+        const lost = undelivered(
+          turns,
+          history.map((event) => event.body)
+        );
+        if (lost.length > 0) {
+          throw new Error(
+            `${lost.length} message(s) the driver wrote never reached the Switch room: ` +
+              lost.map((text) => `«${text}»`).join(' ')
+          );
+        }
+        facts = checkFacts(scenario.facts, turns);
+        for (const fact of facts)
+          log(`fact ${fact.holds ? 'holds' : 'FAILS'} ${fact.id}: ${fact.detail}`);
+        const failed = facts.filter((fact) => !fact.holds);
+        if (failed.length > 0) {
+          throw new Error(
+            `${failed.length} of ${facts.length} facts do not hold: ` +
+              failed.map((fact) => `${fact.id} (${fact.detail})`).join('; ')
+          );
+        }
       } catch (error) {
         failure = error;
       } finally {
         observer.stop();
+        if (own !== null && !env.keepArtifacts) await own.remove(log);
       }
 
       let judgement: Judgement | null = null;
@@ -234,6 +279,9 @@ describe('agentic lane', () => {
         turns,
         failure:
           failure === null ? null : failure instanceof Error ? failure.message : String(failure),
+        facts,
+        driver: { model: driverModel, version: DRIVER_VERSION },
+        judge: { model: judgeModel, version: JUDGE_VERSION },
         judgement,
         agentUsd,
         harnessUsd,
@@ -272,7 +320,8 @@ describe('agentic lane', () => {
 });
 
 function describeJudgement(judgement: Judgement | null): string {
-  if (judgement === null) return 'judge: not run (the conversation did not finish)';
+  if (judgement === null)
+    return 'judge: not run (the conversation or a deterministic check failed)';
   if (!judgement.ok)
     return `judge: no usable verdict (${judgement.error}); it said: ${judgement.raw.slice(0, 300)}`;
   const passed = judgement.verdicts.filter((verdict) => verdict.pass).length;

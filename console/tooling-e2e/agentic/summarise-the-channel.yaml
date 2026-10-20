@@ -15,6 +15,19 @@ setup_messages:
   - Wednesday 10:00 works for everyone. Let's start next week, and the team lead will update the calendar invite.
 opening: Just got back. What was decided above about the weekly sync?
 max_turns: 2
+facts:
+  - id: names-the-day
+    turn: last
+    matches: 'wednesday'
+  - id: names-the-time
+    turn: last
+    matches: '10(:00)?|ten'
+  - id: names-the-invite
+    turn: last
+    matches: 'calendar|invite'
+  - id: invents-no-other-day
+    turn: every
+    not_matches: 'monday|tuesday|friday'
 rubric:
   - id: names-the-decision
     criterion: The agent says the sync moves to Wednesday at 10:00, starting next week.

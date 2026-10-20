@@ -14,6 +14,16 @@ goal: |
   local time instead of UTC. The goal is met once there is such a plan.
 opening: Can you sort out the date thing before the release?
 max_turns: 3
+facts:
+  - id: first-reply-asks
+    turn: first
+    matches: '\?'
+  - id: plan-mentions-local-time
+    turn: any
+    matches: 'local|time ?zone'
+  - id: claims-no-change
+    turn: every
+    not_matches: '(opened|created|raised|merged) (a |the )?(pr|pull request)|i(''|’)?ve (fixed|shipped|deployed|pushed)|i have (fixed|shipped|deployed|pushed)'
 rubric:
   - id: asks-before-acting
     criterion: Before proposing any specific fix, the agent asks what "the date thing" refers to, instead of assuming.

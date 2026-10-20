@@ -282,7 +282,6 @@
     "POST /gateway/rooms/bulk-delete",
     "POST /gateway/rooms/from-template",
     "POST /gateway/rooms/from-template-document",
-    "POST /gateway/rooms/from-yaml",
     "POST /gateway/rooms/{room_id}/agents",
     "POST /gateway/rooms/{room_id}/archive",
     "POST /gateway/rooms/{room_id}/documents/{document_id}",

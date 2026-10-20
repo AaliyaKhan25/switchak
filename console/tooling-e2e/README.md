@@ -159,6 +159,7 @@ saved under `screenshots/` in the output directory.
 | `gateway-sign-in` | The login form signs the admin in, and the app opens on the rooms list. |
 | `gateway-every-page` | Every link in the navigation rail opens its page without an error. It follows the rail, so a page added there is visited without this changing. |
 | `gateway-room-from-list` | A room made over the API is listed, and its page opens from the list. |
+| `gateway-create-room` | The new-room form makes a room with an agent and no bridge, and opens it; the server has it as asked. |
 | `gateway-sign-out` | Signing out returns to the login form, and the app stays there. |
 
 None runs against `prod`: a page may write on load, and the browser goes
@@ -280,14 +281,31 @@ persona: |                       # who the driver plays
   A team member back from a day off, catching up.
 goal: |                          # what they want; the driver stops once they have it
   Learn what was decided about the weekly sync and who is doing what next.
+room:                            # the scenario's own room (optional; see below)
+  instructions: |
+    Every reply ends with the line "-- weekly-sync".
 setup_messages:                  # posted first, not addressed to the agent (optional)
   - Should we move the weekly sync to Thursday afternoons?
 opening: Just got back. What was decided above about the weekly sync?
 max_turns: 2                     # human messages, the opening included (1 to 6)
+facts:                           # what the replies must show, checked in code (at least one)
+  - id: names-the-day
+    turn: any                    # first, last, any or every agent reply
+    matches: wednesday           # a regular expression, case-insensitive
+  - id: invents-no-other-day
+    turn: every
+    not_matches: monday|tuesday|friday
 rubric:                          # what the judge checks, each on its own
   - id: names-the-decision
     criterion: The agent says the sync moves to Wednesday at 10:00.
 ```
+
+With no `room:`, a scenario runs in the lane's shared room. With one, it gets
+a room of its own, provisioned through the gateway's `POST /rooms/from-yaml`
+from the same document an agent's `create_room_from_yaml` takes. A scenario
+may set `description`, `instructions`, `roles` and `docs`; the harness names
+the room and picks its bridge and members (the agent, the bridge's witness
+bot, the human). The room is removed afterwards.
 
 - **The driver** is a model playing the human. After each reply it writes the
   next message from the persona, the goal and the conversation so far, or
@@ -300,11 +318,20 @@ rubric:                          # what the judge checks, each on its own
   sees the persona, so it grades what was said, not what was meant.
 
 What fails a scenario is what can be decided without a model: the agent did
-not reply, its turn ended in an error, the server logged an error, or the run
-reached its spending limit. **The judge's verdicts do not fail a scenario.**
-They are printed per criterion and written, with the transcript and the spend,
-to `agentic/<id>.json` in the output directory. A model's grade is evidence to
-read until it has a record of agreeing with people.
+not reply, its turn ended in an error, a message the driver wrote is missing
+from the room's history, a fact does not hold, the server logged an error, or
+the run reached its spending limit. **The judge's verdicts do not fail a
+scenario**, and the judge is not asked at all once one of those checks has
+failed: a grade of a conversation that went wrong mechanically says nothing.
+The verdicts are printed per criterion and written, with the transcript, the
+facts and the spend, to `agentic/<id>.json` in the output directory. A model's
+grade is evidence to read until it has a record of agreeing with people.
+
+The report also names each model and the version of its prompt
+(`DRIVER_VERSION`, `JUDGE_VERSION` in `src/agentic/roles.ts`), so verdicts
+are compared only between runs that asked the same question. A unit test pins
+a hash of each prompt: changing one fails it until the version goes up and the
+hash is updated.
 
 Both models are named by exact id, and an answer from any other model is
 refused rather than counted. Their calls go through the Claude Code CLI with
@@ -401,13 +428,25 @@ on every PR with no server.
     When a scenario starts covering an entry, the gate fails until the entry is
     removed. Never add to it: a new route needs a scenario or an `exempt` entry
     with its reason.
-- **A check derived from the snapshot.** The fast lane checks that every
-  `session` route answers 401 to a request carrying no credential. It skips
-  only the routes behind a feature flag the deployment has off: the snapshot
-  names each route's flags, and `GET /gateway/feature-flags` says which are on.
-  Routes left out of the OpenAPI document are probed like any other. This check
-  counts nothing towards coverage, but it applies to every new route
-  automatically.
+- **Checks derived from the snapshot.** They count nothing towards coverage,
+  but they apply to every new route automatically. Routes left out of the
+  OpenAPI document are probed like any other, and routes behind a feature flag
+  the deployment has off are skipped: the snapshot names each route's flags,
+  and `GET /gateway/feature-flags` says which are on.
+  - Every `session` route answers 401 to a request carrying no credential,
+    and answers as the API, not with an HTML page. Where the gateway's single
+    page app and the API share a host, the app's page comes back for any
+    path nothing else routes, so a route that went missing would otherwise
+    pass as "a page".
+  - A plain member of one workspace is refused another workspace's rooms and
+    agents. The lane makes a second workspace with a room and an agent, then
+    calls every `session` route whose path parameters it can fill
+    (`tenant_id`, `room_id`, `agent_id`, `agent_name`) with that workspace's
+    values. 403 or 404 passes; 2xx, 3xx, 5xx or an HTML page fails. Other 4xx
+    answers (mostly a body the probe did not send) are listed as
+    inconclusive. The prober is not the harness admin: a deployment admin
+    may cross workspaces by design. Workspaces and users cannot be deleted,
+    so this runs only on `ephemeral` and `local`.
 
 ## In CI
 
