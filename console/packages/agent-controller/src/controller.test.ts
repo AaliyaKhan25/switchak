@@ -79,6 +79,7 @@ function deps(server = core.url): ControllerDeps {
     locator: new FakeLocator(),
     rechecks: new ProviderRechecks(),
     refreshPath: async () => {},
+    providerSeed: [],
     tools: async () => [],
     fetch,
     openWebSocket: core.openWebSocket,

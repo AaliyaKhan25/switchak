@@ -122,14 +122,14 @@ const {
 const SERVER = {
   id: 'srv-1',
   name: 'S',
-  gatewayUrl: 'https://switch.example.com',
-  apiUrl: 'https://switch-api.example.com',
+  url: 'https://switch.example.com',
+  dashboardUrl: null,
   managed: false,
 } as never;
 const MANAGED = {
   id: 'srv-local',
   name: 'Local',
-  gatewayUrl: 'https://switch.example.com',
+  url: 'https://switch.example.com',
   managed: true,
 } as never;
 
@@ -138,7 +138,7 @@ const MANAGED = {
  * means it cannot be spread. Used where a test needs several distinct servers
  * (e.g. the per-server avatar-settings cache) without redeclaring every field. */
 function serverWithId(id: string): typeof SERVER {
-  return { id, name: 'S', gatewayUrl: 'https://switch.example.com', managed: false } as never;
+  return { id, name: 'S', url: 'https://switch.example.com', managed: false } as never;
 }
 
 /** A structurally-valid JWT whose payload `exp` is `secondsFromNow` in the
@@ -156,7 +156,7 @@ function okMeResponse(): Response {
     status: 200,
     ok: true,
     json: async () => ({ id: 'u1', name: 'Ada', email: 'ada@example.com', role: 'user' }),
-    headers: { getSetCookie: () => [] },
+    headers: { get: () => null, getSetCookie: () => [] },
     text: async () => '',
   } as unknown as Response;
 }
@@ -166,7 +166,7 @@ function unauthorizedResponse(): Response {
     status: 401,
     ok: false,
     json: async () => ({}),
-    headers: { getSetCookie: () => [] },
+    headers: { get: () => null, getSetCookie: () => [] },
     text: async () => 'Token expired',
   } as unknown as Response;
 }
@@ -460,7 +460,7 @@ function jsonResponse(body: unknown): Response {
     status: 200,
     ok: true,
     json: async () => body,
-    headers: { getSetCookie: () => [] },
+    headers: { get: () => null, getSetCookie: () => [] },
     text: async () => JSON.stringify(body),
   } as unknown as Response;
 }
@@ -470,7 +470,7 @@ function errorResponse(status: number, body: string): Response {
     status,
     ok: false,
     json: async () => ({}),
-    headers: { getSetCookie: () => [] },
+    headers: { get: () => null, getSetCookie: () => [] },
     text: async () => body,
   } as unknown as Response;
 }
@@ -740,7 +740,7 @@ describe('registerKnownAgent', () => {
           status: 200,
           ok: true,
           json: async () => ({ id: 'sw-1', api_key: 'tok-123' }),
-          headers: { getSetCookie: () => [] },
+          headers: { get: () => null, getSetCookie: () => [] },
           text: async () => '',
         }) as unknown as Response
     );
@@ -1128,6 +1128,25 @@ describe('GitHub connection transport', () => {
         completion_secret: 'b'.repeat(43),
       })
     ).rejects.toThrow('invalid GitHub authorization URL');
+  });
+  it('accepts the server’s own address on an older server that keeps its dashboard apart', async () => {
+    const state = 'a'.repeat(43);
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          id: state,
+          url: `https://switch-api.example.com/gateway/provider-connections/github/authorize?state=${state}`,
+        })
+      )
+    );
+    const split = {
+      ...(SERVER as object),
+      url: 'https://switch-api.example.com',
+      dashboardUrl: 'https://switch.example.com',
+    } as never;
+    await expect(
+      startGitHubConnection(split, { port: 12345, state, completion_secret: 'b'.repeat(43) })
+    ).resolves.toMatchObject({ id: state });
   });
   it('checks state matches the returned authorization id', async () => {
     fetchMock.mockResolvedValueOnce(
@@ -1547,6 +1566,11 @@ describe('a service sign-in', () => {
   const state = 'a'.repeat(43);
   const input = { port: 12345, state, completion_secret: 'b'.repeat(43) };
   const flows = 'https://switch.example.com/gateway/service-connections/example/flows';
+  // An older server that still keeps its dashboard on a host of its own.
+  const SPLIT = {
+    ...(SERVER as object),
+    dashboardUrl: 'https://switch-dashboard.example.com',
+  } as never;
   const vendor = (query: Record<string, string>) =>
     `https://auth.example.test/authorize?${new URLSearchParams(query)}`;
   const answer = (body: object) =>
@@ -1584,17 +1608,17 @@ describe('a service sign-in', () => {
     );
   });
 
-  it('accepts Core’s authorize step on the server’s API host, where it returns', async () => {
-    const url = `https://switch-api.example.com/gateway/service-connections/example/flows/authorize?state=${state}`;
+  it('accepts Core’s authorize step on the separate dashboard host an older server keeps', async () => {
+    const url = `https://switch-dashboard.example.com/gateway/service-connections/example/flows/authorize?state=${state}`;
     answer({ id: state, mode: 'core', url });
-    expect((await startServiceConnection(SERVER, 'example', input)).url).toBe(url);
+    expect((await startServiceConnection(SPLIT, 'example', input)).url).toBe(url);
   });
 
   it.each([
     [
-      'the server’s API host over plain HTTP',
+      'the separate dashboard host over plain HTTP',
       'core',
-      `http://switch-api.example.com/gateway/service-connections/example/flows/authorize?state=${state}`,
+      `http://switch-dashboard.example.com/gateway/service-connections/example/flows/authorize?state=${state}`,
     ],
     [
       'another server in core mode',
@@ -1623,7 +1647,7 @@ describe('a service sign-in', () => {
     ],
   ])('refuses %s', async (_name, mode, url) => {
     answer({ id: state, mode, url });
-    await expect(startServiceConnection(SERVER, 'example', input)).rejects.toThrow(
+    await expect(startServiceConnection(SPLIT, 'example', input)).rejects.toThrow(
       'invalid sign-in URL'
     );
   });
@@ -1746,6 +1770,35 @@ describe('sign-up support', () => {
   it('treats a server predating sign-up as not offering it', async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse(config));
     expect((await fetchAuthConfig(SERVER)).signupEnabled).toBe(false);
+  });
+
+  it.each([200, 404])(
+    'says the address does not route /gateway when a web page answers it (HTTP %i)',
+    async (status) => {
+      fetchMock.mockResolvedValueOnce(
+        new Response('<!doctype html><title>dashboard</title>', {
+          status,
+          headers: { 'content-type': 'text/html; charset=utf-8' },
+        })
+      );
+      await expect(fetchAuthConfig(SERVER)).rejects.toMatchObject({
+        name: 'NoManagementApiError',
+        message: expect.stringContaining('route /gateway on https://switch.example.com'),
+      });
+    }
+  );
+
+  it('reports a proxy’s 502 page as the failure it is, not as a missing route', async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response('<html>Bad Gateway</html>', {
+        status: 502,
+        headers: { 'content-type': 'text/html' },
+      })
+    );
+    await expect(fetchAuthConfig(SERVER)).rejects.toMatchObject({
+      name: 'GatewayError',
+      status: 502,
+    });
   });
 
   it('warms the cloud machine with an authenticated POST', async () => {
@@ -2054,7 +2107,7 @@ describe('distributed Teams team placement', () => {
       status: 200,
       ok: true,
       json: async () => ({}),
-      headers: { getSetCookie: () => [] },
+      headers: { get: () => null, getSetCookie: () => [] },
       text: async () => '',
       arrayBuffer: async () => bytes,
     } as unknown as Response);
@@ -2154,7 +2207,7 @@ describe('acceptInvitation', () => {
       status: 200,
       ok: true,
       json: async () => ({ id: 't1', slug: 'cryo', name: 'Cryo Team', role: 'member' }),
-      headers: { getSetCookie: () => setCookies },
+      headers: { get: () => null, getSetCookie: () => setCookies },
       text: async () => '',
     } as unknown as Response;
   }
@@ -2404,7 +2457,7 @@ describe('invitations addressed to the signed-in account', () => {
       status: 200,
       ok: true,
       json: async () => ({ id: 't1', slug: 'cryo', name: 'Cryo Team', role: 'member' }),
-      headers: { getSetCookie: () => ['switch_auth=scoped; Path=/; HttpOnly'] },
+      headers: { get: () => null, getSetCookie: () => ['switch_auth=scoped; Path=/; HttpOnly'] },
       text: async () => '',
     } as never);
 
@@ -2468,7 +2521,7 @@ describe('joining a workspace by e-mail domain', () => {
       status: 200,
       ok: true,
       json: async () => ({ id: 't9', slug: 'skunk', name: 'Skunkworks', role: 'member' }),
-      headers: { getSetCookie: () => ['switch_auth=scoped; Path=/; HttpOnly'] },
+      headers: { get: () => null, getSetCookie: () => ['switch_auth=scoped; Path=/; HttpOnly'] },
       text: async () => '',
     } as never);
 
@@ -2551,7 +2604,7 @@ describe('workspace invitations', () => {
       status: 200,
       ok: true,
       json: async () => body,
-      headers: { getSetCookie: () => [] },
+      headers: { get: () => null, getSetCookie: () => [] },
       text: async () => '',
     } as unknown as Response;
   }
@@ -2663,7 +2716,7 @@ describe('agent management calls', () => {
       status,
       ok: status >= 200 && status < 300,
       json: async () => JSON.parse(text),
-      headers: { getSetCookie: () => [] },
+      headers: { get: () => null, getSetCookie: () => [] },
       text: async () => text,
     } as unknown as Response;
   }
@@ -2798,7 +2851,7 @@ describe('agent management calls', () => {
     expect(JSON.parse(String(init.body))).toEqual({ sealed });
     await expect(
       giveMachineLogin(
-        { ...(SERVER as object), gatewayUrl: 'http://switch.example.com' } as never,
+        { ...(SERVER as object), url: 'http://switch.example.com' } as never,
         'c',
         'claude',
         sealed

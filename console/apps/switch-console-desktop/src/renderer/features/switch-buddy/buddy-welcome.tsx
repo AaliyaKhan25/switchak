@@ -16,9 +16,14 @@ export function BuddyWelcome({
 }) {
   return (
     <div className="flex gap-3" data-testid="buddy-welcome">
-      <BuddyAvatar size={28} shape="round" className="mt-0.5" />
-      <div className="min-w-0 flex-1 text-sm leading-relaxed">
-        <ChatMarkdown>{buddyWelcomeMessage({ firstName, agentName })}</ChatMarkdown>
+      <BuddyAvatar size={28} shape="round" className="self-start" />
+      <div className="flex min-w-0 flex-1 flex-col">
+        <span className="mb-1 text-xs leading-4 font-semibold text-foreground-muted">
+          {agentName}
+        </span>
+        <div className="text-sm leading-relaxed">
+          <ChatMarkdown>{buddyWelcomeMessage({ firstName, agentName })}</ChatMarkdown>
+        </div>
       </div>
     </div>
   );
