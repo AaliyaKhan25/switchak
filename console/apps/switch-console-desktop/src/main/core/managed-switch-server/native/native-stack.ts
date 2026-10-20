@@ -450,7 +450,7 @@ export async function startNativeStack(opts: NativeStartOptions): Promise<Native
     const serverId = await registerManagedServer(
       ref,
       serverName,
-      { gatewayUrl: apiUrl, apiUrl },
+      { url: apiUrl, dashboardUrl: null },
       secrets,
       activate,
       onMessage

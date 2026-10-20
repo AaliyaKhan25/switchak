@@ -136,6 +136,7 @@ describe.skipIf(!dataDir)('agents as users of their own, under systemd', () => {
         },
         rechecks: new ProviderRechecks(),
         refreshPath: async () => {},
+        providerSeed: [],
         tools: async () => [],
         fetch,
         openWebSocket: core.openWebSocket,

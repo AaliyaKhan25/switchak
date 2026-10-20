@@ -7,7 +7,7 @@
  * the app on the page; a click inside the app's own chat moves it there
  * directly.
  *
- * `server` names the Switch server the link means, by its gateway address.
+ * `server` names the Switch server the link means, by its address.
  * Without it the link opens on the server the person is looking at, which is
  * what an agent wants: it talks to them on that server and does not know the
  * address Console reaches it by.
@@ -61,7 +61,7 @@ export type ConsoleLink = {
   /** The agent, room or template the page shows; null for a page with no id. */
   id: string | null;
   tab: string | null;
-  /** The gateway address of the server the link means, or null for the current one. */
+  /** The address of the server the link means, or null for the current one. */
   server: string | null;
 };
 

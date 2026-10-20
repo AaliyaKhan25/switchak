@@ -4,7 +4,8 @@ import { useState } from 'react';
 import { ManagedAgentList } from '@renderer/features/managed-agents/managed-agent-list';
 import { useManagedAgents } from '@renderer/features/managed-agents/use-managed-agents';
 import { BuddyAvatar } from '@renderer/features/switch-buddy/buddy-avatar';
-import { expectedBuddyName, isBuddy } from '@renderer/features/switch-buddy/buddy-identity';
+import { expectedBuddyName } from '@renderer/features/switch-buddy/buddy-identity';
+import { useBuddyPending } from '@renderer/features/switch-buddy/buddy-pending';
 import { switchServersStore } from '@renderer/features/switch-servers/switch-servers-store';
 import { useListedRoomsInActiveScope } from '@renderer/features/switch-servers/use-listed-rooms';
 import { BridgeIcon, hasBridgeIcon } from '@renderer/lib/components/bridge-icon';
@@ -43,6 +44,7 @@ export const SidebarMainSection = observer(function SidebarMainSection() {
   const [tab, setTab] = useState<MainTab>(storedTab);
   const agents = useManagedAgents(switchServersStore.activeServerId);
   const flags = useFeatureFlags(switchServersStore.activeServerId);
+  const buddyPending = useBuddyPending(switchServersStore.activeServerId);
   const rooms = useListedRoomsInActiveScope();
   // No count until the agents are read: a 0 that turns into the real number
   // a moment later reads as the list changing.
@@ -65,13 +67,9 @@ export const SidebarMainSection = observer(function SidebarMainSection() {
       </div>
       {tab === 'agents' ? (
         <>
-          {BUILD_FEATURE_FLAGS.onboarding &&
-            flags.switch_buddy &&
-            switchServersStore.activeServerId !== null &&
-            agents.data &&
-            !agents.data.some(isBuddy) && (
-              <PendingBuddyRow serverId={switchServersStore.activeServerId} />
-            )}
+          {buddyPending && switchServersStore.activeServerId !== null && (
+            <PendingBuddyRow serverId={switchServersStore.activeServerId} />
+          )}
           <ManagedAgentList />
           {agents.data?.length === 0 && !BUILD_FEATURE_FLAGS.onboarding && (
             <p className="px-[9px] py-2 text-xs text-foreground-muted">No agents yet.</p>

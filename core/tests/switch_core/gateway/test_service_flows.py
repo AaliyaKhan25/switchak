@@ -540,6 +540,29 @@ class TestCoreCallback:
         ]
         assert exchange["redirect_uri"] == f"{PUBLIC}{FLOWS}/callback"
 
+    async def test_the_cookie_is_secure_except_on_this_computer(
+        self, session_factory, tmp_path
+    ) -> None:
+        # A server Switch Console runs is reached over plain http on the
+        # loopback address, where a Secure cookie may be dropped by the browser.
+        world = _world(
+            session_factory, tmp_path / "catalog", redirect="[core]", public_url=PUBLIC
+        )
+        ada = await add_member(session_factory, "ada")
+        async with world.harness.client() as client:
+            remote = Console(client, ada)
+            started = await remote.start()
+            authorize = started.json()["url"].removeprefix(PUBLIC)
+            left = await client.get(f"https://switch.example.test{authorize}")
+            assert "secure" in left.headers["set-cookie"].lower()
+
+            local = Console(client, ada)
+            started = await local.start()
+            authorize = started.json()["url"].removeprefix(PUBLIC)
+            left = await client.get(f"http://127.0.0.1:51001{authorize}")
+            assert left.status_code == 307
+            assert "secure" not in left.headers["set-cookie"].lower()
+
     async def test_a_code_cannot_skip_core(self, session_factory, tmp_path) -> None:
         world = _world(
             session_factory, tmp_path / "catalog", redirect="[core]", public_url=PUBLIC

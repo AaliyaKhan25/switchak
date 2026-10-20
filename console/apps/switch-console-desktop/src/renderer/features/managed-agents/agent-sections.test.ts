@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ServiceGrants } from '@shared/core/switch-servers/service-grants';
-import { agentSections, isAgentSection, shownAgentSection } from './agent-sections';
+import { agentSections, isAgentSection, shownAgentRoom, shownAgentSection } from './agent-sections';
 
 const GRANTS: ServiceGrants = { grants: [], addressing_open: false };
 
@@ -33,5 +33,14 @@ describe("a managed agent's sections", () => {
     expect(isAgentSection('settings')).toBe(true);
     expect(isAgentSection('chats')).toBe(false);
     expect(isAgentSection(undefined)).toBe(false);
+  });
+
+  it('shows the chosen room unless a section is chosen or the agent has left it', () => {
+    const rooms = [{ roomId: '!a' }];
+    expect(shownAgentRoom('!a', null, rooms)).toBe('!a');
+    expect(shownAgentRoom('!a', 'settings', rooms)).toBeNull();
+    expect(shownAgentRoom('!b', null, rooms)).toBeNull();
+    expect(shownAgentRoom('!b', null, undefined)).toBe('!b');
+    expect(shownAgentRoom(undefined, null, rooms)).toBeNull();
   });
 });

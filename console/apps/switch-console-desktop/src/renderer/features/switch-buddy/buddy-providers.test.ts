@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { OwnedMachine } from '@shared/core/managed-agents/managed-agents';
-import { buddyProviders } from './buddy-providers';
+import { type BuddyProvider, buddyProviders, startButtons } from './buddy-providers';
 
 const PROVIDERS = [
   { id: 'claude', name: 'Claude Code' },
@@ -47,5 +47,49 @@ describe('buddyProviders', () => {
 
   it('is still checking everything before this computer reports', () => {
     expect(buddyProviders(PROVIDERS, null).every((p) => p.state === 'checking')).toBe(true);
+  });
+});
+
+describe('startButtons', () => {
+  const states = (entries: Record<string, BuddyProvider['state']>): BuddyProvider[] =>
+    PROVIDERS.map((provider) => ({ ...provider, state: entries[provider.id] ?? 'checking' }));
+  const ids = (buttons: BuddyProvider[] | null) => buttons?.map((provider) => provider.id) ?? null;
+
+  it('decides as soon as Claude Code and Codex are known and one is ready', () => {
+    expect(ids(startButtons(states({ claude: 'ready', codex: 'ready' }), false))).toEqual([
+      'claude',
+      'codex',
+    ]);
+    expect(ids(startButtons(states({ claude: 'ready', codex: 'sign-in' }), false))).toEqual([
+      'claude',
+    ]);
+  });
+
+  it('waits while one of them is still being checked', () => {
+    expect(startButtons(states({ claude: 'ready' }), false)).toBeNull();
+    expect(startButtons(states({ codex: 'ready' }), false)).toBeNull();
+  });
+
+  it('waits for the rest when neither is ready, then offers what is', () => {
+    expect(startButtons(states({ claude: 'install', codex: 'sign-in' }), false)).toBeNull();
+    expect(
+      ids(
+        startButtons(
+          states({
+            claude: 'install',
+            codex: 'sign-in',
+            opencode: 'ready',
+            cursor: 'install',
+            antigravity: 'install',
+          }),
+          false
+        )
+      )
+    ).toEqual(['opencode']);
+  });
+
+  it('offers what is ready once out of patience', () => {
+    expect(ids(startButtons(states({ codex: 'ready' }), true))).toEqual(['codex']);
+    expect(ids(startButtons(states({}), true))).toEqual([]);
   });
 });
