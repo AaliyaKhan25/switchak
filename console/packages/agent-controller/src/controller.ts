@@ -34,6 +34,7 @@ import type { SelfUpdater } from './self-update';
 import {
   noSessionMidTurn,
   type ProviderLocator,
+  type ProviderSeed,
   ProviderStatuses,
   StatusCollector,
   statusFingerprint,
@@ -95,6 +96,8 @@ export type ControllerDeps = {
    */
   rechecks: ProviderRechecks;
   refreshPath: () => Promise<void>;
+  /** Provider checks made before this controller started, taken as its own (`ProviderStatuses.seed`). */
+  providerSeed: ProviderSeed;
   /** `git`, `gh` and vendor tools, as sessions here would be set up with them (`toolStatuses`). */
   tools: () => Promise<ToolStatus[]>;
   fetch: Fetch;
@@ -412,6 +415,7 @@ export async function runController(
     log,
     onChange: () => reporter?.request(),
   });
+  providers.seed(deps.providerSeed);
   const collector = new StatusCollector({
     store,
     runtime,

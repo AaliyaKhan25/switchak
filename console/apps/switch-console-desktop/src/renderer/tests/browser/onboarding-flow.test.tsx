@@ -12,6 +12,8 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const addServer = vi.hoisted(() => vi.fn());
+const updateServer = vi.hoisted(() => vi.fn());
+const storeError = vi.hoisted(() => ({ text: null as string | null }));
 const setActive = vi.hoisted(() => vi.fn());
 const navigate = vi.hoisted(() => vi.fn());
 const listHosts = vi.hoisted(() => vi.fn());
@@ -27,19 +29,28 @@ vi.hoisted(() => {
   } as unknown as typeof window.electronAPI;
 });
 
+const precheckProviders = vi.hoisted(() => vi.fn());
+
 vi.mock('@renderer/lib/ipc', () => ({
   events: { on: () => () => {} },
-  rpc: { remoteHosts: { listHosts }, switchServers: { switchCloud } },
+  rpc: {
+    remoteHosts: { listHosts },
+    switchServers: { switchCloud },
+    embeddedController: { precheckProviders },
+  },
 }));
 
 vi.mock('@renderer/features/switch-servers/switch-servers-store', () => ({
   switchServersStore: {
     addServer,
+    updateServer,
     connectToSwitchCloud,
     setActive,
     serverById: (id: string | null) => servers.find((s) => s.id === id) ?? null,
     isConnected: () => false,
-    errorText: null,
+    get errorText() {
+      return storeError.text;
+    },
     ensureAuthConfig: () => Promise.resolve(),
     authConfigFor: () => ({
       passwordLoginEnabled: true,
@@ -94,13 +105,21 @@ vi.mock('@renderer/features/settings/use-app-settings-key', () => ({
 }));
 
 import { OnboardingFlow } from '@renderer/features/onboarding/onboarding-flow';
+vi.mock('@renderer/lib/hooks/useTheme', () => ({
+  useTheme: () => ({ effectiveTheme: 'emlight' }),
+}));
+
 import { onboardingStore } from '@renderer/features/onboarding/onboarding-store';
+import { ExternalServerStep } from '@renderer/features/switch-servers/AddServerModal';
+import { Dialog, DialogContent } from '@renderer/lib/ui/dialog';
 
 let container: HTMLDivElement | null = null;
 let root: Root | null = null;
 
 beforeEach(() => {
   addServer.mockReset();
+  updateServer.mockReset();
+  storeError.text = null;
   setActive.mockReset();
   navigate.mockReset();
   listHosts.mockReset();
@@ -110,6 +129,8 @@ beforeEach(() => {
   connectToSwitchCloud.mockReset();
   servers.length = 0;
   onboardingStore.reset();
+  // The intro has its own test; these start on Welcome, as after it.
+  onboardingStore.introPlayed();
   Object.assign(localServer, {
     status: null,
     docker: { available: true },
@@ -128,8 +149,8 @@ function serverAdded(id: string) {
   const server = {
     id,
     name: 'switch.example.com',
-    gatewayUrl: 'https://switch.example.com',
-    apiUrl: 'https://switch.example.com:8000',
+    url: 'https://switch.example.com',
+    dashboardUrl: null,
   };
   servers.push(server);
   addServer.mockResolvedValue(server);
@@ -141,8 +162,7 @@ async function addFromConnectPage(el: HTMLElement) {
   await act(async () => button(el, 'Get started').click());
   await choose(el, 'Join an existing server');
   await act(async () => button(el, 'Continue').click());
-  await type(field(el, 'Gateway URL')!, 'https://switch.example.com');
-  await type(field(el, 'API URL')!, 'https://switch.example.com:8000');
+  await type(field(el, 'Server address')!, 'https://switch.example.com');
   await choose(el, 'Sign in to this server');
 }
 
@@ -201,6 +221,22 @@ async function type(input: HTMLInputElement, value: string): Promise<void> {
 }
 
 describe('the first-run flow', () => {
+  it('opens on the intro the first time, and Skip goes on to Welcome for good', async () => {
+    onboardingStore.rehearse();
+    const el = await renderFlow();
+    expect(el.textContent).not.toContain('Get started');
+    await act(async () => button(el, 'Skip').click());
+    await vi.waitFor(() => expect(el.textContent).toContain('Get started'));
+    expect(onboardingStore.introPending).toBe(false);
+    expect(localStorage.getItem('onboarding.introPlayed')).not.toBeNull();
+  });
+
+  it("checks this computer's providers as it opens, for switch-buddy at the end", async () => {
+    precheckProviders.mockClear();
+    await renderFlow();
+    expect(precheckProviders).toHaveBeenCalledTimes(1);
+  });
+
   it('asks how to run Switch once you get started, without the remote host path', async () => {
     const el = await renderFlow();
 
@@ -243,15 +279,27 @@ describe('the first-run flow', () => {
     expect(onboardingStore.page).toBe('local');
   });
 
-  it('asks for the addresses, and not for a name, on the connect page', async () => {
+  it('asks for the one address, and not for a name, on the connect page', async () => {
     const el = await renderFlow();
     await act(async () => button(el, 'Get started').click());
     await choose(el, 'Join an existing server');
     await act(async () => button(el, 'Continue').click());
 
-    expect(field(el, 'Gateway URL')).not.toBeNull();
-    expect(field(el, 'API URL')).not.toBeNull();
+    expect(field(el, 'Server address')).not.toBeNull();
+    expect(field(el, 'Gateway URL')).toBeNull();
+    expect(field(el, 'API URL')).toBeNull();
     expect(field(el, 'Name')).toBeNull();
+  });
+
+  it('names the server after its address, having never asked', async () => {
+    // The page that skips the question still has to produce a name: an
+    // unnamed row in the sidebar would be the cost of the shortcut.
+    serverAdded('srv-1');
+    const el = await renderFlow();
+
+    await addFromConnectPage(el);
+
+    expect(addServer).toHaveBeenCalledWith('switch.example.com', 'https://switch.example.com');
   });
 
   it('keeps the flow on screen after the server is added, for the sign-in still to come', async () => {
@@ -287,8 +335,8 @@ describe('the first-run flow with Switch Cloud named', () => {
   const CLOUD = {
     id: 'cloud-1',
     name: 'Switch Cloud',
-    gatewayUrl: 'https://cloud.example.com',
-    apiUrl: 'https://cloud.example.com',
+    url: 'https://cloud.example.com',
+    dashboardUrl: null,
   };
 
   beforeEach(() => {
@@ -331,5 +379,82 @@ describe('the first-run flow with Switch Cloud named', () => {
 
     expect(onboardingStore.page).toBe('howToRun');
     expect(el.querySelector('[role="alert"]')?.textContent).toContain('disk full');
+  });
+});
+
+describe('the server address form', () => {
+  it('says why an address was refused, and stays on the form', async () => {
+    addServer.mockResolvedValue(null);
+    storeError.text =
+      'https://switch-gateway.example.com answered with a web page, not the Switch server.';
+    const el = await renderFlow();
+
+    await act(async () => button(el, 'Get started').click());
+    await choose(el, 'Join an existing server');
+    await act(async () => button(el, 'Continue').click());
+    await type(field(el, 'Server address')!, 'https://switch-gateway.example.com');
+    await choose(el, 'Sign in to this server');
+
+    expect(el.textContent).toContain('answered with a web page, not the Switch server.');
+    expect(field(el, 'Server address')).not.toBeNull();
+  });
+
+  it('asks for a full address before it will go on', async () => {
+    const el = await renderFlow();
+
+    await act(async () => button(el, 'Get started').click());
+    await choose(el, 'Join an existing server');
+    await act(async () => button(el, 'Continue').click());
+    await type(field(el, 'Server address')!, 'switch.example.com');
+
+    expect(el.textContent).toContain('Enter a full address, e.g. https://switch.example.com');
+    const submit = [...el.querySelectorAll<HTMLButtonElement>('button')].find((b) =>
+      b.textContent?.includes('Sign in to this server')
+    );
+    expect(submit?.disabled).toBe(true);
+  });
+
+  it('edits a connection through its one address', async () => {
+    updateServer.mockResolvedValue({
+      server: { id: 'srv-1', name: 'Team', url: 'https://new.example.com', dashboardUrl: null },
+      propagation: { urlChanged: true, agents: [] },
+    });
+    const onSuccess = vi.fn();
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+    await act(async () =>
+      root!.render(
+        <Dialog open>
+          <DialogContent>
+            <ExternalServerStep
+              initialUrl="https://switch.example.com"
+              initialName="Team"
+              serverId="srv-1"
+              isEdit
+              firstRun={false}
+              existing={null}
+              onSuccess={onSuccess}
+              onClose={vi.fn()}
+              onBack={null}
+              onConnected={vi.fn()}
+            />
+          </DialogContent>
+        </Dialog>
+      )
+    );
+    // The dialog renders into a portal on the body, not inside the container.
+    const el = document.body;
+
+    expect(el.textContent).toContain('Edit connection');
+    expect(field(el, 'Server address')?.value).toBe('https://switch.example.com');
+    expect(field(el, 'Gateway URL')).toBeNull();
+    expect(field(el, 'API URL')).toBeNull();
+
+    await type(field(el, 'Server address')!, 'https://new.example.com');
+    await choose(el, 'Save changes');
+
+    expect(updateServer).toHaveBeenCalledWith('srv-1', 'Team', 'https://new.example.com');
+    expect(onSuccess).toHaveBeenCalledOnce();
   });
 });

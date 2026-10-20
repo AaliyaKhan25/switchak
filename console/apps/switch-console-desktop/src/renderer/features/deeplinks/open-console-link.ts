@@ -46,8 +46,11 @@ function serverFor(link: ConsoleLink): string | null {
     return active;
   }
   const origin = originOf(link.server);
+  // An older server's link may name the separate host its dashboard is on.
   const match = switchServersStore.servers.find(
-    (server) => origin !== null && originOf(server.gatewayUrl) === origin
+    (server) =>
+      origin !== null &&
+      [server.url, server.dashboardUrl].some((own) => own !== null && originOf(own) === origin)
   );
   if (!match) {
     toast.error('Could not open that link', {

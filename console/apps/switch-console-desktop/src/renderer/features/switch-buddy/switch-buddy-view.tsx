@@ -1,4 +1,4 @@
-import { MessageSquare } from 'lucide-react';
+import { ChevronDown, MessageSquare } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
 import { type ReactNode, useEffect } from 'react';
 import type { GuardResult, ViewDefinition } from '@renderer/app/view-registry';
@@ -10,7 +10,6 @@ import { Titlebar } from '@renderer/lib/components/titlebar/Titlebar';
 import { TitlebarBreadcrumb } from '@renderer/lib/components/titlebar/titlebar-breadcrumb';
 import { useParams } from '@renderer/lib/layout/navigation-provider';
 import { showModal } from '@renderer/lib/modal/modal-provider';
-import { SegmentedControl } from '@renderer/lib/ui/segmented-control';
 import { BuddyAvatar } from './buddy-avatar';
 import { expectedBuddyName, firstNameOf, isBuddy } from './buddy-identity';
 import { reportBuddyStep } from './buddy-telemetry';
@@ -19,37 +18,27 @@ import { BUDDY_CHAT_NAME, openBuddyChat } from './open-buddy';
 
 type SwitchBuddyParams = { serverId: string };
 
-const TABS = [{ value: 'chats', label: 'Chats' }] as const;
-
-/** The agent page's title bar, for an agent that has only its Chats tab so far. */
+/** The agent page's title bar, as it will be with the Welcome chat open. */
 const SwitchBuddyTitlebar = observer(function SwitchBuddyTitlebar() {
   const { params } = useParams('switchBuddy');
   const user = switchServersStore.statusFor(params.serverId)?.user ?? null;
   return (
     <Titlebar
-      className="border-b border-border"
-      leftClassName="w-[300px] shrink-0 self-stretch border-r border-border"
+      className="border-b border-border pr-[7px]"
+      leftClassName="w-[300px] shrink-0 self-stretch border-r border-border [-webkit-app-region:drag]"
       leftSlot={
-        <div className="flex min-w-0 items-center gap-3">
-          <TitlebarBreadcrumb
-            crumbs={[
-              {
-                key: 'agent',
-                icon: <BuddyAvatar size={16} shape="round" />,
-                label: expectedBuddyName(user),
-                maxWidthClassName: 'max-w-40',
-              },
-            ]}
-          />
-          <SegmentedControl
-            value="chats"
-            onChange={() => {}}
-            options={TABS}
-            ariaLabel="Agent view"
-          />
-        </div>
+        <TitlebarBreadcrumb
+          crumbs={[
+            {
+              key: 'agent',
+              icon: <BuddyAvatar size={16} shape="round" />,
+              label: expectedBuddyName(user),
+              maxWidthClassName: 'max-w-none',
+            },
+          ]}
+        />
       }
-      rightClassName="min-w-0 flex-1 justify-between gap-3 pl-4"
+      rightClassName="min-w-0 flex-1 justify-between gap-3 pl-4 [-webkit-app-region:drag]"
       rightSlot={<span className="truncate text-sm font-medium">{BUDDY_CHAT_NAME}</span>}
     />
   );
@@ -58,7 +47,10 @@ const SwitchBuddyTitlebar = observer(function SwitchBuddyTitlebar() {
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section aria-label={title} className="flex flex-col gap-[2px] pb-3">
-      <p className="px-1 pb-1 text-xs font-medium text-foreground-muted">{title}</p>
+      <p className="flex items-center gap-1 pb-1 text-xs font-medium text-foreground-muted">
+        <ChevronDown className="size-3.5" />
+        {title}
+      </p>
       {children}
     </section>
   );
