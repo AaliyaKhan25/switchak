@@ -1828,7 +1828,23 @@ version of their own to them without also giving them a release of their own.
 
 ### [Unreleased]
 
+### [0.40.0] - 2026-10-20
+
 #### Added
+- **Chat-first Console backed by Switch rooms.** Console leads with agents and
+  rooms and a chat view, with a room summary shown in place and quieter tool
+  activity in chats (#716, #934).
+- **Guided first-run onboarding with switch-buddy.** A fresh install walks
+  through onboarding and ends in a chat with switch-buddy — an assistant that
+  knows its context and can hand you Console links — with an intro animation
+  and page entrances (#879, #915, #942, #932, #930).
+- **Run a local Switch server without Docker** (#915).
+- **Delete my account** from Console (#915).
+- **Stable ships with onboarding and the managed server's feature flags on
+  (Switch Cloud off).** A stable build now shows the first-run onboarding, and
+  the Switch server Console manages starts with agent management, agent chats,
+  switch-buddy, follow-the-conversation and service connections enabled. Switch
+  Cloud stays off in stable.
 - **The server's operator sets up connector apps in Console.** For the
   operator, the Admin page has a Connector apps section under Server, below
   the workspace's switches: the GitHub App and Google Workspace's OAuth
