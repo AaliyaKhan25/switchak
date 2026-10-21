@@ -29,6 +29,9 @@ export const chatSummarySchema = z.object({
   canManage: z.boolean(),
   /** The viewer owns one of the agents, which keeps them in the room: they cannot leave it. */
   ownsAgent: z.boolean().default(false),
+  /** The people in the chat, by user id, sorted. */
+  memberUserIds: z.array(z.string()),
+  memberCount: z.number().int(),
   lastMessage: z
     .object({
       seq: z.number().int(),

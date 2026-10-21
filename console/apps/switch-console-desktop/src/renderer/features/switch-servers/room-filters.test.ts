@@ -61,7 +61,7 @@ const chat = (roomId: string, extra: Partial<ChatSummary> = {}): ChatSummary => 
   channelName: null,
   agents: [agent],
   canManage: false,
-  ownsAgent: false,
+  ownsAgent: false, memberUserIds: [], memberCount: 0,
   lastMessage: null,
   ...extra,
 });

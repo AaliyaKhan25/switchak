@@ -10,7 +10,7 @@ const makeChat = (overrides: Partial<ChatSummary> = {}): ChatSummary => ({
   channelName: null,
   agents: [{ id: 'agent-1', name: 'Agent', displayName: null, iconUrl: null, provider: null, alias: null, ownerName: null, ownedByViewer: false }],
   canManage: false,
-  ownsAgent: false,
+  ownsAgent: false, memberUserIds: [], memberCount: 0,
   lastMessage: null,
   ...overrides,
 });

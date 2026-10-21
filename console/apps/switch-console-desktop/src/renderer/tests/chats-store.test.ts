@@ -22,7 +22,7 @@ function summary(roomId: string, seq: number): ChatSummary {
     channelName: null,
     agents: [{ id: 'a1', name: 'ada', displayName: null, iconUrl: null, provider: null, alias: null, ownerName: null, ownedByViewer: false }],
     canManage: true,
-    ownsAgent: false,
+    ownsAgent: false, memberUserIds: [], memberCount: 0,
     lastMessage: { seq, sentAt: '2026-01-01T00:00:00Z', preview: 'hi', senderName: 'Ada' },
   };
 }
@@ -282,24 +282,6 @@ async function viewer() {
 }
 
 describe('ChatsStore membership', () => {
-  it('tells a viewer with the chat open when the feed changes it, without reopening', async () => {
-    const alice = await viewer();
-    const bob = await viewer();
-    const seen = { alice: 0, bob: 0 };
-    const stopAlice = alice.store.onChatChange('g', () => seen.alice++);
-    const stopBob = bob.store.onChatChange('g', () => seen.bob++);
-    // The server re-announces the chat to both members after Alice changes it.
-    const changed = { ...bob.group, agents: [] };
-    alice.push(changed);
-    bob.push(changed);
-    bob.push({ ...changed, roomId: 'other' });
-    expect(seen).toEqual({ alice: 1, bob: 1 });
-    stopBob();
-    bob.push({ ...changed, name: 'renamed' });
-    expect(seen.bob).toBe(1);
-    stopAlice();
-  });
-
   it('keeps both of two quick agent removals and a feed update in between', async () => {
     const { store, push, group } = await viewer();
     const a = (id: string) => ({ ...group.agents[0], id });

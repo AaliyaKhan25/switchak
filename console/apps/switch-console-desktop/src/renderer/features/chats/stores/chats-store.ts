@@ -243,15 +243,6 @@ export class ChatsStore {
       });
   }
 
-  /**
-   * Calls `onChange` whenever the chat's summary changes on the feed or from
-   * here, which is when what is known of its membership may have moved.
-   * Returns the disposer.
-   */
-  onChatChange(roomId: string, onChange: () => void): () => void {
-    return reaction(() => this.chats.get(roomId), onChange);
-  }
-
   /** The chats an agent is in, newest activity first. */
   chatsOfAgent(agentId: string): ChatSummary[] {
     return [...this.chats.values()]

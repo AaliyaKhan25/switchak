@@ -11,7 +11,7 @@ function summary(roomId: string, channelType: ChatSummary['channelType'] = 'dire
     channelName: null,
     agents: [{ id: 'a1', name: 'ada', displayName: null, iconUrl: null, provider: null, alias: null, ownerName: null, ownedByViewer: false }],
     canManage: true,
-    ownsAgent: false,
+    ownsAgent: false, memberUserIds: [], memberCount: 0,
     lastMessage: null,
   };
 }

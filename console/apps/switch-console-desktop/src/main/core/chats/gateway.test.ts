@@ -29,7 +29,7 @@ function row(roomId: string, channelType: string) {
     channelName: null,
     agents: [],
     canManage: true,
-    ownsAgent: false,
+    ownsAgent: false, memberUserIds: [], memberCount: 0,
     lastMessage: null,
   };
 }

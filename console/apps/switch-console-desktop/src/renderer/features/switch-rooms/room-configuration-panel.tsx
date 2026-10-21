@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ExternalLink, FileText, Loader2, Plus, RefreshCw, Search, X } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { opensAsConsoleChat } from '@renderer/features/chats/console-chat-redirect';
 import { chatFailure } from '@renderer/features/chats/stores/chat-errors';
 import { chatsStore } from '@renderer/features/chats/stores/chats';
@@ -94,6 +94,14 @@ const ChatConfiguration = observer(function ChatConfiguration({
   );
 });
 
+/**
+ * The query for a chat's members, keyed on who the live summary says is in it,
+ * so an add, a removal or a swap by anyone reads the list again.
+ */
+export function chatMembersQueryKey(serverId: string, chat: ChatSummary) {
+  return ['chat-members', serverId, chat.roomId, chat.memberUserIds.join(',')] as const;
+}
+
 /** Who is in a group chat; a manager adds and removes agents and people through the chat. */
 const ChatParticipantsSection = observer(function ChatParticipantsSection({
   serverId,
@@ -106,18 +114,11 @@ const ChatParticipantsSection = observer(function ChatParticipantsSection({
 }) {
   const queryClient = useQueryClient();
   const roomId = chat.roomId;
-  const membersKey = ['chat-members', serverId, roomId] as const;
+  const membersKey = chatMembersQueryKey(serverId, chat);
   const members = useQuery({
     queryKey: membersKey,
     queryFn: () => rpc.chats.members(serverId, roomId),
   });
-  useEffect(
-    () =>
-      chatsStore.onChatChange(roomId, () => {
-        void queryClient.invalidateQueries({ queryKey: ['chat-members', serverId, roomId] });
-      }),
-    [queryClient, serverId, roomId]
-  );
   const [adding, setAdding] = useState<'agent' | 'person' | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);

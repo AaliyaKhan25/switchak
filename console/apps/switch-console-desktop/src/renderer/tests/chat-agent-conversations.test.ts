@@ -22,7 +22,7 @@ const summary = (overrides: Partial<ChatSummary>): ChatSummary => ({
   channelName: null,
   agents: [],
   canManage: false,
-  ownsAgent: false,
+  ownsAgent: false, memberUserIds: [], memberCount: 0,
   lastMessage: null,
   ...overrides,
 });
