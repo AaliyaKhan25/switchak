@@ -127,6 +127,10 @@ export const CreateRoomModal = observer(function CreateRoomModal({
   const noneRunning = loaded && allBridges.length > 0 && activeBridges.length === 0;
   const noneCanCreateChannels = loaded && activeBridges.length > 0 && bridges.length === 0;
 
+  // A chat is driven through the server, not this install, so any agent in the
+  // workspace may be offered; the server refuses one the person may not use.
+  const pickableAgents = selectedBridge ? invitableAgents : (agentsQuery.data ?? []);
+
   const trimmedName = name.trim();
   const canSubmit =
     workspaceId !== null &&
@@ -346,7 +350,7 @@ export const CreateRoomModal = observer(function CreateRoomModal({
             )}
 
             <PickerCombobox
-              items={invitableAgents.filter((a) => !agents.some((s) => s.id === a.id))}
+              items={pickableAgents.filter((a) => !agents.some((s) => s.id === a.id))}
               onPick={(next) => setAgents((current) => [...current, next])}
               searchText={(item) => item.name}
               renderItem={(item) => (
