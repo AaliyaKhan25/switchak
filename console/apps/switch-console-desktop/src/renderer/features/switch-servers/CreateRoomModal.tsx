@@ -1,6 +1,9 @@
 import { useQuery } from '@tanstack/react-query';
+import { MessagesSquare } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
 import { useCallback, useState } from 'react';
+import { chatFailure } from '@renderer/features/chats/stores/chat-errors';
+import { chatsStore } from '@renderer/features/chats/stores/chats';
 import { agentsStore } from '@renderer/features/locations/stores/agents-store';
 import { useManagedAgents } from '@renderer/features/managed-agents/use-managed-agents';
 import { openRoomView } from '@renderer/features/sidebar/sidebar-room-grouping';
@@ -12,7 +15,7 @@ import {
   ChosenAgentTile,
   agentProviderLabelFor,
 } from '@renderer/lib/components/agent-picker';
-import { BridgeTile, bridgeUnusableReason } from '@renderer/lib/components/bridge-tile';
+import { BridgeTile, bridgeUnusableReason, ChoiceTile } from '@renderer/lib/components/bridge-tile';
 import { PickerCombobox } from '@renderer/lib/components/picker-combobox';
 import { failureText } from '@renderer/lib/errors/describe-failure';
 import { rpc } from '@renderer/lib/ipc';
@@ -30,6 +33,7 @@ import { DisclosureRow } from '@renderer/lib/ui/disclosure-row';
 import { Input } from '@renderer/lib/ui/input';
 import { Textarea } from '@renderer/lib/ui/textarea';
 import type { RemoteAgentSummary } from '@shared/core/switch-servers/switch-servers';
+import { canCreate, roomCreateRequest } from './room-create-request';
 import { switchServersStore } from './switch-servers-store';
 import { useMyIdentities } from './use-my-identities';
 
@@ -59,6 +63,7 @@ export const CreateRoomModal = observer(function CreateRoomModal({
   const [description, setDescription] = useState('');
   const [instructions, setInstructions] = useState('');
   const [instructionsOpen, setInstructionsOpen] = useState(false);
+  /** The chosen messaging app; null is Switch Console, the default, which needs none. */
   const [bridgeId, setBridgeId] = useState<string | null>(null);
   const [agents, setAgents] = useState<RemoteAgentSummary[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -116,40 +121,44 @@ export const CreateRoomModal = observer(function CreateRoomModal({
   const allBridges = bridgesQuery.data ?? [];
   const activeBridges = allBridges.filter((b) => b.status === 'active');
   const bridges = activeBridges.filter((b) => b.canCreateChannels);
-  const selectedBridge =
-    bridges.find((b) => b.id === bridgeId) ??
-    bridges.find((b) => b.isDefault) ??
-    bridges[0] ??
-    null;
+  const selectedBridge = bridges.find((b) => b.id === bridgeId) ?? null;
   const loaded = !bridgesQuery.isLoading;
   const noBridgesAtAll = loaded && allBridges.length === 0;
   const noneRunning = loaded && allBridges.length > 0 && activeBridges.length === 0;
   const noneCanCreateChannels = loaded && activeBridges.length > 0 && bridges.length === 0;
 
   const trimmedName = name.trim();
-  const trimmedDescription = description.trim();
   const canSubmit =
     workspaceId !== null &&
-    !!trimmedName &&
-    !!trimmedDescription &&
-    !!selectedBridge &&
+    canCreate({ bridgeId: selectedBridge?.id ?? null, name, description }) &&
     !isSubmitting;
 
   const handleSubmit = useCallback(async () => {
-    if (!canSubmit || !selectedBridge) return;
+    if (!canSubmit) return;
     setIsSubmitting(true);
     setCloseGuard(true);
     setError(null);
 
     try {
-      const result = await rpc.workspaces.createRoom({
+      const request = roomCreateRequest({
+        serverId,
         workspaceId: workspaceId as string,
-        name: trimmedName,
-        description: trimmedDescription,
-        instructions: instructions.trim() || undefined,
-        bridgeId: selectedBridge.id,
+        bridgeId: selectedBridge?.id ?? null,
+        name,
+        description,
+        instructions,
         agentIds: agents.map((a) => a.id),
+        requestId: crypto.randomUUID(),
       });
+      if (request.kind === 'chat') {
+        const chat = await rpc.chats.create(request.params);
+        chatsStore.add(serverId, chat);
+        sidebarStore.setGrouping('room');
+        openRoomView(chat.roomId);
+        onSuccess({ roomId: chat.roomId });
+        return;
+      }
+      const result = await rpc.workspaces.createRoom(request.params);
 
       if (result.kind !== 'created') {
         setError(messageFor(result));
@@ -174,7 +183,11 @@ export const CreateRoomModal = observer(function CreateRoomModal({
 
       onSuccess({ roomId: result.room.id });
     } catch (cause) {
-      setError(failureText(cause, 'Could not create the room.'));
+      setError(
+        selectedBridge
+          ? failureText(cause, 'Could not create the room.')
+          : chatFailure(cause).message
+      );
     } finally {
       setIsSubmitting(false);
       setCloseGuard(false);
@@ -182,9 +195,10 @@ export const CreateRoomModal = observer(function CreateRoomModal({
   }, [
     canSubmit,
     selectedBridge,
+    serverId,
     workspaceId,
-    trimmedName,
-    trimmedDescription,
+    name,
+    description,
     instructions,
     agents,
     onSuccess,
@@ -220,6 +234,17 @@ export const CreateRoomModal = observer(function CreateRoomModal({
               </span>
             </div>
             <div className="grid grid-cols-2 gap-2.5">
+              <ChoiceTile
+                icon={<MessagesSquare className="size-5 text-foreground-muted" />}
+                title="Switch Console"
+                disabled={false}
+                selected={selectedBridge === null}
+                onSelect={() => setBridgeId(null)}
+              >
+                <span className="truncate text-xs text-foreground-muted">
+                  Chat here, no messaging app
+                </span>
+              </ChoiceTile>
               {allBridges.map((bridge) => (
                 <BridgeTile
                   key={bridge.id}
@@ -233,19 +258,19 @@ export const CreateRoomModal = observer(function CreateRoomModal({
               ))}
             </div>
             {noBridgesAtAll && (
-              <p className="text-xs text-destructive">
-                This server has no messaging app connected, so a room created here would be
-                unreachable. Connect one first.
+              <p className="text-xs text-foreground-muted">
+                This server has no messaging app connected, so a room here is a Switch Console chat.
+                Connect one to bridge rooms to it.
               </p>
             )}
             {noneRunning && (
-              <p className="text-xs text-destructive">
-                This server&apos;s messaging apps are not running, so a room created here would be
-                unreachable. Start one, or connect another.
+              <p className="text-xs text-foreground-muted">
+                This server&apos;s messaging apps are not running, so a room here is a Switch
+                Console chat. Start one, or connect another, to bridge rooms to it.
               </p>
             )}
             {noneCanCreateChannels && (
-              <p className="text-xs text-destructive">
+              <p className="text-xs text-foreground-muted">
                 None of the running messaging apps can create a channel from Switch. Make the chat
                 directly in the messaging app instead and add the app&apos;s bot to it — it becomes
                 a room here once it exists.
@@ -280,17 +305,20 @@ export const CreateRoomModal = observer(function CreateRoomModal({
               )}
             </FormRow>
 
-            <FormRow label="Description">
-              <Input
-                placeholder="What this room is for"
-                value={description}
-                onChange={(e) => {
-                  setDescription(e.target.value);
-                  setError(null);
-                }}
-                onKeyDown={submitOnEnter}
-              />
-            </FormRow>
+            {/* A chat has no description or instructions of its own to create with. */}
+            {selectedBridge && (
+              <FormRow label="Description">
+                <Input
+                  placeholder="What this room is for"
+                  value={description}
+                  onChange={(e) => {
+                    setDescription(e.target.value);
+                    setError(null);
+                  }}
+                  onKeyDown={submitOnEnter}
+                />
+              </FormRow>
+            )}
           </div>
 
           <section className="flex flex-col gap-3">
@@ -338,23 +366,25 @@ export const CreateRoomModal = observer(function CreateRoomModal({
             </span>
           </section>
 
-          <div>
-            <DisclosureRow
-              open={instructionsOpen}
-              title="Instructions"
-              meta="shown to agents when they enter"
-              onToggle={() => setInstructionsOpen((v) => !v)}
-            />
-            {instructionsOpen && (
-              <Textarea
-                className="mt-3"
-                placeholder="Optional guidance shown to agents when they enter a room"
-                value={instructions}
-                onChange={(e) => setInstructions(e.target.value)}
-                rows={3}
+          {selectedBridge && (
+            <div>
+              <DisclosureRow
+                open={instructionsOpen}
+                title="Instructions"
+                meta="shown to agents when they enter"
+                onToggle={() => setInstructionsOpen((v) => !v)}
               />
-            )}
-          </div>
+              {instructionsOpen && (
+                <Textarea
+                  className="mt-3"
+                  placeholder="Optional guidance shown to agents when they enter a room"
+                  value={instructions}
+                  onChange={(e) => setInstructions(e.target.value)}
+                  rows={3}
+                />
+              )}
+            </div>
+          )}
 
           {error && <p className="text-xs text-destructive">{error}</p>}
         </div>
