@@ -291,6 +291,36 @@ async def test_removing_a_person_updates_the_others_summary(chats: _Harness) -> 
     await events.stream.aclose()  # type: ignore[attr-defined]
 
 
+async def test_swapping_one_person_for_another_updates_the_summary(
+    chats: _Harness,
+) -> None:
+    created = await chats.client.post(
+        "/chats",
+        json={"agentIds": [], "memberUserIds": [chats.bob.id], "requestId": "c1"},
+        headers=chats.as_user(chats.alice),
+    )
+    room_id = created.json()["chat"]["roomId"]
+    assert created.json()["chat"]["memberUserIds"] == sorted(
+        [chats.alice.id, chats.bob.id]
+    )
+
+    events = _stream(chats, chats.alice, {}, recheck=60.0)
+    assert (await events.next())[0] == "chat"
+    assert (await events.next())[0] == "ready"
+
+    removed = await chats.client.delete(
+        f"/chats/{room_id}/members/{chats.bob.id}", headers=chats.as_user(chats.alice)
+    )
+    assert removed.status_code == 204
+    assert (await chats.invite(chats.alice, room_id, chats.admin)).status_code == 200
+    # The stream reads both changes in one pass: same count, other people.
+    name, summary = await events.next()
+    assert name == "chat"
+    assert summary["memberUserIds"] == sorted([chats.alice.id, chats.admin.id])
+    assert summary["memberCount"] == 2
+    await events.stream.aclose()  # type: ignore[attr-defined]
+
+
 # ── Creating with people ─────────────────────────────────────────────────────
 
 
