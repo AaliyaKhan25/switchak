@@ -3,8 +3,10 @@ import { gatewayFetch } from '@main/core/switch-servers/gateway-client';
 import type { SwitchServer } from '@shared/core/switch-servers/switch-servers';
 import {
   addChatAgent,
+  addChatMember,
   createChat,
   fetchThreadMessages,
+  listWorkspaceMembers,
   parseChatRows,
   removeChatAgent,
   sendChatMessage,
@@ -128,6 +130,38 @@ describe('removeChatAgent', () => {
     expect(gatewayFetch).toHaveBeenCalledWith(server, '/chats/room-1/agents/agent-2', {
       authenticated: true,
       method: 'DELETE',
+    });
+  });
+});
+
+describe('chat members', () => {
+  it('adds a person and answers with the members', async () => {
+    const server = { id: 'server-1' } as SwitchServer;
+    vi.mocked(gatewayFetch).mockResolvedValueOnce(
+      new Response(JSON.stringify({ members: [{ userId: 'u2', name: 'Bob', isOwner: false }] }), {
+        status: 200,
+      })
+    );
+    expect(await addChatMember(server, 'room-1', 'u2')).toEqual([
+      { userId: 'u2', name: 'Bob', isOwner: false },
+    ]);
+    expect(gatewayFetch).toHaveBeenCalledWith(server, '/chats/room-1/members', {
+      authenticated: true,
+      method: 'POST',
+      body: { userId: 'u2' },
+    });
+  });
+
+  it('reads the workspace roster in its snake_case shape', async () => {
+    const server = { id: 'server-1' } as SwitchServer;
+    vi.mocked(gatewayFetch).mockResolvedValueOnce(
+      new Response(JSON.stringify([{ user_id: 'u2', name: 'Bob', email: null, role: 'member' }]), {
+        status: 200,
+      })
+    );
+    expect(await listWorkspaceMembers(server, 't-1')).toEqual([{ userId: 'u2', name: 'Bob' }]);
+    expect(gatewayFetch).toHaveBeenCalledWith(server, '/tenants/t-1/members', {
+      authenticated: true,
     });
   });
 });

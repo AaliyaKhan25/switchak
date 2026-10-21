@@ -25,6 +25,10 @@ import {
   type ChatUpload,
   chatUploadSchema,
   chatAgentAddedSchema,
+  type ChatMember,
+  chatMemberListSchema,
+  type WorkspaceMember,
+  workspaceMemberSchema,
 } from '@shared/core/chats/chats';
 import type { SwitchServer } from '@shared/core/switch-servers/switch-servers';
 
@@ -160,6 +164,45 @@ export async function removeChatAgent(
   agentId: string
 ): Promise<void> {
   await call(server, `${room(roomId)}/agents/${encodeURIComponent(agentId)}`, { method: 'DELETE' });
+}
+
+export async function listChatMembers(server: SwitchServer, roomId: string): Promise<ChatMember[]> {
+  return (await json(server, `${room(roomId)}/members`, chatMemberListSchema)).members;
+}
+
+export async function addChatMember(
+  server: SwitchServer,
+  roomId: string,
+  userId: string
+): Promise<ChatMember[]> {
+  return (
+    await json(server, `${room(roomId)}/members`, chatMemberListSchema, {
+      method: 'POST',
+      body: { userId },
+    })
+  ).members;
+}
+
+export async function removeChatMember(
+  server: SwitchServer,
+  roomId: string,
+  userId: string
+): Promise<void> {
+  await call(server, `${room(roomId)}/members/${encodeURIComponent(userId)}`, {
+    method: 'DELETE',
+  });
+}
+
+/** The workspace's roster, the people a chat can be opened to. */
+export async function listWorkspaceMembers(
+  server: SwitchServer,
+  tenantId: string
+): Promise<WorkspaceMember[]> {
+  return json(
+    server,
+    `/tenants/${encodeURIComponent(tenantId)}/members`,
+    workspaceMemberSchema.array()
+  );
 }
 
 export async function sendChatMessage(

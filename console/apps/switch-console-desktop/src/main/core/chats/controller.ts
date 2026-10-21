@@ -16,12 +16,14 @@ import type {
   RoomActivity,
 } from '@shared/core/chats/activity';
 import type {
+  ChatMember,
   ChatMessage,
   ChatMessagesPage,
   ChatSendInput,
   ChatSummary,
   ChatUpload,
   ChatUploadInput,
+  WorkspaceMember,
 } from '@shared/core/chats/chats';
 import { createRPCController } from '@shared/lib/ipc/rpc';
 import { type ActivityDeps, resolveChatActivity } from './activity';
@@ -34,6 +36,7 @@ import {
 import { generateChatTitle } from './chat-title';
 import {
   addChatAgent,
+  addChatMember,
   answerChatApproval,
   archiveChat,
   createChat,
@@ -41,8 +44,11 @@ import {
   fetchChatMessages,
   fetchRoomActivity,
   fetchThreadMessages,
+  listChatMembers,
   listChats,
+  listWorkspaceMembers,
   removeChatAgent,
+  removeChatMember,
   renameChat,
   sendChatControl,
   sendChatMessage,
@@ -165,18 +171,27 @@ export const chatsController = createRPCController({
       );
     return chat;
   },
-  addAgent: (params: {
-    serverId: string;
-    roomId: string;
-    agentId: string;
-  }): Promise<ChatSummary> =>
+  addAgent: (params: { serverId: string; roomId: string; agentId: string }): Promise<ChatSummary> =>
     onServer(params.serverId, (server) => addChatAgent(server, params.roomId, params.agentId)),
-  removeAgent: (params: {
+  removeAgent: (params: { serverId: string; roomId: string; agentId: string }): Promise<void> =>
+    onServer(params.serverId, (server) => removeChatAgent(server, params.roomId, params.agentId)),
+  members: (serverId: string, roomId: string): Promise<ChatMember[]> =>
+    onServer(serverId, (server) => listChatMembers(server, roomId)),
+  addMember: (params: {
     serverId: string;
     roomId: string;
-    agentId: string;
-  }): Promise<void> =>
-    onServer(params.serverId, (server) => removeChatAgent(server, params.roomId, params.agentId)),
+    userId: string;
+  }): Promise<ChatMember[]> =>
+    onServer(params.serverId, (server) => addChatMember(server, params.roomId, params.userId)),
+  removeMember: (params: { serverId: string; roomId: string; userId: string }): Promise<void> =>
+    onServer(params.serverId, (server) => removeChatMember(server, params.roomId, params.userId)),
+  /** The people of the window's workspace on the server, who a chat can be opened to. */
+  workspaceMembers: async (serverId: string): Promise<WorkspaceMember[]> => {
+    const workspace = await requireWorkspaceForServer(serverId);
+    if (!workspace.tenantId) throw new Error('This workspace has no tenant to list people from.');
+    const tenantId = workspace.tenantId;
+    return onServer(serverId, (server) => listWorkspaceMembers(server, tenantId));
+  },
   messages: (params: {
     serverId: string;
     roomId: string;

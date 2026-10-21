@@ -2,7 +2,11 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ExternalLink, FileText, Loader2, Plus, RefreshCw, Search, X } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
 import { useState } from 'react';
+import { opensAsConsoleChat } from '@renderer/features/chats/console-chat-redirect';
+import { chatFailure } from '@renderer/features/chats/stores/chat-errors';
+import { chatsStore } from '@renderer/features/chats/stores/chats';
 import { agentsStore } from '@renderer/features/locations/stores/agents-store';
+import { isConsoleGroupChatSummary } from '@renderer/features/switch-servers/room-filters';
 import { switchRoomsStore } from '@renderer/features/switch-servers/switch-rooms-store';
 import { workspacesStore } from '@renderer/features/workspaces/workspaces-store';
 import { AgentAvatar } from '@renderer/lib/components/agent-avatar';
@@ -22,6 +26,8 @@ import {
 } from '@renderer/lib/ui/input-group';
 import { Textarea } from '@renderer/lib/ui/textarea';
 import { cn } from '@renderer/utils/utils';
+import { agentInitials } from '@shared/core/agents/agent-avatar';
+import { type ChatSummary, chatAgentLabel } from '@shared/core/chats/chats';
 import { providerDisplayName } from '@shared/core/providers/agent-provider-registry';
 import type {
   RemoteAgentSummary,
@@ -43,9 +49,256 @@ function useRoomDetail(roomId: string) {
   const query = useQuery({
     queryKey: roomDetailKey(workspaceId ?? '', roomId),
     queryFn: () => rpc.workspaces.getRoomDetail({ workspaceId: workspaceId as string, roomId }),
-    enabled: workspaceId !== null,
+    enabled: workspaceId !== null && !opensAsConsoleChat(roomId),
   });
   return { workspaceId, query };
+}
+
+/**
+ * A group chat's settings, read from the chat rather than the room list, which
+ * an invited person is not on. Description and instructions are the room's,
+ * shown only to someone who may manage the chat and so may read and write them.
+ */
+const ChatConfiguration = observer(function ChatConfiguration({
+  serverId,
+  chat,
+}: {
+  serverId: string;
+  chat: ChatSummary;
+}) {
+  const workspaceId = switchRoomsStore.roomWorkspaceId(chat.roomId) ?? workspacesStore.activeId;
+  const detail = useQuery({
+    queryKey: roomDetailKey(workspaceId ?? '', chat.roomId),
+    queryFn: () =>
+      rpc.workspaces.getRoomDetail({ workspaceId: workspaceId as string, roomId: chat.roomId }),
+    enabled: workspaceId !== null && chat.canManage,
+  });
+  return (
+    <div className="h-full overflow-y-auto">
+      <div className="mx-auto flex w-full max-w-[880px] flex-col gap-8 px-10 py-8">
+        <div className="flex min-w-0 flex-col gap-1">
+          <h1 className="truncate text-2xl font-semibold text-foreground">{chat.name}</h1>
+          <p className="text-sm text-foreground-muted">Group chat in Switch Console</p>
+        </div>
+        {workspaceId !== null && detail.data && (
+          <GeneralSection key={chat.roomId} workspaceId={workspaceId} room={detail.data} />
+        )}
+        {detail.isError && (
+          <p className="text-xs text-foreground-muted">
+            {failureText(detail.error, 'Could not read this chat’s description and instructions.')}
+          </p>
+        )}
+        <ChatParticipantsSection serverId={serverId} workspaceId={workspaceId} chat={chat} />
+      </div>
+    </div>
+  );
+});
+
+/** Who is in a group chat; a manager adds and removes agents and people through the chat. */
+const ChatParticipantsSection = observer(function ChatParticipantsSection({
+  serverId,
+  workspaceId,
+  chat,
+}: {
+  serverId: string;
+  workspaceId: string | null;
+  chat: ChatSummary;
+}) {
+  const queryClient = useQueryClient();
+  const roomId = chat.roomId;
+  const membersKey = ['chat-members', serverId, roomId] as const;
+  const members = useQuery({
+    queryKey: membersKey,
+    queryFn: () => rpc.chats.members(serverId, roomId),
+  });
+  const [adding, setAdding] = useState<'agent' | 'person' | null>(null);
+  const [removing, setRemoving] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const people = members.data ?? [];
+  const agentIds = chat.agents.map((agent) => agent.id);
+
+  async function remove(id: string, action: () => Promise<void>) {
+    setRemoving(id);
+    setError(null);
+    try {
+      await action();
+    } catch (cause) {
+      setError(`Not removed — ${chatFailure(cause).message}`);
+    } finally {
+      setRemoving(null);
+    }
+  }
+  const manage: ManageParticipants | null = chat.canManage
+    ? {
+        removing,
+        removeAgent: (agentId) =>
+          void remove(agentId, async () => {
+            await rpc.chats.removeAgent({ serverId, roomId, agentId });
+            chatsStore.add(serverId, {
+              ...chat,
+              agents: chat.agents.filter((agent) => agent.id !== agentId),
+            });
+          }),
+        // The owner stays: there is no one to hand the chat to.
+        removePerson: (userId) =>
+          people.find((person) => person.userId === userId)?.isOwner
+            ? null
+            : () =>
+                void remove(userId, async () => {
+                  await rpc.chats.removeMember({ serverId, roomId, userId });
+                  await queryClient.invalidateQueries({ queryKey: membersKey });
+                }),
+      }
+    : null;
+
+  return (
+    <section className="flex flex-col gap-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-baseline gap-2">
+          <h2 className="text-sm font-semibold text-foreground">Participants</h2>
+          <span className="text-xs text-foreground-muted">
+            {membershipSummary(agentIds.length, people.length)}
+          </span>
+        </div>
+        {chat.canManage && (
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              aria-expanded={adding === 'agent'}
+              onClick={() => setAdding((v) => (v === 'agent' ? null : 'agent'))}
+            >
+              <Plus className="size-3.5" />
+              Add agent
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              aria-expanded={adding === 'person'}
+              onClick={() => setAdding((v) => (v === 'person' ? null : 'person'))}
+            >
+              <Plus className="size-3.5" />
+              Add person
+            </Button>
+          </div>
+        )}
+      </div>
+
+      {members.isError && (
+        <p className="text-xs text-destructive">{chatFailure(members.error).message}</p>
+      )}
+      {error !== null && <p className="text-xs text-destructive">{error}</p>}
+
+      <ParticipantList
+        workspaceId={workspaceId}
+        agentIds={agentIds}
+        agentNames={new Map(chat.agents.map((agent) => [agent.id, chatAgentLabel(agent)]))}
+        people={people.map((person) => ({
+          id: person.userId,
+          name: person.name,
+          detail: person.isOwner ? 'owner' : 'person',
+        }))}
+        manage={manage}
+      />
+
+      {adding === 'agent' && workspaceId !== null && (
+        <ChatAddAgentPanel serverId={serverId} workspaceId={workspaceId} chat={chat} />
+      )}
+      {adding === 'person' && (
+        <ChatAddPersonPanel
+          serverId={serverId}
+          roomId={roomId}
+          memberIds={new Set(people.map((person) => person.userId))}
+          onAdded={(next) => queryClient.setQueryData(membersKey, next)}
+        />
+      )}
+    </section>
+  );
+});
+
+/** The workspace's agents the viewer can see, any install's; the server decides who may use which. */
+const ChatAddAgentPanel = observer(function ChatAddAgentPanel({
+  serverId,
+  workspaceId,
+  chat,
+}: {
+  serverId: string;
+  workspaceId: string;
+  chat: ChatSummary;
+}) {
+  const agents = useWorkspaceAgents(workspaceId);
+  const inChat = new Set(chat.agents.map((agent) => agent.id));
+  return (
+    <AddParticipantPanel
+      noun="agent"
+      searchPlaceholder="Search agents in this workspace…"
+      allInText="Every agent in this workspace is already in this chat."
+      loading={agents.isPending}
+      loadError={agents.isError ? failureText(agents.error, 'Could not list the agents.') : null}
+      candidates={(agents.data ?? [])
+        .filter((agent) => !inChat.has(agent.id))
+        .map((agent) => ({
+          id: agent.id,
+          name: agent.displayName ?? agent.name,
+          mark: (
+            <AgentAvatar name={agent.name} iconUrl={agent.iconUrl} serverId={serverId} size={22} />
+          ),
+          detail: providerDisplayName(agent.knownAgentType) ?? 'Agent',
+        }))}
+      onAdd={async (agentId) => {
+        try {
+          chatsStore.add(
+            serverId,
+            await rpc.chats.addAgent({ serverId, roomId: chat.roomId, agentId })
+          );
+        } catch (cause) {
+          throw new Error(chatFailure(cause).message);
+        }
+      }}
+    />
+  );
+});
+
+/** The workspace's people not yet in the chat. */
+function ChatAddPersonPanel({
+  serverId,
+  roomId,
+  memberIds,
+  onAdded,
+}: {
+  serverId: string;
+  roomId: string;
+  memberIds: Set<string>;
+  onAdded: (members: Awaited<ReturnType<typeof rpc.chats.addMember>>) => void;
+}) {
+  const roster = useQuery({
+    queryKey: ['workspace-members', serverId],
+    queryFn: () => rpc.chats.workspaceMembers(serverId),
+  });
+  return (
+    <AddParticipantPanel
+      noun="person"
+      searchPlaceholder="Search people in this workspace…"
+      allInText="Everyone in this workspace is already in this chat."
+      loading={roster.isPending}
+      loadError={roster.isError ? failureText(roster.error, 'Could not list the people.') : null}
+      candidates={(roster.data ?? [])
+        .filter((person) => !memberIds.has(person.userId))
+        .map((person) => ({
+          id: person.userId,
+          name: person.name,
+          mark: <PersonMark name={person.name} size="sm" />,
+          detail: 'person',
+        }))}
+      onAdd={async (userId) => {
+        try {
+          onAdded(await rpc.chats.addMember({ serverId, roomId, userId }));
+        } catch (cause) {
+          throw new Error(chatFailure(cause).message);
+        }
+      }}
+    />
+  );
 }
 
 /**
@@ -62,6 +315,14 @@ export const RoomConfigurationPanel = observer(function RoomConfigurationPanel({
   roomId: string;
 }) {
   const { workspaceId, query } = useRoomDetail(roomId);
+  const chat = chatsStore.chat(roomId);
+
+  if (chat && chatsStore.serverId && isConsoleGroupChatSummary(chat)) {
+    return <ChatConfiguration serverId={chatsStore.serverId} chat={chat} />;
+  }
+  if (opensAsConsoleChat(roomId)) {
+    return <PanelNotice title="You no longer have access to this chat." />;
+  }
 
   if (workspaceId === null) {
     return <PanelNotice title="This room’s workspace is still loading." />;
@@ -379,70 +640,234 @@ const ParticipantsSection = observer(function ParticipantsSection({
         </div>
       </div>
 
-      <ParticipantList workspaceId={workspaceId} room={room} />
+      <ParticipantList
+        workspaceId={workspaceId}
+        agentIds={room.agentIds}
+        agentNames={new Map()}
+        people={room.connectedUserNames.map((name) => ({
+          id: `user:${name}`,
+          name,
+          detail: 'person',
+        }))}
+        manage={null}
+      />
 
       {adding && <AddAgentPanel workspaceId={workspaceId} room={room} onAdded={refresh} />}
     </section>
   );
 });
 
-/** The room's members as cards, agents first. */
+type Person = { id: string; name: string; detail: string };
+
+/** Removal from the cards, for someone who may manage the members; `removePerson` is null for one who cannot be removed. */
+type ManageParticipants = {
+  removing: string | null;
+  removeAgent: (agentId: string) => void;
+  removePerson: (id: string) => (() => void) | null;
+};
+
+/** The room's members as cards, agents first. `agentNames` names agents the caller already knows. */
 const ParticipantList = observer(function ParticipantList({
   workspaceId,
-  room,
+  agentIds,
+  agentNames,
+  people,
+  manage,
 }: {
-  workspaceId: string;
-  room: Pick<RemoteRoomDetail, 'agentIds' | 'connectedUserNames'>;
+  workspaceId: string | null;
+  agentIds: string[];
+  agentNames: Map<string, string>;
+  people: Person[];
+  manage: ManageParticipants | null;
 }) {
   // Names for agents belonging to other installs, which this computer has no
   // local record of. Shares its key with the rest of the app, so it is usually
   // already in hand.
   const remoteAgents = useWorkspaceAgents(workspaceId);
   const remoteById = new Map((remoteAgents.data ?? []).map((a) => [a.id, a]));
-  return room.agentIds.length === 0 && room.connectedUserNames.length === 0 ? (
+  return agentIds.length === 0 && people.length === 0 ? (
     <p className="text-sm text-foreground-muted">Nobody is in this room yet.</p>
   ) : (
     <div className="grid grid-cols-2 gap-2.5">
-      {room.agentIds.map((agentId) => (
+      {agentIds.map((agentId) => (
         <ParticipantCard
           key={agentId}
           mark={<AgentMark agentId={agentId} workspaceId={workspaceId} remoteById={remoteById} />}
-          name={agentNameFor(agentId, workspaceId, remoteById)}
+          name={agentNames.get(agentId) ?? agentNameFor(agentId, workspaceId, remoteById)}
           detail={agentKindFor(agentId, workspaceId, remoteById)}
+          removing={manage?.removing === agentId}
+          onRemove={manage && (() => manage.removeAgent(agentId))}
         />
       ))}
-      {room.connectedUserNames.map((name) => (
+      {people.map((person) => (
         <ParticipantCard
-          key={`user:${name}`}
-          mark={
-            <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-[var(--fill-2)] text-xs font-medium text-foreground">
-              {name.charAt(0).toUpperCase()}
-            </span>
-          }
-          name={name}
-          detail="person"
+          key={person.id}
+          mark={<PersonMark name={person.name} size="md" />}
+          name={person.name}
+          detail={person.detail}
+          removing={manage?.removing === person.id}
+          onRemove={manage?.removePerson(person.id) ?? null}
         />
       ))}
     </div>
   );
 });
 
+/** A person's initials disc: people have no picture in Switch. */
+function PersonMark({ name, size }: { name: string; size: 'sm' | 'md' }) {
+  return (
+    <span
+      className={cn(
+        'flex shrink-0 items-center justify-center rounded-full bg-[var(--fill-2)] font-medium text-foreground',
+        size === 'md' ? 'size-7 text-xs' : 'size-[22px] text-[10px]'
+      )}
+    >
+      {agentInitials(name)}
+    </span>
+  );
+}
+
 function ParticipantCard({
   mark,
   name,
   detail,
+  removing,
+  onRemove,
 }: {
   mark: React.ReactNode;
   name: string;
   detail: string;
+  removing: boolean;
+  onRemove: (() => void) | null;
 }) {
   return (
     <div className="flex items-center gap-3 rounded-[10px] border border-border bg-[var(--surface-2)] px-3.5 py-3">
       {mark}
-      <div className="flex min-w-0 flex-col">
+      <div className="flex min-w-0 flex-1 flex-col">
         <span className="truncate text-sm font-medium text-foreground">{name}</span>
         <span className="truncate text-xs text-foreground-muted">{detail}</span>
       </div>
+      {onRemove && (
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          aria-label={`Remove ${name}`}
+          title={`Remove ${name}`}
+          disabled={removing}
+          onClick={onRemove}
+        >
+          {removing ? <Loader2 className="animate-spin" /> : <X />}
+        </Button>
+      )}
+    </div>
+  );
+}
+
+type Candidate = { id: string; name: string; mark: React.ReactNode; detail: string };
+
+/**
+ * A searchable list of who could join, each row adding one. A refusal is shown
+ * in the words `onAdd` threw with.
+ */
+function AddParticipantPanel({
+  noun,
+  searchPlaceholder,
+  allInText,
+  loading,
+  loadError,
+  candidates,
+  onAdd,
+}: {
+  noun: string;
+  searchPlaceholder: string;
+  allInText: string;
+  loading: boolean;
+  loadError: string | null;
+  candidates: Candidate[];
+  onAdd: (id: string) => Promise<void>;
+}) {
+  const [filter, setFilter] = useState('');
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const query = filter.trim().toLowerCase();
+  const shown = candidates.filter(
+    (candidate) => query === '' || candidate.name.toLowerCase().includes(query)
+  );
+
+  async function add(id: string) {
+    setBusyId(id);
+    setError(null);
+    try {
+      await onAdd(id);
+    } catch (cause) {
+      setError(failureText(cause, `Could not add the ${noun}.`));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-2 pt-1">
+      <InputGroup>
+        <InputGroupAddon>
+          <Search className="size-3.5 text-foreground-muted" />
+        </InputGroupAddon>
+        <InputGroupInput
+          autoFocus
+          placeholder={searchPlaceholder}
+          aria-label={`Search for a ${noun} to add`}
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+        />
+        {filter !== '' && (
+          <InputGroupAddon align="inline-end">
+            <InputGroupButton
+              size="icon-xs"
+              aria-label="Clear the search"
+              onClick={() => setFilter('')}
+            >
+              <X className="size-3.5" />
+            </InputGroupButton>
+          </InputGroupAddon>
+        )}
+      </InputGroup>
+
+      {error !== null && <p className="text-xs text-destructive">Not added — {error}</p>}
+      {loadError !== null && <p className="text-xs text-destructive">{loadError}</p>}
+
+      {loading ? (
+        <p className="px-1 py-2 text-sm text-foreground-muted">Loading…</p>
+      ) : shown.length === 0 ? (
+        loadError === null && (
+          <p className="px-1 py-2 text-sm text-foreground-muted">
+            {query === '' ? allInText : `No ${noun} here matches “${filter.trim()}”.`}
+          </p>
+        )
+      ) : (
+        <div className="divide-y divide-border overflow-hidden rounded-[10px] border border-border">
+          {shown.map((candidate) => (
+            <button
+              key={candidate.id}
+              type="button"
+              disabled={busyId !== null}
+              onClick={() => void add(candidate.id)}
+              className={cn(
+                'flex w-full cursor-pointer items-center gap-3 bg-background px-3.5 py-2.5 text-left transition-colors hover:bg-[var(--fill)]',
+                busyId !== null && 'cursor-wait'
+              )}
+            >
+              {candidate.mark}
+              <span className="min-w-0 flex-1 truncate text-sm text-foreground">
+                {candidate.name}
+              </span>
+              <span className="shrink-0 text-xs text-foreground-muted">{candidate.detail}</span>
+              <span className="shrink-0 text-xs font-medium text-foreground">
+                {busyId === candidate.id ? 'Adding…' : 'Add'}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -463,108 +888,45 @@ const AddAgentPanel = observer(function AddAgentPanel({
   room: RemoteRoomDetail;
   onAdded: () => Promise<void>;
 }) {
-  const [filter, setFilter] = useState('');
-  const [busyId, setBusyId] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
   const members = new Set(room.agentIds);
   const { data: remoteAgents } = useWorkspaceAgents(workspaceId);
   const remoteById = new Map((remoteAgents ?? []).map((agent) => [agent.id, agent]));
-  const query = filter.trim().toLowerCase();
-  const candidates = agentsStore
-    .agentsInWorkspace(workspaceId)
-    .filter((agent) => agent.switchAgentId !== null && !members.has(agent.switchAgentId))
-    .filter((agent) => query === '' || agent.name.toLowerCase().includes(query));
-
-  async function add(switchAgentId: string) {
-    setBusyId(switchAgentId);
-    setError(null);
-    try {
-      await rpc.workspaces.addRoomAgents({
-        workspaceId,
-        roomId: room.id,
-        agentIds: [switchAgentId],
-        direction: 'agents_to_room',
-      });
-      await onAdded();
-    } catch (cause) {
-      setError(failureText(cause, 'Could not add the agent to this room.'));
-    } finally {
-      setBusyId(null);
-    }
-  }
-
   return (
-    <div className="flex flex-col gap-2 pt-1">
-      <InputGroup>
-        <InputGroupAddon>
-          <Search className="size-3.5 text-foreground-muted" />
-        </InputGroupAddon>
-        <InputGroupInput
-          autoFocus
-          placeholder="Search agents on this computer…"
-          aria-label="Search agents to add"
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-        />
-        {filter !== '' && (
-          <InputGroupAddon align="inline-end">
-            <InputGroupButton
-              size="icon-xs"
-              aria-label="Clear the search"
-              onClick={() => setFilter('')}
-            >
-              <X className="size-3.5" />
-            </InputGroupButton>
-          </InputGroupAddon>
-        )}
-      </InputGroup>
-
-      {error !== null && <p className="text-xs text-destructive">Not added — {error}</p>}
-
-      {candidates.length === 0 ? (
-        <p className="px-1 py-2 text-sm text-foreground-muted">
-          {query === ''
-            ? 'Every agent on this computer is already in this room.'
-            : `No agent here matches “${filter.trim()}”.`}
-        </p>
-      ) : (
-        <div className="divide-y divide-border overflow-hidden rounded-[10px] border border-border">
-          {candidates.map((agent) => {
-            const switchAgentId = agent.switchAgentId as string;
-            const busy = busyId === switchAgentId;
-            return (
-              <button
-                key={agent.id}
-                type="button"
-                disabled={busyId !== null}
-                onClick={() => void add(switchAgentId)}
-                className={cn(
-                  'flex w-full cursor-pointer items-center gap-3 bg-background px-3.5 py-2.5 text-left transition-colors hover:bg-[var(--fill)]',
-                  busyId !== null && 'cursor-wait'
-                )}
-              >
-                <AgentAvatar
-                  name={agent.name}
-                  iconUrl={remoteById.get(switchAgentId)?.iconUrl ?? null}
-                  serverId={agent.serverId}
-                  size={22}
-                />
-                <span className="min-w-0 flex-1 truncate text-sm text-foreground">
-                  {agent.name}
-                </span>
-                <span className="shrink-0 text-xs text-foreground-muted">
-                  {providerDisplayName(agent.providerId) ?? 'Agent'}
-                </span>
-                <span className="shrink-0 text-xs font-medium text-foreground">
-                  {busy ? 'Adding…' : 'Add'}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      )}
-    </div>
+    <AddParticipantPanel
+      noun="agent"
+      searchPlaceholder="Search agents on this computer…"
+      allInText="Every agent on this computer is already in this room."
+      loading={false}
+      loadError={null}
+      candidates={agentsStore
+        .agentsInWorkspace(workspaceId)
+        .filter((agent) => agent.switchAgentId !== null && !members.has(agent.switchAgentId))
+        .map((agent) => {
+          const switchAgentId = agent.switchAgentId as string;
+          return {
+            id: switchAgentId,
+            name: agent.name,
+            mark: (
+              <AgentAvatar
+                name={agent.name}
+                iconUrl={remoteById.get(switchAgentId)?.iconUrl ?? null}
+                serverId={agent.serverId}
+                size={22}
+              />
+            ),
+            detail: providerDisplayName(agent.providerId) ?? 'Agent',
+          };
+        })}
+      onAdd={async (switchAgentId) => {
+        await rpc.workspaces.addRoomAgents({
+          workspaceId,
+          roomId: room.id,
+          agentIds: [switchAgentId],
+          direction: 'agents_to_room',
+        });
+        await onAdded();
+      }}
+    />
   );
 });
 
@@ -596,7 +958,7 @@ function AgentMark({
   remoteById,
 }: {
   agentId: string;
-  workspaceId: string;
+  workspaceId: string | null;
   remoteById: Map<string, RemoteAgentSummary>;
 }) {
   const remote = remoteById.get(agentId) ?? null;
@@ -605,7 +967,7 @@ function AgentMark({
       <AgentAvatar
         name={agentNameFor(agentId, workspaceId, remoteById)}
         iconUrl={remote?.iconUrl ?? null}
-        serverId={workspacesStore.serverIdFor(workspaceId)}
+        serverId={workspaceId && workspacesStore.serverIdFor(workspaceId)}
         size={26}
       />
     </span>
@@ -614,7 +976,8 @@ function AgentMark({
 
 /** This install's record of a Switch agent, which is where its provider is
  * known — the server says what type an agent is, not what runs it here. */
-function localAgentFor(switchAgentId: string, workspaceId: string) {
+function localAgentFor(switchAgentId: string, workspaceId: string | null) {
+  if (workspaceId === null) return null;
   return (
     agentsStore.agentsInWorkspace(workspaceId).find((a) => a.switchAgentId === switchAgentId) ??
     null
@@ -623,7 +986,7 @@ function localAgentFor(switchAgentId: string, workspaceId: string) {
 
 function agentNameFor(
   switchAgentId: string,
-  workspaceId: string,
+  workspaceId: string | null,
   remoteById: Map<string, RemoteAgentSummary>
 ): string {
   return (
@@ -637,7 +1000,7 @@ function agentNameFor(
  * otherwise the type the server knows it by. */
 function agentKindFor(
   switchAgentId: string,
-  workspaceId: string,
+  workspaceId: string | null,
   remoteById: Map<string, RemoteAgentSummary>
 ): string {
   const providerId = localAgentFor(switchAgentId, workspaceId)?.providerId ?? null;
