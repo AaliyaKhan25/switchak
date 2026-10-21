@@ -19,6 +19,7 @@ from switch_core.db.models import (
     Agent,
     AgentDefinition,
     Client,
+    ClientRoom,
     CollaborationBridge,
     Message,
     Room,
@@ -87,6 +88,8 @@ class ChatSummary(CamelModel):
     can_manage: bool
     # The viewer owns one of the agents, which keeps them in the room.
     owns_agent: bool
+    # People in the room, so a membership change re-sends the summary.
+    member_count: int
     last_message: ChatLastMessage | None
 
 
@@ -166,6 +169,12 @@ async def chat_summary(
         ).scalars()
     }
     bridge = await _bridge(session, room)
+    member_count = await session.scalar(
+        select(func.count())
+        .select_from(ClientRoom)
+        .join(Client, Client.id == ClientRoom.client_id)
+        .where(ClientRoom.room_id == room.id, Client.type == MEMBER_CLIENT_TYPE)
+    )
     channel_name: str | None = None
     if bridge is not None and room.external_channel_id is not None:
         prefix = f"{bridge.display_name}: "
@@ -203,6 +212,7 @@ async def chat_summary(
         ],
         can_manage=can_manage,
         owns_agent=any(agent.owner_id == viewer_id for agent in agents),
+        member_count=member_count or 0,
         last_message=(
             ChatLastMessage(
                 seq=last.seq,

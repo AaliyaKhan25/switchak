@@ -870,7 +870,9 @@ class ChatService:
                 room.transport_room_id, client.transport_user_id
             )
         await self._make_lasting(tenant_id, target_user_id, room.id)
-        self._memberships_changed(tenant_id, [target_user_id])
+        async with tenant_session(self.session_factory, tenant_id) as session:
+            member_ids = [member.id for member, _ in await self.members(session, room)]
+        self._memberships_changed(tenant_id, [target_user_id, *member_ids])
 
     async def add_agent(
         self, tenant_id: str, actor: User, room_id: str, agent_id: str

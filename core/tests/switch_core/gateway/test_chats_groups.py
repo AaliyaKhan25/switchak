@@ -20,6 +20,7 @@ from tests.switch_core.gateway.test_chats_routes import (
     _left_chat,
     _listed,
     _reads,
+    _stream,
 )
 
 
@@ -261,6 +262,33 @@ async def test_a_bridged_direct_room_is_never_converted(chats: _Harness) -> None
     added = await _add_agent(chats, chats.alice.id, room_id, other)
     assert added.status_code == 200
     assert await _channel_type(chats, room_id) == "direct"
+
+
+async def test_removing_a_person_updates_the_others_summary(chats: _Harness) -> None:
+    created = await chats.client.post(
+        "/chats",
+        json={
+            "agentIds": [],
+            "memberUserIds": [chats.bob.id, chats.admin.id],
+            "requestId": "c1",
+        },
+        headers=chats.as_user(chats.alice),
+    )
+    room_id = created.json()["chat"]["roomId"]
+    assert created.json()["chat"]["memberCount"] == 3
+
+    events = _stream(chats, chats.bob, {}, recheck=60.0)
+    name, summary = await events.next()
+    assert (name, summary["memberCount"]) == ("chat", 3)
+    assert (await events.next())[0] == "ready"
+
+    removed = await chats.client.delete(
+        f"/chats/{room_id}/members/{chats.admin.id}", headers=chats.as_user(chats.alice)
+    )
+    assert removed.status_code == 204
+    name, summary = await events.next()
+    assert (name, summary["roomId"], summary["memberCount"]) == ("chat", room_id, 2)
+    await events.stream.aclose()  # type: ignore[attr-defined]
 
 
 # ── Creating with people ─────────────────────────────────────────────────────
