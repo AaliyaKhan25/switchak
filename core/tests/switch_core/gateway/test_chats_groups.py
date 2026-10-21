@@ -7,7 +7,9 @@ from __future__ import annotations
 import asyncio
 
 import httpx
+import pytest
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from switch_core.db.models import Agent, Room, room_agents
 from tests.switch_core.gateway.conftest import _Harness
@@ -115,6 +117,54 @@ async def test_a_second_agent_makes_a_direct_chat_a_group(chats: _Harness) -> No
     assert await _addressed(chats, room_id, helper, "one agent, still a group") is False
 
 
+async def test_a_second_agent_that_fails_to_commit_leaves_the_chat_direct(
+    chats: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    helper = await chats.agent("helper", owner=chats.alice)
+    other = await chats.agent("other", owner=chats.alice)
+    room_id = await chats.new_chat(chats.alice, helper, "c1")
+    convert = chats.service._group_if_several_agents
+
+    async def convert_then_fail(session: AsyncSession, room: Room) -> None:
+        await convert(session, room)
+        raise RuntimeError("lost before commit")
+
+    monkeypatch.setattr(chats.service, "_group_if_several_agents", convert_then_fail)
+    with pytest.raises(RuntimeError, match="lost before commit"):
+        await _add_agent(chats, chats.alice.id, room_id, other)
+    assert await _agent_ids(chats, room_id) == {helper.id}
+    assert await _channel_type(chats, room_id) == "direct"
+
+
+async def test_concurrent_agent_adds_make_one_group(
+    chats: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    convert = chats.service._group_if_several_agents
+    both_written = asyncio.Barrier(2)
+
+    async def after_both_agents_are_written(session: AsyncSession, room: Room) -> None:
+        await both_written.wait()
+        await convert(session, room)
+
+    monkeypatch.setattr(
+        chats.service, "_group_if_several_agents", after_both_agents_are_written
+    )
+    helper = await chats.agent("helper", owner=chats.alice)
+    ann = await chats.agent("ann", owner=chats.alice)
+    ben = await chats.agent("ben", owner=chats.alice)
+    room_id = await chats.new_chat(chats.alice, helper, "c1")
+    await chats.room_service.remove_agents_from_room(room_id, [helper.id])
+    assert await _channel_type(chats, room_id) == "direct"
+
+    responses = await asyncio.gather(
+        _add_agent(chats, chats.alice.id, room_id, ann),
+        _add_agent(chats, chats.alice.id, room_id, ben),
+    )
+    assert [r.status_code for r in responses] == [200, 200]
+    assert await _agent_ids(chats, room_id) == {ann.id, ben.id}
+    assert await _channel_type(chats, room_id) == "channel_private"
+
+
 async def test_an_owner_grant_does_not_make_a_group(chats: _Harness) -> None:
     agent = await chats.agent("mine", owner=chats.alice)
     room_id = await _left_chat(chats, chats.alice)
@@ -191,6 +241,19 @@ async def test_a_chat_with_people_and_no_agent_is_a_listed_group(
     assert chat["roomId"] in await _listed(chats, chats.bob)
     assert chat["roomId"] in await _listed(chats, chats.alice)
     assert (await chats.send(chats.bob, chat["roomId"], "s1", "hi")).status_code == 200
+
+
+async def test_a_chat_with_no_agents_and_no_one_else(chats: _Harness) -> None:
+    created = await chats.client.post(
+        "/chats",
+        json={"agentIds": [], "requestId": "c1"},
+        headers=chats.as_user(chats.alice),
+    )
+    assert created.status_code == 200, created.text
+    chat = created.json()["chat"]
+    assert chat["agents"] == []
+    assert chat["channelType"] == "channel_private"
+    assert chat["roomId"] in await _listed(chats, chats.alice)
 
 
 async def test_one_agent_and_a_person_make_a_group(chats: _Harness) -> None:

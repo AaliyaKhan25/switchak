@@ -870,41 +870,49 @@ class ChatService:
     ) -> Room:
         """Manager only, and only an agent the manager may use in this room.
         Already in is success. A second agent makes a direct chat a group."""
-        async with self._lock("agents", tenant_id, room_id):
-            async with tenant_session(self.session_factory, tenant_id) as session:
-                room = await self._room(session, tenant_id, room_id)
-                await self._require_manager(session, tenant_id, actor, room)
-                await self._require_may_use_agent(
-                    session,
-                    tenant_id,
-                    actor,
-                    agent_id,
-                    room_id=room.id,
-                    group_id=room.group_id,
-                )
-                present = await self._room_store.get_agent_ids(session, room.id)
-                if agent_id in present:
-                    return room
-                if present:
-                    await self._make_group(session, room)
-                    await session.commit()
-            await self._room_service.add_agents_to_room(room.id, agent_ids=[agent_id])
-        return room
+        async with tenant_session(self.session_factory, tenant_id) as session:
+            room = await self._room(session, tenant_id, room_id)
+            await self._require_manager(session, tenant_id, actor, room)
+            await self._require_may_use_agent(
+                session,
+                tenant_id,
+                actor,
+                agent_id,
+                room_id=room.id,
+                group_id=room.group_id,
+            )
+            if agent_id in await self._room_store.get_agent_ids(session, room.id):
+                return room
+        await self._room_service.add_agents_to_room(
+            room.id,
+            agent_ids=[agent_id],
+            with_agents=lambda session: self._group_if_several_agents(session, room),
+        )
+        async with tenant_session(self.session_factory, tenant_id) as session:
+            return await self._room(session, tenant_id, room_id)
+
+    async def _group_if_several_agents(self, session: AsyncSession, room: Room) -> None:
+        """`_make_group` once the room holds more than one agent, in the
+        transaction that added the agent. The room row is locked before counting, so a
+        concurrent add counts this one's agent once this one commits."""
+        locked = await session.scalar(
+            select(Room).where(Room.id == room.id).with_for_update(key_share=True)
+        )
+        assert locked is not None
+        if len(await self._room_store.get_agent_ids(session, room.id)) > 1:
+            await self._make_group(session, locked)
 
     async def remove_agent(
         self, tenant_id: str, actor: User, room_id: str, agent_id: str
     ) -> None:
         """Manager only, with no check on using the agent, so an unwanted
         agent can always be taken out. Already gone is success."""
-        async with self._lock("agents", tenant_id, room_id):
-            async with tenant_session(self.session_factory, tenant_id) as session:
-                room = await self._room(session, tenant_id, room_id)
-                await self._require_manager(session, tenant_id, actor, room)
-                if agent_id not in await self._room_store.get_agent_ids(
-                    session, room.id
-                ):
-                    return
-            await self._room_service.remove_agents_from_room(room.id, [agent_id])
+        async with tenant_session(self.session_factory, tenant_id) as session:
+            room = await self._room(session, tenant_id, room_id)
+            await self._require_manager(session, tenant_id, actor, room)
+            if agent_id not in await self._room_store.get_agent_ids(session, room.id):
+                return
+        await self._room_service.remove_agents_from_room(room.id, [agent_id])
 
     async def archive(self, tenant_id: str, user: User, room_id: str) -> None:
         async with tenant_session(self.session_factory, tenant_id) as session:
