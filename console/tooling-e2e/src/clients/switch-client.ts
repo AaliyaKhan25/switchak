@@ -1,3 +1,7 @@
+import type { Environment, SwitchEnv } from '../core/env.ts';
+import { assertAllowed } from '../core/guard.ts';
+import type { IssuedSecrets } from '../core/secrets.ts';
+
 /**
  * Thin client for the two Switch HTTP surfaces the harness talks to, both served
  * by the same origin (`SWITCH_API_URL`):
@@ -5,22 +9,28 @@
  * - the **agent bridge** at `/agents/...`, authenticated with either the
  *   registration token (to mint an agent) or an agent's own API key (to act as
  *   that agent);
- * - the **gateway** at `/gateway/...`, authenticated with an admin bearer token
+ * - the **gateway** at `/gateway/...`, authenticated with the session cookie
  *   from `POST /gateway/auth/login`.
+ *
+ * Every request passes the read-only guard first (`core/guard.ts`).
  *
  * Only endpoints this harness has actually exercised against a live server are
  * modelled here; see README.md for the verified request/response shapes.
  */
 
-export interface RegisteredAgent {
+export interface AgentRef {
   id: string;
   name: string;
+}
+
+export interface RegisteredAgent extends AgentRef {
   apiKey: string;
 }
 
 export interface RoomSummary {
   id: string;
   name: string;
+  createdAt: string;
   bridgeId: string | null;
   bridgeType: string | null;
   archived: boolean;
@@ -32,9 +42,19 @@ export interface RoomDetail extends RoomSummary {
   agentIds: string[];
 }
 
+/** The management API's agent definition (v1), as much of it as the harness sets. */
+export interface ManagedAgentDefinition {
+  provider: string;
+  model: string | null;
+  instructions: string;
+  auto_approve: boolean;
+  directory: string | null;
+}
+
 export interface AgentSummary {
   id: string;
   name: string;
+  createdAt: string;
 }
 
 /**
@@ -52,6 +72,15 @@ export interface AgentSummary {
  *                "attachments": [] } }
  * ```
  */
+/** One row of `GET /gateway/tenants/{tenant_id}/usage`: an amount per metric, client and model. */
+export interface UsageTotal {
+  metric: string;
+  clientId: string;
+  clientName: string | null;
+  model: string;
+  amount: number;
+}
+
 export interface AgentEvent {
   type: string;
   room_id?: string;
@@ -78,6 +107,14 @@ export function eventText(event: AgentEvent): string {
   return typeof body === 'string' ? body : '';
 }
 
+/** What a route answered to a probe: its status, and what it said its body was. */
+export interface RouteProbe {
+  status: number;
+  contentType: string;
+  /** The `X-Request-Id` the request carried, which the server's log lines for it name; null untagged. */
+  requestId: string | null;
+}
+
 export class SwitchHttpError extends Error {
   readonly status: number;
   readonly body: string;
@@ -93,47 +130,81 @@ export class SwitchHttpError extends Error {
   }
 }
 
+/**
+ * The reason code of a management API refusal (`{"error": {"code": …}}`), or
+ * null when the error is not one.
+ */
+export function managementErrorCode(error: unknown): string | null {
+  if (!(error instanceof SwitchHttpError)) return null;
+  try {
+    const parsed = JSON.parse(error.body) as { error?: { code?: unknown } };
+    return typeof parsed.error?.code === 'string' ? parsed.error.code : null;
+  } catch {
+    return null;
+  }
+}
+
 function truncate(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max)}…` : text;
 }
 
-export interface SwitchClientOptions {
-  apiUrl: string;
-  registrationToken: string;
-  gatewayAdminEmail: string;
-  gatewayAdminPassword: string;
+interface SwitchRequest {
+  token?: string;
+  cookie?: string;
+  body?: unknown;
+  timeoutMs?: number;
 }
 
 export class SwitchClient {
   private readonly apiUrl: string;
+  /** The deployment-wide registration key; agents it registers belong to a bootstrap account. */
   private readonly registrationToken: string;
   private readonly adminEmail: string;
   private readonly adminPassword: string;
+  private readonly environment: Environment;
+  private readonly issued: IssuedSecrets;
   private gatewayCookie: string | null = null;
+  // Shared with every client `as()` makes, so one scenario's requests carry
+  // one tag, numbered without repeats, whichever user sent them.
+  private tagging: { tag: string | null; count: number } = { tag: null, count: 0 };
 
-  constructor(options: SwitchClientOptions) {
-    this.apiUrl = options.apiUrl;
-    this.registrationToken = options.registrationToken;
-    this.adminEmail = options.gatewayAdminEmail;
-    this.adminPassword = options.gatewayAdminPassword;
+  constructor(env: SwitchEnv, environment: Environment, issued: IssuedSecrets) {
+    this.apiUrl = env.apiUrl;
+    this.registrationToken = env.agentRegistrationToken;
+    this.adminEmail = env.gatewayAdminEmail;
+    this.adminPassword = env.gatewayAdminPassword;
+    this.environment = environment;
+    this.issued = issued;
   }
 
   // ── plumbing ──────────────────────────────────────────────────────────────
 
-  private async request<T>(
-    method: string,
-    path: string,
-    init: { token?: string; cookie?: string; body?: unknown; timeoutMs?: number } = {}
-  ): Promise<T> {
+  /**
+   * Tag every request from now on with `X-Request-Id: <tag>-<n>`, which the
+   * server stamps on each log line it writes while serving it. `null` stops.
+   */
+  tagRequests(tag: string | null): void {
+    this.tagging.tag = tag;
+    this.tagging.count = 0;
+  }
+
+  private requestId(): Record<string, string> {
+    if (this.tagging.tag === null) return {};
+    this.tagging.count += 1;
+    return { 'X-Request-Id': `${this.tagging.tag}-${this.tagging.count}` };
+  }
+
+  private async request<T>(method: string, path: string, init: SwitchRequest = {}): Promise<T> {
     return (await this.rawRequest(method, path, init)).parsed as T;
   }
 
   private async rawRequest(
     method: string,
     path: string,
-    init: { token?: string; cookie?: string; body?: unknown; timeoutMs?: number }
+    init: SwitchRequest
   ): Promise<{ parsed: unknown; response: Response }> {
-    const headers: Record<string, string> = { Accept: 'application/json' };
+    assertAllowed(this.environment, method, path);
+    const headers: Record<string, string> = { Accept: 'application/json', ...this.requestId() };
     if (init.token) headers.Authorization = `Bearer ${init.token}`;
     if (init.cookie) headers.Cookie = init.cookie;
     if (init.body !== undefined) headers['Content-Type'] = 'application/json';
@@ -152,6 +223,123 @@ export class SwitchClient {
     if (response.status === 204) return { parsed: undefined, response };
     const text = await response.text();
     return { parsed: text === '' ? undefined : JSON.parse(text), response };
+  }
+
+  /**
+   * The status a request with no credential at all gets: no cookie, no bearer
+   * key, no body. For the check that every route which takes a session refuses
+   * a request without one.
+   */
+  async statusWithoutCredentials(method: string, path: string): Promise<RouteProbe> {
+    return this.probe(method, path, null);
+  }
+
+  /**
+   * What a request with this client's signed-in session, and no body, gets:
+   * its status and content type. For the check that one workspace's member
+   * is refused another workspace's resources.
+   */
+  async statusWithSession(method: string, path: string): Promise<RouteProbe> {
+    return this.probe(method, path, await this.gatewayLogin());
+  }
+
+  private async probe(method: string, path: string, cookie: string | null): Promise<RouteProbe> {
+    assertAllowed(this.environment, method, path);
+    const tag = this.requestId();
+    const response = await fetch(`${this.apiUrl}${path}`, {
+      method,
+      headers: {
+        Accept: 'application/json',
+        ...(cookie === null ? {} : { Cookie: cookie }),
+        ...tag,
+      },
+      redirect: 'manual',
+      signal: AbortSignal.timeout(30_000),
+    });
+    await response.body?.cancel();
+    return {
+      status: response.status,
+      contentType: response.headers.get('content-type') ?? '',
+      requestId: tag['X-Request-Id'] ?? null,
+    };
+  }
+
+  /**
+   * The same server, signed in as someone else. Shares this client's record of
+   * issued credentials, so the other session is scanned for too, and its
+   * request tagging, so a scenario observing this client sees the other's
+   * requests as its own.
+   */
+  as(email: string, password: string): SwitchClient {
+    const other = new SwitchClient(
+      {
+        apiUrl: this.apiUrl,
+        agentRegistrationToken: this.registrationToken,
+        gatewayAdminEmail: email,
+        gatewayAdminPassword: password,
+      },
+      this.environment,
+      this.issued
+    );
+    other.tagging = this.tagging;
+    return other;
+  }
+
+  /** `POST /gateway/users` — a user in the signed-in admin's workspace. `role: 'admin'` makes a deployment operator. */
+  async createUser(params: {
+    name: string;
+    email: string;
+    password: string;
+    role: 'user' | 'admin';
+  }): Promise<{ id: string }> {
+    return this.gateway<{ id: string }>('POST', '/users', params);
+  }
+
+  /**
+   * `POST /gateway/tenants` — create a workspace. The caller becomes its owner
+   * and the server re-mints their session into it, so from here on this client
+   * acts in the new workspace.
+   */
+  async createTenant(name: string): Promise<string> {
+    const { parsed, response } = await this.rawRequest('POST', '/gateway/tenants', {
+      cookie: await this.gatewayLogin(),
+      body: { name },
+    });
+    const cookie = sessionCookieFrom(response);
+    if (!cookie) throw new Error('Creating a workspace returned no switch_auth cookie for it.');
+    this.issued.record(cookie.slice('switch_auth='.length));
+    this.gatewayCookie = cookie;
+    return (parsed as { id: string }).id;
+  }
+
+  /** `POST /gateway/agents/register` — an agent owned by the signed-in user, in their current workspace. */
+  async registerAgentAsUser(params: { name: string; description: string }): Promise<AgentRef> {
+    const body = await this.gateway<{ id: string; api_key: string }>('POST', '/agents/register', {
+      agent_type: 'opencode',
+      name: params.name,
+      description: params.description,
+      options: { auto_session: false },
+    });
+    this.issued.record(body.api_key);
+    return { id: body.id, name: params.name };
+  }
+
+  /** `GET /gateway/feature-flags` — the flags this deployment has turned on. */
+  async enabledFeatureFlags(): Promise<Set<string>> {
+    const body = await this.gateway<{ flags: { key: string; enabled: boolean }[] }>(
+      'GET',
+      '/feature-flags'
+    );
+    return new Set(body.flags.filter((flag) => flag.enabled).map((flag) => flag.key));
+  }
+
+  /**
+   * `GET /health/ready`: whether the server reports itself ready to serve. It
+   * answers 503 with the failing checks when it is not, which this throws as a
+   * {@link SwitchHttpError} carrying them.
+   */
+  async ready(): Promise<void> {
+    await this.request('GET', '/health/ready', { timeoutMs: 10_000 });
   }
 
   /** `GET /health` — the reachability probe the suite skips on. */
@@ -187,6 +375,7 @@ export class SwitchClient {
           'authenticates with a session cookie, not a bearer token.'
       );
     }
+    this.issued.record(cookie.slice('switch_auth='.length));
     this.gatewayCookie = cookie;
     return cookie;
   }
@@ -204,13 +393,7 @@ export class SwitchClient {
   }
 
   async getRoom(roomId: string): Promise<RoomDetail> {
-    const row = await this.gateway<RawRoom>('GET', `/rooms/${roomId}`);
-    return {
-      ...toRoomSummary(row),
-      externalChannelId: row.external_channel_id ?? null,
-      matrixRoomId: row.matrix_room_id ?? null,
-      agentIds: row.agent_ids ?? [],
-    };
+    return toRoomDetail(await this.gateway<RawRoom>('GET', `/rooms/${roomId}`));
   }
 
   /**
@@ -227,29 +410,27 @@ export class SwitchClient {
    *
    * `userNames` are platform usernames added to the channel — the harness adds
    * itself, since it has to be a channel member to post as the human.
+   *
+   * `bridgeId: null` makes an internal-only room: no platform channel, so the
+   * only participants are agents and the fast lane needs no bridge at all.
    */
   async createRoom(params: {
     name: string;
     description: string;
-    bridgeId: string;
+    bridgeId: string | null;
     agentNames: string[];
-    userNames?: string[];
+    userNames: string[];
   }): Promise<RoomDetail> {
     const row = await this.gateway<RawRoom>('POST', '/rooms', {
       name: params.name,
       description: params.description,
-      bridge_id: params.bridgeId,
+      ...(params.bridgeId === null
+        ? { internal_only: true }
+        : { bridge_id: params.bridgeId, internal_only: false, channel_type: 'channel_public' }),
       agent_names: params.agentNames,
-      user_names: params.userNames ?? [],
-      channel_type: 'channel_public',
-      internal_only: false,
+      user_names: params.userNames,
     });
-    return {
-      ...toRoomSummary(row),
-      externalChannelId: row.external_channel_id ?? null,
-      matrixRoomId: row.matrix_room_id ?? null,
-      agentIds: row.agent_ids ?? [],
-    };
+    return toRoomDetail(row);
   }
 
   async deleteRoom(roomId: string): Promise<void> {
@@ -263,6 +444,48 @@ export class SwitchClient {
    */
   async deleteAgentByName(name: string): Promise<void> {
     await this.gateway('DELETE', `/agents/by-name/${encodeURIComponent(name)}`);
+  }
+
+  /**
+   * `POST /gateway/management/agents` — register an agent owned by the signed-in
+   * admin and place it on a controller, which then runs its sessions. The
+   * server checks the placement before registering anything, so a refusal
+   * leaves nothing behind and the call can simply be repeated.
+   *
+   * Refused with 409 until the controller has connected and reported the
+   * provider installed and signed in; see {@link managementErrorCode}.
+   */
+  async createManagedAgent(params: {
+    name: string;
+    description: string;
+    controllerId: string;
+    definition: ManagedAgentDefinition;
+  }): Promise<AgentRef> {
+    const view = await this.gateway<{ agent_id: string; name: string }>(
+      'POST',
+      '/management/agents',
+      {
+        name: params.name,
+        description: params.description,
+        controller_id: params.controllerId,
+        desired_state: 'running',
+        definition: params.definition,
+      }
+    );
+    return { id: view.agent_id, name: view.name };
+  }
+
+  /**
+   * `PUT /gateway/agents/{id}/addressing-policy` with `{policy: null}` — clear
+   * the agent's scoped addressing policy, so anyone may address it.
+   *
+   * Agents are created owner-only: only their owner, or agents and identities
+   * the owner has claimed, may address them, and anything else is answered with
+   * a refusal instead of delivered. The harness's senders are other throwaway
+   * agents and an unclaimed platform user, so its agents are opened explicitly.
+   */
+  async openAddressing(agentId: string): Promise<void> {
+    await this.gateway('PUT', `/agents/${agentId}/addressing-policy`, { policy: null });
   }
 
   /**
@@ -331,20 +554,115 @@ export class SwitchClient {
   }
 
   async listAgents(): Promise<AgentSummary[]> {
-    const rows = await this.gateway<{ id: string; name: string }[]>('GET', '/agents');
-    return rows.map((row) => ({ id: row.id, name: row.name }));
+    const rows = await this.gateway<{ id: string; name: string; created_at: string }[]>(
+      'GET',
+      '/agents'
+    );
+    return rows.map((row) => ({ id: row.id, name: row.name, createdAt: row.created_at }));
+  }
+
+  /** `GET /gateway/auth/session` — the workspace this admin session is bound to. */
+  async tenantId(): Promise<string> {
+    const state = await this.gateway<{ state: string; tenant: { id: string } | null }>(
+      'GET',
+      '/auth/session'
+    );
+    if (state.tenant === null) {
+      throw new Error(
+        `The gateway admin's session is bound to no workspace (state '${state.state}').`
+      );
+    }
+    return state.tenant.id;
+  }
+
+  /**
+   * `GET /gateway/tenants/{tenant_id}/usage` — what each client spent, per
+   * metric and model, over `[since, until)`. Counted in whole UTC hours.
+   */
+  async usage(tenantId: string, since: Date, until: Date): Promise<UsageTotal[]> {
+    const query = `since=${encodeURIComponent(since.toISOString())}&until=${encodeURIComponent(until.toISOString())}`;
+    const rows = await this.gateway<
+      {
+        metric: string;
+        client_id: string;
+        client_name: string | null;
+        model: string;
+        amount: number;
+      }[]
+    >('GET', `/tenants/${tenantId}/usage?${query}`);
+    return rows.map((row) => ({
+      metric: row.metric,
+      clientId: row.client_id,
+      clientName: row.client_name,
+      model: row.model,
+      amount: row.amount,
+    }));
   }
 
   /** The bridge id of the default collaboration bridge of `type`. */
   async defaultBridgeId(type: string): Promise<string> {
+    return (await this.defaultBridge(type)).id;
+  }
+
+  /** The default collaboration bridge of `type`: its id, and the display name a room document names it by. */
+  async defaultBridge(type: string): Promise<{ id: string; displayName: string }> {
     const rows = await this.gateway<
-      { id: string; bridge_type: string; is_default?: boolean; enabled?: boolean }[]
+      { id: string; bridge_type: string; display_name: string; is_default?: boolean }[]
     >('GET', '/collaborations');
     const ofType = rows.filter((row) => row.bridge_type === type);
     if (ofType.length === 0) {
       throw new Error(`No ${type} collaboration bridge registered on this Switch server`);
     }
-    return (ofType.find((row) => row.is_default) ?? ofType[0]!).id;
+    const row = ofType.find((candidate) => candidate.is_default) ?? ofType[0]!;
+    return { id: row.id, displayName: row.display_name };
+  }
+
+  /**
+   * `POST /gateway/rooms/from-yaml` — provision one room from a room document,
+   * as the signed-in admin; the gateway's side of `create_room_from_yaml`.
+   * Anything the room was given that could not be attached is a failure, not a
+   * room that is quietly missing part of its setup.
+   */
+  async createRoomFromYaml(yaml: string): Promise<RoomDetail> {
+    const result = await this.gateway<{
+      room_id?: string;
+      failed_attachments?: unknown[];
+    }>('POST', '/rooms/from-yaml', { yaml });
+    if (result.room_id === undefined) {
+      throw new Error(`from-yaml did not make one room: ${JSON.stringify(result)}`);
+    }
+    const roomId = result.room_id;
+    if (result.failed_attachments !== undefined && result.failed_attachments.length > 0) {
+      throw await this.withRoomDeleted(
+        roomId,
+        new Error(
+          `from-yaml made room ${roomId} without part of what it was given: ` +
+            JSON.stringify(result.failed_attachments)
+        )
+      );
+    }
+    try {
+      return await this.getRoom(roomId);
+    } catch (error) {
+      throw await this.withRoomDeleted(roomId, error);
+    }
+  }
+
+  /** Delete a room a call made before failing, and return the failure, saying whether the room went too. */
+  private async withRoomDeleted(roomId: string, failure: unknown): Promise<Error> {
+    const reason = failure instanceof Error ? failure.message : String(failure);
+    try {
+      await this.deleteRoom(roomId);
+      return new Error(`${reason} (room ${roomId} was deleted)`, { cause: failure });
+    } catch (cleanup) {
+      const why = cleanup instanceof Error ? cleanup.message : String(cleanup);
+      return new Error(
+        `${reason} (and room ${roomId} could not be deleted, delete it by hand: ${why})`,
+        {
+          cause: failure,
+        }
+      );
+    }
   }
 
   /**
@@ -418,6 +736,7 @@ export class SwitchClient {
         },
       }
     );
+    this.issued.record(body.api_key);
     return { id: body.id, name: params.name, apiKey: body.api_key };
   }
 
@@ -520,6 +839,40 @@ export class SwitchClient {
     return body.event_id;
   }
 
+  // ── agent bridge: the operations front door ───────────────────────────────
+
+  /**
+   * `GET /agents/{id}/ops` — every operation the registry defines, with its
+   * parameters, keyed by name. The same registry serves the MCP server, so what this lists is
+   * what an agent's session sees as tools.
+   */
+  async listOperations(agent: RegisteredAgent): Promise<string[]> {
+    const body = await this.request<{ operations: Record<string, unknown> }>(
+      'GET',
+      `/agents/${agent.id}/ops`,
+      { token: agent.apiKey }
+    );
+    return Object.keys(body.operations);
+  }
+
+  /**
+   * `POST /agents/{id}/ops/{operation}` — run one registry operation as the
+   * agent, with `args` as its arguments, and return its `result`. Operations that act on "the room you
+   * are connected to" need a live connection and fail without one; the fast
+   * lane calls those that take the room as an argument.
+   */
+  async callOperation<T>(
+    agent: RegisteredAgent,
+    operation: string,
+    args: Record<string, unknown>
+  ): Promise<T> {
+    const body = await this.request<{ result: T }>('POST', `/agents/${agent.id}/ops/${operation}`, {
+      token: agent.apiKey,
+      body: args,
+    });
+    return body.result;
+  }
+
   /**
    * `POST /agents/{id}/watch/heartbeat` — the room-agnostic "an operator
    * connector is watching this agent" beat. Switch Console pings it while its
@@ -537,6 +890,7 @@ export class SwitchClient {
 interface RawRoom {
   id: string;
   name: string;
+  created_at: string;
   bridge_id?: string | null;
   bridge_type?: string | null;
   archived?: boolean;
@@ -546,10 +900,20 @@ interface RawRoom {
   agent_statuses?: Record<string, unknown>;
 }
 
+function toRoomDetail(row: RawRoom): RoomDetail {
+  return {
+    ...toRoomSummary(row),
+    externalChannelId: row.external_channel_id ?? null,
+    matrixRoomId: row.matrix_room_id ?? null,
+    agentIds: row.agent_ids ?? [],
+  };
+}
+
 function toRoomSummary(row: RawRoom): RoomSummary {
   return {
     id: row.id,
     name: row.name,
+    createdAt: row.created_at,
     bridgeId: row.bridge_id ?? null,
     bridgeType: row.bridge_type ?? null,
     archived: row.archived ?? false,

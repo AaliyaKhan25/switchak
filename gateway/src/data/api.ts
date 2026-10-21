@@ -219,6 +219,9 @@ export interface CreateRoomInput {
   join_event_listeners?: string[];
   user_names?: string[];
   bridge_id?: string | null;
+  // With no bridge_id the server uses the default bridge; this asks for a
+  // room with no external channel instead.
+  internal_only?: boolean;
   external_channel_id?: string | null;
   group_id?: string | null;
   read_visibility?: "public" | "private";
