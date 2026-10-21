@@ -156,7 +156,7 @@ def test_a_closed_socket_leaves_no_task_pending_on_its_loop() -> None:
         await adapter.create_agent_identity(_SWITCHDEV)
         thread = _socket_thread("switchdev", before)
         await _until(lambda: bot.connects == 1)
-        await adapter.remove_agent_identity("switchdev")
+        await adapter.remove_agent_identity(_SWITCHDEV)
         await asyncio.to_thread(thread.join, 5)
         assert not thread.is_alive()
 
