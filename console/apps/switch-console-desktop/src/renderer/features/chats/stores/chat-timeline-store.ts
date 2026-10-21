@@ -110,11 +110,17 @@ export class ChatTimeline {
     return this.messages.find((message) => message.messageId === messageId);
   }
 
-  /** Get the live reply count for a thread root, or the server's count if the root is loaded. */
-  threadReplyCount(rootId: string): number {
+  /** Thread reply count: server baseline + distinct live replies since, or null if root not loaded. */
+  threadReplyCount(rootId: string): number | null {
     const root = this.byId(rootId);
-    if (root?.threadReplyCount !== undefined) return root.threadReplyCount;
-    return this.threadReplyCounts.get(rootId) ?? 0;
+    if (!root) return null;
+    const serverCount = root.threadReplyCount ?? 0;
+    const lastReplySeq = root.threadLastReplySeq ?? -1;
+    const newReplies = this.messages.filter(
+      (msg) => msg.threadRootId === rootId && msg.seq > lastReplySeq
+    );
+    const uniqueNewReplies = new Set(newReplies.map((m) => m.messageId)).size;
+    return serverCount + uniqueNewReplies;
   }
 
   /** Load thread messages for a root. */

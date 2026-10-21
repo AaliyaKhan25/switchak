@@ -79,6 +79,7 @@ describe('createChat', () => {
       method: 'POST',
       body: {
         requestId: 'req-1',
+        agentIds: [],
         memberUserIds: ['user-1', 'user-2'],
         name: 'Test Group',
       },

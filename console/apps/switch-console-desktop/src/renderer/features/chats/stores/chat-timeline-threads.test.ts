@@ -35,51 +35,98 @@ const makeApi = (): TimelineApi => ({
 });
 
 describe('ChatTimeline thread reply counts', () => {
-  it('increments thread reply count when a reply arrives', () => {
+  it('returns server baseline + new live replies', () => {
     const timeline = new ChatTimeline('room-1', makeApi());
-    const root = makeMessage({ messageId: 'root-1', seq: 1 });
-    const reply = makeMessage({ messageId: 'reply-1', seq: 2, threadRootId: 'root-1' });
+    const root = makeMessage({
+      messageId: 'root-1',
+      seq: 10,
+      threadReplyCount: 5,
+      threadLastReplySeq: 14,
+    });
+    const newReply = makeMessage({ messageId: 'reply-new', seq: 15, threadRootId: 'root-1' });
 
     timeline.apply(root);
-    timeline.apply(reply);
+    timeline.apply(newReply);
 
-    expect(timeline.threadReplyCount('root-1')).toBe(1);
+    expect(timeline.threadReplyCount('root-1')).toBe(6);
   });
 
-  it('tracks multiple replies to the same root', () => {
+  it('does not count fetched history already in server baseline', () => {
     const timeline = new ChatTimeline('room-1', makeApi());
-    const root = makeMessage({ messageId: 'root-1', seq: 1 });
-    const reply1 = makeMessage({ messageId: 'reply-1', seq: 2, threadRootId: 'root-1' });
-    const reply2 = makeMessage({ messageId: 'reply-2', seq: 3, threadRootId: 'root-1' });
+    const root = makeMessage({
+      messageId: 'root-1',
+      seq: 10,
+      threadReplyCount: 3,
+      threadLastReplySeq: 13,
+    });
+    const oldReply1 = makeMessage({ messageId: 'reply-1', seq: 11, threadRootId: 'root-1' });
+    const oldReply2 = makeMessage({ messageId: 'reply-2', seq: 12, threadRootId: 'root-1' });
 
     timeline.apply(root);
-    timeline.apply(reply1);
-    timeline.apply(reply2);
+    timeline.apply(oldReply1);
+    timeline.apply(oldReply2);
 
-    expect(timeline.threadReplyCount('root-1')).toBe(2);
+    expect(timeline.threadReplyCount('root-1')).toBe(3);
   });
 
-  it('tracks counts even if root is not loaded', () => {
+  it('returns null for unloaded root', () => {
     const timeline = new ChatTimeline('room-1', makeApi());
-    const reply = makeMessage({ messageId: 'reply-1', seq: 2, threadRootId: 'unloaded-root' });
+    const reply = makeMessage({ messageId: 'reply-1', seq: 15, threadRootId: 'unloaded-root' });
 
     timeline.apply(reply);
 
-    expect(timeline.threadReplyCount('unloaded-root')).toBe(1);
+    expect(timeline.threadReplyCount('unloaded-root')).toBeNull();
   });
 
-  it('prefers server threadReplyCount if root message has it', () => {
+  it('applies live replies once root loads without double counting', () => {
     const timeline = new ChatTimeline('room-1', makeApi());
-    const root = makeMessage({ messageId: 'root-1', seq: 1, threadReplyCount: 5 });
+    const liveReply1 = makeMessage({ messageId: 'reply-1', seq: 15, threadRootId: 'root-1' });
+    const liveReply2 = makeMessage({ messageId: 'reply-2', seq: 16, threadRootId: 'root-1' });
 
+    timeline.apply(liveReply1);
+    timeline.apply(liveReply2);
+    expect(timeline.threadReplyCount('root-1')).toBeNull();
+
+    const root = makeMessage({
+      messageId: 'root-1',
+      seq: 10,
+      threadReplyCount: 3,
+      threadLastReplySeq: 13,
+    });
     timeline.apply(root);
 
     expect(timeline.threadReplyCount('root-1')).toBe(5);
   });
 
-  it('returns 0 for a root with no replies', () => {
+  it('deduplicates replayed live events by messageId', () => {
     const timeline = new ChatTimeline('room-1', makeApi());
-    expect(timeline.threadReplyCount('nonexistent-root')).toBe(0);
+    const root = makeMessage({
+      messageId: 'root-1',
+      seq: 10,
+      threadReplyCount: 2,
+      threadLastReplySeq: 12,
+    });
+    const reply = makeMessage({ messageId: 'reply-1', seq: 15, threadRootId: 'root-1' });
+
+    timeline.apply(root);
+    timeline.apply(reply);
+    timeline.apply(reply);
+
+    expect(timeline.threadReplyCount('root-1')).toBe(3);
+  });
+
+  it('returns 0 for loaded root with no replies', () => {
+    const timeline = new ChatTimeline('room-1', makeApi());
+    const root = makeMessage({
+      messageId: 'root-1',
+      seq: 10,
+      threadReplyCount: 0,
+      threadLastReplySeq: null,
+    });
+
+    timeline.apply(root);
+
+    expect(timeline.threadReplyCount('root-1')).toBe(0);
   });
 
   it('calls threadMessages API when loading a thread', async () => {

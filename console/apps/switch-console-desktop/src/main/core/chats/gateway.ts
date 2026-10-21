@@ -124,7 +124,7 @@ export async function createChat(
     requestId: input.requestId,
   };
   if (agentIds.length === 1) body.agentId = agentIds[0];
-  else if (agentIds.length > 1) body.agentIds = agentIds;
+  else body.agentIds = agentIds;
   if (input.memberUserIds) body.memberUserIds = input.memberUserIds;
   if (input.name) body.name = input.name;
   if (input.greeting !== null) body.greeting = input.greeting;
