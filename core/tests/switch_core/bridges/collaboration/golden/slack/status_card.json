@@ -12,7 +12,7 @@
         {
           "elements": [
             {
-              "text": "Needs attention: <@U0OWNER> · <switchdash://session?server=https%3A%2F%2Fswitch.example.com&agent=agent-1&room=room-1&session=session-1|Open in Console app>",
+              "text": "Needs attention: <@U0OWNER>",
               "type": "mrkdwn"
             }
           ],
@@ -43,15 +43,6 @@
           "elements": [
             {
               "text": "Worked for 1m 15s. 1 tool call.",
-              "type": "mrkdwn"
-            }
-          ],
-          "type": "context"
-        },
-        {
-          "elements": [
-            {
-              "text": "<switchdash://session?server=https%3A%2F%2Fswitch.example.com&agent=agent-1&room=room-1&session=session-1|Open in Console app>",
               "type": "mrkdwn"
             }
           ],

@@ -21,22 +21,6 @@
               "block_id": "switch-steps-top",
               "tasks": [
                 {
-                  "details": {
-                    "elements": [
-                      {
-                        "elements": [
-                          {
-                            "text": "Open in Console app",
-                            "type": "link",
-                            "url": "switchdash://session?server=https%3A%2F%2Fswitch.example.com&agent=agent-1&room=room-1&session=session-1"
-                          }
-                        ],
-                        "type": "rich_text_section"
-                      }
-                    ],
-                    "type": "rich_text"
-                  },
-                  "hide_title": true,
                   "status": "in_progress",
                   "task_id": "switch-session",
                   "title": "Switch session"
@@ -93,22 +77,6 @@
               "block_id": "switch-steps-top",
               "tasks": [
                 {
-                  "details": {
-                    "elements": [
-                      {
-                        "elements": [
-                          {
-                            "text": "Open in Console app",
-                            "type": "link",
-                            "url": "switchdash://session?server=https%3A%2F%2Fswitch.example.com&agent=agent-1&room=room-1&session=session-1"
-                          }
-                        ],
-                        "type": "rich_text_section"
-                      }
-                    ],
-                    "type": "rich_text"
-                  },
-                  "hide_title": true,
                   "status": "complete",
                   "task_id": "switch-session",
                   "title": "Switch session"

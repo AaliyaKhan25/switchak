@@ -39,7 +39,6 @@ from switch_core.bridges.collaboration.slack.adapter import (
     SlackConnectionConfig,
 )
 from switch_core.sessions.contract import Item, TurnUpsert
-from switch_core.sessions.presentation import session_console_url
 
 from .slack_fakes import FakeResponse
 
@@ -216,14 +215,6 @@ def _tool(item_id: str, title: str, status: str) -> Item:
     )
 
 
-def _session_url() -> str:
-    url = session_console_url(
-        "https://switch.example.com", "agent-1", "room-1", "session-1"
-    )
-    assert url is not None
-    return url
-
-
 async def test_agent_identity() -> None:
     adapter, client = _adapter(third_party_avatars=True, upload_error=None)
 
@@ -387,7 +378,6 @@ async def test_status_card_and_edits() -> None:
         elapsed_seconds=12.0,
         status_only=True,
         publication_token="tok-status",
-        session_url=_session_url(),
         notify_external_id="U0OWNER",
     )
     completed = TurnActivity(
@@ -396,7 +386,6 @@ async def test_status_card_and_edits() -> None:
         elapsed_seconds=75.0,
         status_only=True,
         publication_token="tok-status",
-        session_url=_session_url(),
         notify_external_id="U0OWNER",
     )
 
@@ -417,7 +406,6 @@ async def test_activity_plan_posted_and_edited() -> None:
         turn=_turn("running"),
         elapsed_seconds=5.0,
         publication_token="tok-plan",
-        session_url=_session_url(),
         interrupt_turn_id=TURN,
     )
     completed = TurnActivity(
@@ -425,7 +413,6 @@ async def test_activity_plan_posted_and_edited() -> None:
         turn=_turn("completed"),
         elapsed_seconds=42.0,
         publication_token="tok-plan",
-        session_url=_session_url(),
     )
 
     ref = await adapter.post_rich(CHANNEL, "scout", running, None)
@@ -442,14 +429,12 @@ async def test_activity_streamed_in_a_thread() -> None:
         items=[_tool("i1", "Read README.md", "in-progress")],
         turn=_turn("running"),
         elapsed_seconds=3.0,
-        session_url=_session_url(),
         interrupt_turn_id=TURN,
     )
     completed = TurnActivity(
         items=[_tool("i1", "Read README.md", "completed")],
         turn=_turn("completed"),
         elapsed_seconds=9.0,
-        session_url=_session_url(),
     )
 
     ref = await adapter.post_rich(CHANNEL, "scout", running, thread)
