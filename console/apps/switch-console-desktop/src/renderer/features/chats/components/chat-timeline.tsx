@@ -18,7 +18,6 @@ import { messageAnchorId, threadChip } from '../chat-threads';
 import { hiddenStopRows } from '../stop-rows';
 import type { AgentActivity } from '../stores/chat-activity-store';
 import type { ChatTimeline, PendingSend } from '../stores/chat-timeline-store';
-import { chatsStore } from '../stores/chats';
 import { ChatMarkdown } from '../ui/chat-markdown';
 import { FailedIcon, WorkLogRow } from '../ui/work-log';
 import {
@@ -54,12 +53,7 @@ function isBridged(message: ChatMessage): boolean {
   return message.source !== 'console' && message.source !== 'switch';
 }
 
-function sourceLabel(message: ChatMessage): string {
-  if (!isBridged(message)) return message.sender.name;
-  return `${message.sender.name} · from ${bridgePlatformLabel(message.source)}`;
-}
-
-/** Another person's initials disc: people have no picture in Switch. */
+/** A person's initials disc: people have no picture in Switch. */
 function PersonAvatar({ name }: { name: string }) {
   return (
     <span
@@ -152,7 +146,6 @@ export const ChatTimelineView = observer(function ChatTimelineView({
   );
   const agentOf = (agentId: string | null) => agents.find((agent) => agent.id === agentId) ?? null;
   const find = (messageId: string) => timeline.byId(messageId);
-  const myUserId = chatsStore.userId;
   const turnAgents = new Map(
     [...turnsByMessage].map(([messageId, list]) => [
       messageId,
@@ -216,7 +209,6 @@ export const ChatTimelineView = observer(function ChatTimelineView({
         const chip = threadChip(message, find);
         const turns = turnsByMessage.get(message.messageId) ?? [];
         const agent = agentOf(message.sender.agentId);
-        const mine = message.sender.userId !== null && message.sender.userId === myUserId;
         const agentLabel = {
           name: agent ? chatAgentLabel(agent) : message.sender.name,
           iconUrl: agent?.iconUrl ?? null,
@@ -268,28 +260,6 @@ export const ChatTimelineView = observer(function ChatTimelineView({
                   tone={ended.outcome === 'completed' ? 'passive' : 'failed'}
                 />
               </AgentRow>
-            ) : message.sender.kind === 'human' && mine ? (
-              <div
-                id={messageAnchorId(message.messageId)}
-                className={cn('group/row flex flex-col items-end gap-1', spacing())}
-              >
-                {chip && <ThreadChipButton chip={chip} />}
-                <div className="flex max-w-[85%] items-start gap-1">
-                  <ReplyButton onReply={() => onReply(message)} />
-                  <div className="min-w-0 rounded-2xl bg-background-1 px-4 py-2.5 text-sm leading-relaxed break-words whitespace-pre-wrap">
-                    {message.body}
-                  </div>
-                </div>
-                <ChatAttachments
-                  serverId={serverId}
-                  roomId={timeline.roomId}
-                  attachments={message.attachments}
-                />
-                <span className="text-xs text-foreground-passive">
-                  {sourceLabel(message)}
-                  {turns.some(({ turn }) => turn.status === 'queued') && ' · queued'}
-                </span>
-              </div>
             ) : message.sender.kind === 'human' ? (
               <div
                 id={messageAnchorId(message.messageId)}
@@ -422,7 +392,7 @@ const PendingBubble = observer(function PendingBubble({
     : null;
   return (
     <div
-      className={cn('flex flex-col items-end gap-1', className)}
+      className={cn('flex flex-col items-start gap-1 pl-10', className)}
       aria-busy={send.state === 'sending'}
     >
       {chip && <ThreadChipButton chip={chip} />}
@@ -430,7 +400,7 @@ const PendingBubble = observer(function PendingBubble({
         {send.body}
       </div>
       {send.files.length > 0 && (
-        <ul className="flex flex-col items-end gap-0.5 text-xs">
+        <ul className="flex flex-col items-start gap-0.5 text-xs">
           {send.files.map((file) => (
             <li
               key={file.id}
@@ -450,8 +420,8 @@ const PendingBubble = observer(function PendingBubble({
           <Loader2 className="size-3 animate-spin" /> Sending…
         </span>
       ) : (
-        <div role="alert" className="flex max-w-[85%] flex-col items-end gap-1 text-xs">
-          <span className="text-right text-foreground-destructive">
+        <div role="alert" className="flex max-w-[85%] flex-col items-start gap-1 text-xs">
+          <span className="text-foreground-destructive">
             {send.state === 'conflict'
               ? 'This request id was already used for a different message, so it was not sent. Discard it and send again.'
               : send.uncertain
