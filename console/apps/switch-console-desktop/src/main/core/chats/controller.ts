@@ -185,13 +185,9 @@ export const chatsController = createRPCController({
     onServer(params.serverId, (server) => addChatMember(server, params.roomId, params.userId)),
   removeMember: (params: { serverId: string; roomId: string; userId: string }): Promise<void> =>
     onServer(params.serverId, (server) => removeChatMember(server, params.roomId, params.userId)),
-  /** The people of the window's workspace on the server, who a chat can be opened to. */
-  workspaceMembers: async (serverId: string): Promise<WorkspaceMember[]> => {
-    const workspace = await requireWorkspaceForServer(serverId);
-    if (!workspace.tenantId) throw new Error('This workspace has no tenant to list people from.');
-    const tenantId = workspace.tenantId;
-    return onServer(serverId, (server) => listWorkspaceMembers(server, tenantId));
-  },
+  /** The people of a workspace on the server, who a chat can be opened to. */
+  workspaceMembers: (params: { serverId: string; tenantId: string }): Promise<WorkspaceMember[]> =>
+    onServer(params.serverId, (server) => listWorkspaceMembers(server, params.tenantId)),
   messages: (params: {
     serverId: string;
     roomId: string;

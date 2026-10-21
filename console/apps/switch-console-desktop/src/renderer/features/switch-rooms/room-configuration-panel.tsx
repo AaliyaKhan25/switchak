@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ExternalLink, FileText, Loader2, Plus, RefreshCw, Search, X } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { opensAsConsoleChat } from '@renderer/features/chats/console-chat-redirect';
 import { chatFailure } from '@renderer/features/chats/stores/chat-errors';
 import { chatsStore } from '@renderer/features/chats/stores/chats';
@@ -111,6 +111,13 @@ const ChatParticipantsSection = observer(function ChatParticipantsSection({
     queryKey: membersKey,
     queryFn: () => rpc.chats.members(serverId, roomId),
   });
+  useEffect(
+    () =>
+      chatsStore.onChatChange(roomId, () => {
+        void queryClient.invalidateQueries({ queryKey: ['chat-members', serverId, roomId] });
+      }),
+    [queryClient, serverId, roomId]
+  );
   const [adding, setAdding] = useState<'agent' | 'person' | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -134,10 +141,7 @@ const ChatParticipantsSection = observer(function ChatParticipantsSection({
         removeAgent: (agentId) =>
           void remove(agentId, async () => {
             await rpc.chats.removeAgent({ serverId, roomId, agentId });
-            chatsStore.add(serverId, {
-              ...chat,
-              agents: chat.agents.filter((agent) => agent.id !== agentId),
-            });
+            chatsStore.dropAgent(roomId, agentId);
           }),
         // The owner stays: there is no one to hand the chat to.
         removePerson: (userId) =>
@@ -207,6 +211,7 @@ const ChatParticipantsSection = observer(function ChatParticipantsSection({
       {adding === 'person' && (
         <ChatAddPersonPanel
           serverId={serverId}
+          tenantId={chatsStore.tenantId}
           roomId={roomId}
           memberIds={new Set(people.map((person) => person.userId))}
           onAdded={(next) => queryClient.setQueryData(membersKey, next)}
@@ -262,26 +267,36 @@ const ChatAddAgentPanel = observer(function ChatAddAgentPanel({
 /** The workspace's people not yet in the chat. */
 function ChatAddPersonPanel({
   serverId,
+  tenantId,
   roomId,
   memberIds,
   onAdded,
 }: {
   serverId: string;
+  /** The workspace the chats follow; its roster is the one offered. */
+  tenantId: string | null;
   roomId: string;
   memberIds: Set<string>;
   onAdded: (members: Awaited<ReturnType<typeof rpc.chats.addMember>>) => void;
 }) {
   const roster = useQuery({
-    queryKey: ['workspace-members', serverId],
-    queryFn: () => rpc.chats.workspaceMembers(serverId),
+    queryKey: ['workspace-members', serverId, tenantId],
+    queryFn: () => rpc.chats.workspaceMembers({ serverId, tenantId: tenantId as string }),
+    enabled: tenantId !== null,
   });
   return (
     <AddParticipantPanel
       noun="person"
       searchPlaceholder="Search people in this workspace…"
       allInText="Everyone in this workspace is already in this chat."
-      loading={roster.isPending}
-      loadError={roster.isError ? failureText(roster.error, 'Could not list the people.') : null}
+      loading={tenantId !== null && roster.isPending}
+      loadError={
+        tenantId === null
+          ? 'This workspace has no tenant to list people from.'
+          : roster.isError
+            ? failureText(roster.error, 'Could not list the people.')
+            : null
+      }
       candidates={(roster.data ?? [])
         .filter((person) => !memberIds.has(person.userId))
         .map((person) => ({
