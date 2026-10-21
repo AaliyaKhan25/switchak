@@ -115,6 +115,9 @@ export class GatewayUi {
     await this.page.getByRole('menuitem', { name: 'Sign out' }).click();
     this.signedIn = false;
     await expect.poll(() => this.path(), { timeout: 15_000 }).toBe('/login');
+    // The login form fetches its config as it mounts; navigating away before
+    // that answers aborts it, which the app reports as a console error.
+    await this.settled();
   }
 
   /** The path the app is showing. */
