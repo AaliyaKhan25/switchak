@@ -5,13 +5,14 @@ a thread — against real Postgres, through the shared harness."""
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 
 import httpx
 import pytest
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from switch_core.db.models import Agent, Room, room_agents
+from switch_core.db.models import Agent, Message, Room, room_agents
 from tests.switch_core.gateway.conftest import _Harness
 from tests.switch_core.gateway.test_chats_routes import (
     _code,
@@ -177,16 +178,55 @@ async def test_an_owner_grant_does_not_make_a_group(chats: _Harness) -> None:
     assert await _addressed(chats, room_id, agent, "hello") is True
 
 
-async def test_concurrent_adds_leave_one_consistent_group(chats: _Harness) -> None:
+async def test_a_person_who_fails_to_commit_leaves_the_chat_direct(
+    chats: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
     agent = await chats.agent("helper", owner=chats.alice)
     room_id = await chats.new_chat(chats.alice, agent, "c1")
+    provisioning = chats.service._provisioning
+    record_join = provisioning.record_join
+
+    async def join_then_fail(
+        session: AsyncSession, room_id: str, user_id: str
+    ) -> Callable[[], None]:
+        await record_join(session, room_id, user_id)
+        raise RuntimeError("lost before commit")
+
+    monkeypatch.setattr(provisioning, "record_join", join_then_fail)
+    with pytest.raises(RuntimeError, match="lost before commit"):
+        await chats.invite(chats.alice, room_id, chats.bob)
+    assert await _channel_type(chats, room_id) == "direct"
+    assert await _reads(chats, chats.bob, room_id) == 403
+    async with chats.factory() as session:
+        bob = await chats.service.member_client(session, chats.bob.id)
+        assert bob is not None
+        arrivals = await session.scalar(
+            select(func.count())
+            .select_from(Message)
+            .where(Message.room_id == room_id, Message.sender_client_id == bob.id)
+        )
+    assert arrivals == 0
+
+
+async def test_concurrent_adds_leave_one_consistent_group(
+    chats: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    agent = await chats.agent("helper", owner=chats.alice)
+    room_id = await chats.new_chat(chats.alice, agent, "c1")
+    lock = chats.service._locked_room
+    both_ready = asyncio.Barrier(2)
+
+    async def together(session: AsyncSession, locked_room_id: str) -> Room:
+        await both_ready.wait()
+        return await lock(session, locked_room_id)
+
+    monkeypatch.setattr(chats.service, "_locked_room", together)
 
     responses = await asyncio.gather(
         chats.invite(chats.alice, room_id, chats.bob),
         chats.invite(chats.alice, room_id, chats.admin),
-        chats.invite(chats.alice, room_id, chats.bob),
     )
-    assert [r.status_code for r in responses] == [200, 200, 200]
+    assert [r.status_code for r in responses] == [200, 200]
     assert await _channel_type(chats, room_id) == "channel_private"
     members = await chats.client.get(
         f"/chats/{room_id}/members", headers=chats.as_user(chats.alice)

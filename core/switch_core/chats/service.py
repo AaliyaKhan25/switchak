@@ -791,9 +791,10 @@ class ChatService:
     async def _make_group(self, session: AsyncSession, room: Room) -> None:
         """Turn a Switch Console direct chat into a group, for good.
 
-        Committed before the person or agent is added, so no message routes
-        as direct once the room has them. A bridged room's type is its
-        platform's and is never touched.
+        Written in the transaction that adds the person or agent, with the
+        room row locked, so no message routes as direct once the room has
+        them and a failed add leaves the chat as it was. A bridged room's
+        type is its platform's and is never touched.
         """
         if room.channel_type != "direct" or "chat_operation_id" not in (
             room.metadata_ or {}
@@ -815,12 +816,18 @@ class ChatService:
             target = await self._require_tenant_member(
                 session, tenant_id, target_user_id
             )
+        client = await self.member_actor(tenant_id, target)
+        async with tenant_session(self.session_factory, tenant_id) as session:
+            room = await self._locked_room(session, room.id)
             # The creator is the direct chat's own person; anyone else makes a group.
             if target_user_id not in (room.created_by, room.owner_id):
                 await self._make_group(session, room)
-                await session.commit()
-        client = await self.member_actor(tenant_id, target)
-        await self._join(tenant_id, room, client)
+            with tenant_scope(tenant_id):
+                joined = await self._provisioning.record_join(
+                    session, room.transport_room_id, client.transport_user_id
+                )
+            await session.commit()
+        joined()
         await self._make_lasting(tenant_id, target_user_id, room.id)
         async with tenant_session(self.session_factory, tenant_id) as session:
             member_ids = [member.id for member, _ in await self.members(session, room)]
@@ -891,14 +898,24 @@ class ChatService:
         async with tenant_session(self.session_factory, tenant_id) as session:
             return await self._room(session, tenant_id, room_id)
 
+    async def _locked_room(self, session: AsyncSession, room_id: str) -> Room:
+        """The room row, locked against another membership change until this
+        transaction ends. `FOR NO KEY UPDATE`, which the key-share lock an
+        insert referencing the room takes does not conflict with."""
+        locked = await session.scalar(
+            select(Room)
+            .where(Room.id == room_id)
+            .with_for_update(key_share=True)
+            .execution_options(populate_existing=True)
+        )
+        assert locked is not None
+        return locked
+
     async def _group_if_several_agents(self, session: AsyncSession, room: Room) -> None:
         """`_make_group` once the room holds more than one agent, in the
         transaction that added the agent. The room row is locked before counting, so a
         concurrent add counts this one's agent once this one commits."""
-        locked = await session.scalar(
-            select(Room).where(Room.id == room.id).with_for_update(key_share=True)
-        )
-        assert locked is not None
+        locked = await self._locked_room(session, room.id)
         if len(await self._room_store.get_agent_ids(session, room.id)) > 1:
             await self._make_group(session, locked)
 
