@@ -66,6 +66,7 @@ def _client(name: str = "flintai-sdk.ts") -> SimpleNamespace:
     resolver.addressed_without_lookup = lambda **kw: (
         AddressingResolver.addressed_without_lookup(resolver, **kw)
     )
+
     async def _one_agent_direct_room(
         _session: object, *, room_id: str, channel_type: str | None
     ) -> bool:
