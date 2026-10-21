@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canCreate, roomCreateRequest } from './room-create-request';
+import { CreateRequestIds, canCreate, roomCreateRequest } from './room-create-request';
 
 const form = {
   serverId: 's',
@@ -47,5 +47,19 @@ describe('canCreate', () => {
     expect(canCreate({ bridgeId: 'b1', name: 'x', description: '' })).toBe(false);
     expect(canCreate({ bridgeId: 'b1', name: 'x', description: 'd' })).toBe(true);
     expect(canCreate({ bridgeId: null, name: ' ', description: 'd' })).toBe(false);
+  });
+});
+
+describe('CreateRequestIds', () => {
+  it('reuses the id for an unchanged form and takes a new one on a change or a success', () => {
+    let n = 0;
+    const ids = new CreateRequestIds(() => `id-${++n}`);
+    const chatForm = { bridgeId: null, name: 'Ship review', agentIds: ['a1', 'a2'] };
+    const first = ids.for(chatForm);
+    expect(ids.for({ ...chatForm, name: ' Ship review ' })).toBe(first);
+    expect(ids.for({ ...chatForm, name: 'Ship reviews' })).not.toBe(first);
+    expect(ids.for({ ...chatForm, name: 'Ship reviews', agentIds: ['a1'] })).toBe('id-3');
+    ids.succeeded();
+    expect(ids.for({ ...chatForm, name: 'Ship reviews', agentIds: ['a1'] })).toBe('id-4');
   });
 });

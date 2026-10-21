@@ -64,3 +64,29 @@ export function roomCreateRequest(form: {
 export function canCreate(form: { bridgeId: string | null; name: string; description: string }) {
   return form.name.trim() !== '' && (form.bridgeId === null || form.description.trim() !== '');
 }
+
+/**
+ * One request id per form, as the direct-chat starter keeps one per agent: a
+ * retry of an unchanged form after an answer that never arrived resumes the
+ * chat it may already have made instead of making a second; a changed form,
+ * or a create that succeeded, takes a new one.
+ */
+export class CreateRequestIds {
+  private key: string | null = null;
+  private id = '';
+
+  constructor(private readonly newId: () => string) {}
+
+  for(form: { bridgeId: string | null; name: string; agentIds: string[] }): string {
+    const key = JSON.stringify([form.bridgeId, form.name.trim(), form.agentIds]);
+    if (key !== this.key) {
+      this.key = key;
+      this.id = this.newId();
+    }
+    return this.id;
+  }
+
+  succeeded(): void {
+    this.key = null;
+  }
+}

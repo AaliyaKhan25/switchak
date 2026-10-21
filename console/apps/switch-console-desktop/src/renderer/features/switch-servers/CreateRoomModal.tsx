@@ -33,7 +33,7 @@ import { DisclosureRow } from '@renderer/lib/ui/disclosure-row';
 import { Input } from '@renderer/lib/ui/input';
 import { Textarea } from '@renderer/lib/ui/textarea';
 import type { RemoteAgentSummary } from '@shared/core/switch-servers/switch-servers';
-import { canCreate, roomCreateRequest } from './room-create-request';
+import { CreateRequestIds, canCreate, roomCreateRequest } from './room-create-request';
 import { switchServersStore } from './switch-servers-store';
 import { useMyIdentities } from './use-my-identities';
 
@@ -68,6 +68,7 @@ export const CreateRoomModal = observer(function CreateRoomModal({
   const [agents, setAgents] = useState<RemoteAgentSummary[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [requestIds] = useState(() => new CreateRequestIds(() => crypto.randomUUID()));
 
   const bridgesQuery = useQuery({
     queryKey: ['remote-bridges', workspaceId],
@@ -152,10 +153,15 @@ export const CreateRoomModal = observer(function CreateRoomModal({
         description,
         instructions,
         agentIds: agents.map((a) => a.id),
-        requestId: crypto.randomUUID(),
+        requestId: requestIds.for({
+          bridgeId: selectedBridge?.id ?? null,
+          name,
+          agentIds: agents.map((a) => a.id),
+        }),
       });
       if (request.kind === 'chat') {
         const chat = await rpc.chats.create(request.params);
+        requestIds.succeeded();
         chatsStore.add(serverId, chat);
         sidebarStore.setGrouping('room');
         openRoomView(chat.roomId);
@@ -205,6 +211,7 @@ export const CreateRoomModal = observer(function CreateRoomModal({
     description,
     instructions,
     agents,
+    requestIds,
     onSuccess,
     setCloseGuard,
   ]);
