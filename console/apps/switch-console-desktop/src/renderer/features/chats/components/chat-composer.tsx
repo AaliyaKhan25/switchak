@@ -135,6 +135,7 @@ export const ChatComposer = observer(function ChatComposer({
   serverId,
   timeline,
   agents,
+  groupName,
   activity,
   replyTo,
   onClearReply,
@@ -143,6 +144,8 @@ export const ChatComposer = observer(function ChatComposer({
   serverId: string;
   timeline: ChatTimeline;
   agents: ChatAgent[];
+  /** The chat's name when it is a group, which is who a message goes to; null in a direct chat. */
+  groupName: string | null;
   activity: AgentActivity | null;
   replyTo: ChatMessage | null;
   onClearReply: () => void;
@@ -187,6 +190,7 @@ export const ChatComposer = observer(function ChatComposer({
     return () => document.removeEventListener('keydown', onKeyDown);
   }, []);
   const agent = agents[0] ?? null;
+  const recipient = groupName ?? (agent ? chatAgentLabel(agent) : 'the agent');
   const stopActivity = activity?.runningTurn ? activity : null;
 
   const addFiles = (list: File[]) => {
@@ -287,8 +291,8 @@ export const ChatComposer = observer(function ChatComposer({
             <PromptInputTextarea
               ref={input}
               className="min-h-0 px-1 py-1.5"
-              aria-label={`Message ${agent ? chatAgentLabel(agent) : 'the agent'}`}
-              placeholder={disabled ?? `Message ${agent ? chatAgentLabel(agent) : 'the agent'}...`}
+              aria-label={`Message ${recipient}`}
+              placeholder={disabled ?? `Message ${recipient}...`}
               value={draft}
               disabled={disabled !== null}
               onChange={(event) => {
