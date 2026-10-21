@@ -32,7 +32,7 @@ function message(roomId: string, seq: number): ChatMessage {
     format: null,
     threadRootId: null,
     attachments: [],
-    clientTxn: null,
+    clientTxn: null, namedAgentIds: [], threadReplyCount: 0, threadLastReplySeq: null,
   };
 }
 

@@ -19,7 +19,7 @@ function message(seq: number, extra: Partial<ChatMessage> = {}): ChatMessage {
     format: null,
     threadRootId: null,
     attachments: [],
-    clientTxn: null,
+    clientTxn: null, namedAgentIds: [], threadReplyCount: 0, threadLastReplySeq: null,
     ...extra,
   };
 }
@@ -44,6 +44,7 @@ function api(overrides: Partial<TimelineApi> = {}) {
   const calls = { send: [] as Parameters<TimelineApi['send']>[1][], upload: [] as string[] };
   const value: TimelineApi = {
     messages: async () => ({ messages: [], headSeq: 0, hasMore: false }),
+    threadMessages: async () => [],
     upload: async (_room, file) => {
       calls.upload.push(file.uploadId);
       return {

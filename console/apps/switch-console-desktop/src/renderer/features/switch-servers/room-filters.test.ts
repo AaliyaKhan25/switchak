@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { isConsoleDirectChat, isConsoleDirectChatSummary } from './room-filters';
 
-const agent = { id: 'a', name: 'a', displayName: null, iconUrl: null, provider: null };
+const agent = { id: 'a', name: 'a', displayName: null, iconUrl: null, provider: null, alias: null, ownerName: null, ownedByViewer: false };
 
 describe('isConsoleDirectChat', () => {
   it('returns true for a direct unbridged room with one agent', () => {

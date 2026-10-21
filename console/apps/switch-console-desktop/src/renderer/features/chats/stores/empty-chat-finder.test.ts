@@ -8,7 +8,7 @@ const makeChat = (overrides: Partial<ChatSummary> = {}): ChatSummary => ({
   channelType: 'direct',
   bridgeType: null,
   channelName: null,
-  agents: [{ id: 'agent-1', name: 'Agent', displayName: null, iconUrl: null, provider: null }],
+  agents: [{ id: 'agent-1', name: 'Agent', displayName: null, iconUrl: null, provider: null, alias: null, ownerName: null, ownedByViewer: false }],
   canManage: false,
   ownsAgent: false,
   lastMessage: null,
@@ -32,7 +32,7 @@ const makeMessage = (overrides: Partial<ChatMessage> = {}): ChatMessage => ({
   format: null,
   threadRootId: null,
   attachments: [],
-  clientTxn: null,
+  clientTxn: null, namedAgentIds: [], threadReplyCount: 0, threadLastReplySeq: null,
   ...overrides,
 });
 
@@ -222,7 +222,7 @@ describe('EmptyChatFinder', () => {
     const chat = makeChat({
       roomId: 'room-1',
       name: 'Chat with Agent',
-      agents: [{ id: 'agent-1', name: 'Agent', displayName: null, iconUrl: null, provider: null }],
+      agents: [{ id: 'agent-1', name: 'Agent', displayName: null, iconUrl: null, provider: null, alias: null, ownerName: null, ownedByViewer: false }],
       lastMessage: {
         seq: 1,
         sentAt: '2024-01-01T00:00:00Z',
@@ -243,7 +243,7 @@ describe('EmptyChatFinder', () => {
     const chat = makeChat({
       roomId: 'room-1',
       name: 'New Chat',
-      agents: [{ id: 'agent-1', name: 'Agent', displayName: null, iconUrl: null, provider: null }],
+      agents: [{ id: 'agent-1', name: 'Agent', displayName: null, iconUrl: null, provider: null, alias: null, ownerName: null, ownedByViewer: false }],
       lastMessage: {
         seq: 1,
         sentAt: '2024-01-01T00:00:00Z',
@@ -264,7 +264,7 @@ describe('EmptyChatFinder', () => {
     const chat = makeChat({
       roomId: 'room-1',
       name: 'New chat',
-      agents: [{ id: 'agent-1', name: 'Agent', displayName: null, iconUrl: null, provider: null }],
+      agents: [{ id: 'agent-1', name: 'Agent', displayName: null, iconUrl: null, provider: null, alias: null, ownerName: null, ownedByViewer: false }],
       lastMessage: {
         seq: 1,
         sentAt: '2024-01-01T00:00:00Z',
@@ -285,7 +285,7 @@ describe('EmptyChatFinder', () => {
     const chat = makeChat({
       roomId: 'room-1',
       name: 'Chat with Ada',
-      agents: [{ id: 'agent-1', name: 'ada', displayName: 'Ada', iconUrl: null, provider: null }],
+      agents: [{ id: 'agent-1', name: 'ada', displayName: 'Ada', iconUrl: null, provider: null, alias: null, ownerName: null, ownedByViewer: false }],
       lastMessage: {
         seq: 1,
         sentAt: '2024-01-01T00:00:00Z',
@@ -347,8 +347,8 @@ describe('EmptyChatFinder', () => {
       roomId: 'room-1',
       name: 'Chat with Ada, Bob',
       agents: [
-        { id: 'agent-1', name: 'ada', displayName: 'Ada', iconUrl: null, provider: null },
-        { id: 'agent-2', name: 'bob', displayName: 'Bob', iconUrl: null, provider: null },
+        { id: 'agent-1', name: 'ada', displayName: 'Ada', iconUrl: null, provider: null, alias: null, ownerName: null, ownedByViewer: false },
+        { id: 'agent-2', name: 'bob', displayName: 'Bob', iconUrl: null, provider: null, alias: null, ownerName: null, ownedByViewer: false },
       ],
       lastMessage: {
         seq: 1,

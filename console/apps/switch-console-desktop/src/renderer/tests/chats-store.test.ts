@@ -20,7 +20,7 @@ function summary(roomId: string, seq: number): ChatSummary {
     channelType: 'direct',
     bridgeType: null,
     channelName: null,
-    agents: [{ id: 'a1', name: 'ada', displayName: null, iconUrl: null, provider: null }],
+    agents: [{ id: 'a1', name: 'ada', displayName: null, iconUrl: null, provider: null, alias: null, ownerName: null, ownedByViewer: false }],
     canManage: true,
     ownsAgent: false,
     lastMessage: { seq, sentAt: '2026-01-01T00:00:00Z', preview: 'hi', senderName: 'Ada' },
@@ -39,7 +39,7 @@ function message(roomId: string, seq: number): ChatMessage {
     format: null,
     threadRootId: null,
     attachments: [],
-    clientTxn: null,
+    clientTxn: null, namedAgentIds: [], threadReplyCount: 0, threadLastReplySeq: null,
   };
 }
 

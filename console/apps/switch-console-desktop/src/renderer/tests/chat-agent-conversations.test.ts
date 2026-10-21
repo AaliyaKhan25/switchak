@@ -11,7 +11,7 @@ const agent = (id: string, name: string, displayName: string | null = null) => (
   name,
   displayName,
   iconUrl: null,
-  provider: null,
+  provider: null, alias: null, ownerName: null, ownedByViewer: false,
 });
 
 const summary = (overrides: Partial<ChatSummary>): ChatSummary => ({
