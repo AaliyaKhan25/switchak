@@ -108,6 +108,12 @@ _MM_REQUEST_TIMEOUT_SECONDS = 10.0
 # next.
 _MM_SOCKET_CLOSE_TIMEOUT_SECONDS = 2.0
 
+# How long a directory search made while the adapter is still connecting waits
+# for it. A bridge is searched as soon as it is registered (the gateway's
+# directory dialog, the setup scripts), and connecting is a log-in and two
+# reads, so it is normally under a second.
+_CONNECT_WAIT_SECONDS = 15.0
+
 # Mattermost channel types a bot can be *added* to: open and private channels.
 # Membership of a DM ("D") or group DM ("G") is a property of the conversation
 # existing rather than of anyone joining, so Mattermost raises no `user_added`
@@ -456,6 +462,10 @@ class MattermostAdapter(PlatformAdapter):
 
         self._admin_driver: Driver | None = None
         self._team_id: str = ""
+        # Set once the admin driver has logged in and the team is known: what
+        # a directory search needs. The lifecycle starts the adapter in the
+        # background, so a search can arrive before then.
+        self._connected = asyncio.Event()
         self._admin_user_id: str = ""
 
         self._agent_bots: dict[str, dict[str, str]] = {}
@@ -542,11 +552,12 @@ class MattermostAdapter(PlatformAdapter):
         self._on_app_joined = on_app_joined
         self._main_loop = asyncio.get_event_loop()
 
-        self._admin_driver = self._create_driver(
+        admin_driver = self._create_driver(
             login_id=self._config.admin_user,
             password=self._config.admin_password,
         )
-        await self._main_loop.run_in_executor(None, self._admin_driver.login)
+        await self._main_loop.run_in_executor(None, admin_driver.login)
+        self._admin_driver = admin_driver
 
         me = await self._main_loop.run_in_executor(
             None, self._admin_driver.users.get_user, "me"
@@ -557,6 +568,7 @@ class MattermostAdapter(PlatformAdapter):
             None, self._admin_driver.teams.get_team_by_name, self._config.team_name
         )
         self._team_id = team["id"]
+        self._connected.set()
 
         await self._ensure_admin_bot()
 
@@ -569,6 +581,7 @@ class MattermostAdapter(PlatformAdapter):
         )
 
     async def stop(self) -> None:
+        self._connected.clear()
         for agent_name in list(self._ws_stops):
             self._close_bot_socket(agent_name)
         self._admin_driver = None
@@ -2933,14 +2946,21 @@ class MattermostAdapter(PlatformAdapter):
         Scoped to the bridge's team, and bots are dropped — a bot is not a
         person who can own an agent.
         """
-        if not self._admin_driver or not self._main_loop:
-            raise RuntimeError("Mattermost adapter is not started")
-
         term = query.strip()
         if not term:
             return []
 
+        try:
+            async with asyncio.timeout(_CONNECT_WAIT_SECONDS):
+                await self._connected.wait()
+        except TimeoutError:
+            raise RuntimeError(
+                "The Mattermost bridge is not connected yet, so its directory "
+                f"cannot be searched; it did not connect within {_CONNECT_WAIT_SECONDS:.0f}s."
+            ) from None
         driver = self._admin_driver
+        if driver is None or self._main_loop is None:
+            raise RuntimeError("Mattermost adapter is not started")
         try:
             found = await self._main_loop.run_in_executor(
                 None,
