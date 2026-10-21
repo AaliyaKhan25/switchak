@@ -13,6 +13,9 @@ export const chatAgentSchema = z.object({
   displayName: z.string().nullable(),
   iconUrl: z.string().nullable(),
   provider: z.string().nullable(),
+  alias: z.string().optional(),
+  ownerName: z.string().optional(),
+  ownedByViewer: z.boolean().optional(),
 });
 export type ChatAgent = z.infer<typeof chatAgentSchema>;
 
@@ -67,6 +70,9 @@ export const chatMessageSchema = z.object({
   threadRootId: z.string().nullable(),
   attachments: z.array(chatAttachmentSchema),
   clientTxn: z.string().nullable(),
+  namedAgentIds: z.array(z.string()).optional(),
+  threadReplyCount: z.number().int().optional(),
+  threadLastReplySeq: z.number().int().nullable().optional(),
 });
 export type ChatMessage = z.infer<typeof chatMessageSchema>;
 
@@ -78,7 +84,14 @@ export const chatMessagesPageSchema = z.object({
   hasMore: z.boolean(),
 });
 export type ChatMessagesPage = z.infer<typeof chatMessagesPageSchema>;
+export const chatThreadMessagesPageSchema = z.object({
+  messages: z.array(chatMessageSchema),
+  headSeq: z.number().int(),
+  hasMore: z.boolean(),
+});
+export type ChatThreadMessagesPage = z.infer<typeof chatThreadMessagesPageSchema>;
 export const chatSentSchema = z.object({ messages: z.array(chatMessageSchema) });
+export const chatAgentAddedSchema = z.object({ chat: chatSummarySchema });
 export const chatUploadSchema = z.object({
   uploadId: z.string(),
   uri: z.string(),
@@ -116,6 +129,7 @@ export type ChatSendInput = {
   body: string;
   threadRootId: string | null;
   uploadIds: string[];
+  mentionAgentIds?: string[];
 };
 
 export type ChatUploadInput = {

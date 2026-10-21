@@ -33,13 +33,16 @@ import {
 } from './chat-streams';
 import { generateChatTitle } from './chat-title';
 import {
+  addChatAgent,
   answerChatApproval,
   archiveChat,
   createChat,
   fetchChatMedia,
   fetchChatMessages,
   fetchRoomActivity,
+  fetchThreadMessages,
   listChats,
+  removeChatAgent,
   renameChat,
   sendChatControl,
   sendChatMessage,
@@ -147,19 +150,33 @@ export const chatsController = createRPCController({
   /** `greeting`: what the chat's one agent, the caller's own, says as it joins, in place of its usual line. */
   create: async (params: {
     serverId: string;
-    agentIds: string[];
+    agentIds?: string[];
+    memberUserIds?: string[];
     name: string | null;
     requestId: string;
     greeting: string | null;
   }): Promise<ChatSummary> => {
     const chat = await onServer(params.serverId, (server) => createChat(server, params));
-    if (params.agentIds.length === 1)
+    const agentIds = params.agentIds ?? [];
+    if (agentIds.length === 1)
       void warmChat(
-        { serverId: params.serverId, agentId: params.agentIds[0], roomId: chat.roomId },
+        { serverId: params.serverId, agentId: agentIds[0], roomId: chat.roomId },
         false
       );
     return chat;
   },
+  addAgent: (params: {
+    serverId: string;
+    roomId: string;
+    agentId: string;
+  }): Promise<ChatSummary> =>
+    onServer(params.serverId, (server) => addChatAgent(server, params.roomId, params.agentId)),
+  removeAgent: (params: {
+    serverId: string;
+    roomId: string;
+    agentId: string;
+  }): Promise<void> =>
+    onServer(params.serverId, (server) => removeChatAgent(server, params.roomId, params.agentId)),
   messages: (params: {
     serverId: string;
     roomId: string;
@@ -179,8 +196,23 @@ export const chatsController = createRPCController({
         body: input.body,
         threadRootId: input.threadRootId,
         uploadIds: input.uploadIds,
+        mentionAgentIds: input.mentionAgentIds,
       })
     ),
+  threadMessages: (params: {
+    serverId: string;
+    roomId: string;
+    rootId: string;
+    beforeSeq: number | null;
+    limit: number;
+  }): Promise<ChatMessage[]> =>
+    onServer(params.serverId, async (server) => {
+      const page = await fetchThreadMessages(server, params.roomId, params.rootId, {
+        beforeSeq: params.beforeSeq,
+        limit: Math.min(200, Math.max(1, params.limit)),
+      });
+      return page.messages;
+    }),
   upload: (input: ChatUploadInput): Promise<ChatUpload> =>
     onServer(input.serverId, (server) =>
       uploadChatAttachment(server, input.roomId, {

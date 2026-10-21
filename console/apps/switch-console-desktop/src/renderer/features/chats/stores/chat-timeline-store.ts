@@ -58,6 +58,12 @@ export type SendInput = {
 
 export type TimelineApi = {
   messages: (roomId: string, beforeSeq: number | null, limit: number) => Promise<ChatMessagesPage>;
+  threadMessages: (
+    roomId: string,
+    rootId: string,
+    beforeSeq: number | null,
+    limit: number
+  ) => Promise<ChatMessage[]>;
   upload: (
     roomId: string,
     file: { uploadId: string; name: string; mimeType: string; data: string }
@@ -69,6 +75,7 @@ export type TimelineApi = {
       body: string;
       threadRootId: string | null;
       uploadIds: string[];
+      mentionAgentIds?: string[];
     }
   ) => Promise<ChatMessage[]>;
   newId: () => string;
@@ -85,6 +92,8 @@ export class ChatTimeline {
   notMember = false;
   /** The person was a member and lost access while the chat was known. */
   accessLost = false;
+  /** Thread reply counts by root message id, tracked from live events even if root not loaded. */
+  threadReplyCounts = new Map<string, number>();
 
   constructor(
     readonly roomId: string,
@@ -101,6 +110,22 @@ export class ChatTimeline {
     return this.messages.find((message) => message.messageId === messageId);
   }
 
+  /** Get the live reply count for a thread root, or the server's count if the root is loaded. */
+  threadReplyCount(rootId: string): number {
+    const root = this.byId(rootId);
+    if (root?.threadReplyCount !== undefined) return root.threadReplyCount;
+    return this.threadReplyCounts.get(rootId) ?? 0;
+  }
+
+  /** Load thread messages for a root. */
+  async loadThread(rootId: string, beforeSeq: number | null = null): Promise<ChatMessage[]> {
+    try {
+      return await this.api.threadMessages(this.roomId, rootId, beforeSeq, PAGE_SIZE);
+    } catch (error) {
+      throw chatFailure(error);
+    }
+  }
+
   /** Merge a message from the room: by sequence, once, retiring the send it echoes. */
   apply(message: ChatMessage): void {
     if (message.roomId !== this.roomId) return;
@@ -110,6 +135,10 @@ export class ChatTimeline {
     const at = this.messages.findIndex((each) => each.seq > message.seq);
     if (at === -1) this.messages.push(message);
     else this.messages.splice(at, 0, message);
+    if (message.threadRootId) {
+      const current = this.threadReplyCounts.get(message.threadRootId) ?? 0;
+      this.threadReplyCounts.set(message.threadRootId, current + 1);
+    }
   }
 
   async load(): Promise<void> {
