@@ -1,12 +1,10 @@
 {
   "_generated": "by scripts/e2e_surface.py; do not edit. Run `just e2e-surface`.",
   "operations": [
-    "accept_task",
     "add_users_to_room",
     "archive_room",
     "assume_role",
     "attach_reference_to_room",
-    "cancel_task",
     "connect_to_room",
     "create_agent",
     "create_reference",
@@ -15,12 +13,10 @@
     "create_room_from_yaml",
     "create_room_group",
     "define_role",
-    "delegate_task",
     "delete_role",
     "delete_room_document",
     "delete_template",
     "edit_role",
-    "finalise_task",
     "get_advanced_config",
     "get_agent_detail",
     "get_my_context",
@@ -44,13 +40,14 @@
     "list_roles",
     "list_room_groups",
     "list_rooms",
-    "list_tasks",
     "list_templates",
     "load_internal_documents",
     "post_message",
     "read_context",
     "release_role",
+    "remove_agent_from_room",
     "remove_agent_service",
+    "request_agent_deletion",
     "run_template",
     "save_template",
     "send_targeted_message",
@@ -60,7 +57,6 @@
     "update_agent_detail",
     "update_room",
     "update_room_document",
-    "update_task",
     "update_template"
   ],
   "gatewayRoutes": [
@@ -1318,6 +1314,11 @@
     },
     {
       "route": "PUT /gateway/agents/{agent_id}/icon",
+      "auth": "session",
+      "flags": []
+    },
+    {
+      "route": "PUT /gateway/agents/{agent_id}/name",
       "auth": "session",
       "flags": []
     },

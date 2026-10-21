@@ -2,15 +2,15 @@ import type {
   MattermostChannel,
   MattermostClient,
   MattermostUser,
-} from '../clients/mattermost-client.ts';
+} from "../clients/mattermost-client.ts";
 import {
   sleep,
   type RegisteredAgent,
   type RoomDetail,
   type SwitchClient,
-} from '../clients/switch-client.ts';
-import type { HarnessAgentType, HarnessEnv } from '../core/env.ts';
-import type { NameScope } from '../core/run.ts';
+} from "../clients/switch-client.ts";
+import type { HarnessAgentType, HarnessEnv } from "../core/env.ts";
+import type { NameScope } from "../core/run.ts";
 
 /**
  * What a scenario stands up, and the teardown that removes it.
@@ -27,12 +27,16 @@ export class Fixtures {
   readonly switchClient: SwitchClient;
   readonly mattermost: MattermostClient | null;
   private readonly cleanups: { label: string; run: () => Promise<void> }[] = [];
+  private readonly agentCleanups = new Map<
+    string,
+    { label: string; run: () => Promise<void> }
+  >();
 
   constructor(
     env: HarnessEnv,
     names: NameScope,
     switchClient: SwitchClient,
-    mattermost: MattermostClient | null
+    mattermost: MattermostClient | null,
   ) {
     this.env = env;
     this.names = names;
@@ -49,11 +53,15 @@ export class Fixtures {
    */
   async agent(
     role: string,
-    options: { autoSession?: boolean; agentType?: HarnessAgentType; repoDir?: string } = {}
+    options: {
+      autoSession?: boolean;
+      agentType?: HarnessAgentType;
+      repoDir?: string;
+    } = {},
   ): Promise<RegisteredAgent> {
     const name = this.names.name(role);
     const agent = await this.switchClient.registerKnownAgent({
-      agentType: options.agentType ?? 'opencode',
+      agentType: options.agentType ?? "opencode",
       name,
       description: `Switch end-to-end harness agent (run ${this.names.runId}). Safe to delete.`,
       options: {
@@ -61,13 +69,21 @@ export class Fixtures {
         ...(options.repoDir ? { repo_dir: options.repoDir } : {}),
       },
     });
-    this.defer(`agent ${name} (${agent.id})`, () => this.switchClient.deleteAgent(agent));
+    const cleanup = {
+      label: `agent ${name} (${agent.id})`,
+      run: () => this.switchClient.deleteAgent(agent),
+    };
+    this.cleanups.push(cleanup);
+    this.agentCleanups.set(agent.id, cleanup);
     await this.switchClient.openAddressing(agent.id);
     return agent;
   }
 
   /** A room with no platform channel: agents only, no bridge involved. */
-  async internalRoom(role: string, agents: RegisteredAgent[]): Promise<RoomDetail> {
+  async internalRoom(
+    role: string,
+    agents: RegisteredAgent[],
+  ): Promise<RoomDetail> {
     const name = this.names.name(role);
     const room = await this.switchClient.createRoom({
       name,
@@ -76,9 +92,13 @@ export class Fixtures {
       agentNames: agents.map((agent) => agent.name),
       userNames: [],
     });
-    this.defer(`room ${name} (${room.id})`, () => this.switchClient.deleteRoom(room.id));
+    this.defer(`room ${name} (${room.id})`, () =>
+      this.switchClient.deleteRoom(room.id),
+    );
     if (room.externalChannelId !== null) {
-      throw new Error(`Internal-only room ${room.id} came back with a platform channel.`);
+      throw new Error(
+        `Internal-only room ${room.id} came back with a platform channel.`,
+      );
     }
     return room;
   }
@@ -92,10 +112,13 @@ export class Fixtures {
    * the bot is the first in a new channel, because nobody's websocket witnesses
    * the join.
    */
-  async mattermostRoom(role: string, agents: RegisteredAgent[]): Promise<BridgedRoom> {
+  async mattermostRoom(
+    role: string,
+    agents: RegisteredAgent[],
+  ): Promise<BridgedRoom> {
     const mattermost = this.requireMattermost();
     const human = await mattermost.me();
-    const bridgeId = await this.switchClient.defaultBridgeId('mattermost');
+    const bridgeId = await this.switchClient.defaultBridgeId("mattermost");
     // Resolved even though room creation does not need it: it fails fast and
     // clearly when MATTERMOST_TEAM names a team that does not exist.
     await mattermost.findTeam(this.mattermostTeam());
@@ -118,23 +141,26 @@ export class Fixtures {
     const channelId = room.externalChannelId;
     // One step, in order: the room first, then its channel only if deleting the
     // room did not already archive it.
-    this.defer(`room ${name} (${room.id}) and channel ${channelId ?? 'none'}`, async () => {
-      await this.switchClient.deleteRoom(room.id);
-      if (channelId === null) return;
-      const left = await mattermost.getChannel(channelId);
-      if (!left.delete_at) await mattermost.archiveChannel(channelId);
-    });
+    this.defer(
+      `room ${name} (${room.id}) and channel ${channelId ?? "none"}`,
+      async () => {
+        await this.switchClient.deleteRoom(room.id);
+        if (channelId === null) return;
+        const left = await mattermost.getChannel(channelId);
+        if (!left.delete_at) await mattermost.archiveChannel(channelId);
+      },
+    );
     if (channelId === null) {
       throw new Error(
         `Switch room ${room.id} was created without a Mattermost channel — ` +
-          `the collaboration bridge did not provision one.`
+          `the collaboration bridge did not provision one.`,
       );
     }
 
     const channel = await mattermost.getChannel(channelId);
     const bridged: BridgedRoom = { room, channel, human, bots };
     const witness = agents[0];
-    if (!witness) throw new Error('A bridged room needs at least one agent.');
+    if (!witness) throw new Error("A bridged room needs at least one agent.");
     await waitForBridgeReady({
       switchClient: this.switchClient,
       mattermost,
@@ -144,6 +170,18 @@ export class Fixtures {
       runId: this.names.runId,
     });
     return bridged;
+  }
+
+  /**
+   * The scenario deleted `agent` itself, and checked that it is gone, so
+   * teardown has nothing left to remove for it.
+   */
+  removed(agent: RegisteredAgent): void {
+    const cleanup = this.agentCleanups.get(agent.id);
+    if (cleanup === undefined)
+      throw new Error(`Agent ${agent.id} was not registered here.`);
+    this.agentCleanups.delete(agent.id);
+    this.cleanups.splice(this.cleanups.indexOf(cleanup), 1);
   }
 
   /** Register a cleanup step for something created outside these helpers. */
@@ -169,7 +207,7 @@ export class Fixtures {
         await cleanup.run();
       } catch (error) {
         failures.push(
-          `could not remove ${cleanup.label}: ${error instanceof Error ? error.message : String(error)}`
+          `could not remove ${cleanup.label}: ${error instanceof Error ? error.message : String(error)}`,
         );
       }
     }
@@ -179,15 +217,15 @@ export class Fixtures {
   private requireMattermost(): MattermostClient {
     if (!this.mattermost) {
       throw new Error(
-        'This scenario needs Mattermost but none is configured — declare ' +
-          "`requires: ['mattermost']` in its header so it is skipped or failed up front."
+        "This scenario needs Mattermost but none is configured — declare " +
+          "`requires: ['mattermost']` in its header so it is skipped or failed up front.",
       );
     }
     return this.mattermost;
   }
 
   private mattermostTeam(): string {
-    if (!this.env.mattermost) throw new Error('No Mattermost configured.');
+    if (!this.env.mattermost) throw new Error("No Mattermost configured.");
     return this.env.mattermost.team;
   }
 }
@@ -237,8 +275,15 @@ export async function waitForBridgeReady(params: {
     // Re-post rather than only re-read: if the socket was down when the last
     // one went out, that message is gone for good and no amount of polling
     // will produce it.
-    await params.mattermost.post({ channelId: params.channel.id, message: probe });
-    const history = await params.switchClient.roomHistory(params.agent, params.room.id, 50);
+    await params.mattermost.post({
+      channelId: params.channel.id,
+      message: probe,
+    });
+    const history = await params.switchClient.roomHistory(
+      params.agent,
+      params.room.id,
+      50,
+    );
     if (history.some((event) => event.body.includes(probe))) return;
     await sleep(5_000);
   }
@@ -246,6 +291,6 @@ export async function waitForBridgeReady(params: {
   throw new Error(
     `Mattermost -> Switch delivery never came up for room ${params.room.id} ` +
       `(channel ${params.channel.id}) within ${deadlineMs}ms: a plain channel message ` +
-      `never reached the agent's room history. The agent bot's websocket is probably not connected.`
+      `never reached the agent's room history. The agent bot's websocket is probably not connected.`,
   );
 }
