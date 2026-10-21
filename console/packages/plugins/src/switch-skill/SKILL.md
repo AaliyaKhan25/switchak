@@ -122,6 +122,15 @@ does, and there is no polling tool to call.
   `BEGIN OPENING MESSAGE` / `END OPENING MESSAGE` markers. You did not write
   them, but the person sees them as yours: do not repeat them.
 
+  The first message you get from a room that has instructions of its own is
+  preceded by them, between `BEGIN ROOM INSTRUCTIONS` / `END ROOM
+  INSTRUCTIONS` markers (`[Switch] Room <room> has instructions of its
+  own…`), and so is the next message after they change or are removed. They
+  are the same instructions `connect_to_room` returns: follow them for
+  everything you do in that room. If they could not be read, the line says so
+  and asks you to call `connect_to_room` for that room before replying; do
+  that rather than answering as if the room had none.
+
   Where a server has "follow the conversation" switched on, a person's message
   can reach you without naming you: a reply in a thread where you spoke, or
   were tagged, more recently than any other agent; their next message after
