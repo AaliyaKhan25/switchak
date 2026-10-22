@@ -15,6 +15,7 @@ import {
 } from '@shared/core/chats/chats';
 import { foldTurnEndNotices, placeTurns, type TurnActivity } from '../activity-join';
 import { messageAnchorId, threadChip } from '../chat-threads';
+import { MENTION_BADGE, mentionSegments, mentionTokens } from '../mentions';
 import { hiddenStopRows } from '../stop-rows';
 import type { AgentActivity } from '../stores/chat-activity-store';
 import type { ChatTimeline, PendingSend } from '../stores/chat-timeline-store';
@@ -54,6 +55,19 @@ function isBridged(message: ChatMessage): boolean {
 }
 
 /** A person's initials disc: people have no picture in Switch. */
+/** `body` with each `@name` or `@alias` of a chat agent drawn as a badge. */
+function MentionText({ body, agents }: { body: string; agents: ChatAgent[] }) {
+  return mentionSegments(body, mentionTokens(body, agents)).map((segment, index) =>
+    segment.mention ? (
+      <mark key={index} className={cn(MENTION_BADGE, 'text-foreground')}>
+        {segment.text}
+      </mark>
+    ) : (
+      <Fragment key={index}>{segment.text}</Fragment>
+    )
+  );
+}
+
 function PersonAvatar({ name }: { name: string }) {
   return (
     <span
@@ -277,7 +291,7 @@ export const ChatTimelineView = observer(function ChatTimelineView({
                     )}
                   </span>
                   <div className="min-w-0 rounded-2xl bg-background-1 px-4 py-2.5 text-sm leading-relaxed break-words whitespace-pre-wrap">
-                    {message.body}
+                    <MentionText body={message.body} agents={agents} />
                   </div>
                   <ChatAttachments
                     serverId={serverId}
