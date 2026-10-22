@@ -17,7 +17,7 @@ import logging
 import time
 from collections.abc import AsyncIterator
 from datetime import datetime
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import (
     APIRouter,
@@ -104,6 +104,9 @@ class CreateChatRequest(CamelModel):
     # What the agent says as it joins, instead of its usual line; older
     # clients send none.
     greeting: str | None = None
+    # "group" makes a group even of one agent and nobody else, which would
+    # otherwise be a direct chat; older clients send none.
+    kind: Literal["group"] | None = None
 
     def chosen_agents(self) -> list[str]:
         if (self.agent_id is None) == (self.agent_ids is None):
@@ -270,6 +273,7 @@ async def create_chat(
         name=req.name,
         request_id=req.request_id,
         greeting=req.greeting,
+        kind=req.kind,
     )
     async with tenant_session(service.session_factory, tenant_id) as session:
         return ChatEnvelope(

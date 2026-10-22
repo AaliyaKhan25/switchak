@@ -1071,13 +1071,15 @@ class ChatService:
         name: str | None,
         request_id: str,
         greeting: str | None,
+        kind: Literal["group"] | None,
     ) -> Room:
         """A private room with the agents and members, owned by and joined by
         the user.
 
         One agent and no other member makes a direct room, which addresses
-        the agent without a mention. Anything else is a group (a private
-        channel), where a message names the agents it is for. Every agent must
+        the agent without a mention, unless `kind` asks for a group. Anything
+        else is a group (a private channel), where a message names the agents
+        it is for. Every agent must
         be one the user may address; every member a member of the workspace.
 
         Retrying with the same request id finishes whatever an earlier attempt
@@ -1089,13 +1091,13 @@ class ChatService:
         Only for a direct chat with one of the user's own agents.
         """
         member_user_ids = sorted(set(member_user_ids) - {user.id})
-        direct = len(agent_ids) == 1 and not member_user_ids
+        direct = kind != "group" and len(agent_ids) == 1 and not member_user_ids
         if greeting is not None:
-            if len(agent_ids) != 1:
+            if len(agent_ids) != 1 or kind == "group":
                 raise ChatError(
                     422,
                     "GREETING_NEEDS_ONE_AGENT",
-                    "Only a chat with one agent opens with its greeting.",
+                    "Only a direct chat with one agent opens with its greeting.",
                 )
             if not greeting.strip():
                 raise ChatError(422, "EMPTY_MESSAGE", "The greeting is empty.")
@@ -1114,6 +1116,9 @@ class ChatService:
         )
         if member_user_ids:
             request["memberUserIds"] = member_user_ids
+        # Only when given, so a request without it hashes as it always has.
+        if kind is not None:
+            request["kind"] = kind
         payload_hash = _hash(request)
         async with self._lock("create", tenant_id, user.id):
             async with tenant_session(self.session_factory, tenant_id) as session:

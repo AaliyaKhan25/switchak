@@ -375,6 +375,58 @@ async def test_one_agent_and_a_person_make_a_group(chats: _Harness) -> None:
     assert await _addressed(chats, room_id, agent, "@helper named") is True
 
 
+async def test_kind_group_makes_a_group_of_one_agent(chats: _Harness) -> None:
+    agent = await chats.agent("helper", owner=chats.alice)
+    created = await chats.client.post(
+        "/chats",
+        json={"agentId": agent.id, "kind": "group", "requestId": "c1"},
+        headers=chats.as_user(chats.alice),
+    )
+    assert created.status_code == 200, created.text
+    room_id = created.json()["chat"]["roomId"]
+    assert created.json()["chat"]["channelType"] == "channel_private"
+    assert await _channel_type(chats, room_id) == "channel_private"
+    assert room_id in await _listed(chats, chats.alice)
+    assert await _addressed(chats, room_id, agent, "unnamed") is False
+    assert await _addressed(chats, room_id, agent, "@helper named") is True
+
+
+async def test_kind_is_part_of_what_a_retry_must_repeat(chats: _Harness) -> None:
+    agent = await chats.agent("helper", owner=chats.alice)
+
+    async def create(**extra: str) -> httpx.Response:
+        return await chats.client.post(
+            "/chats",
+            json={"agentId": agent.id, "requestId": "c1", **extra},
+            headers=chats.as_user(chats.alice),
+        )
+
+    first = await create(kind="group")
+    assert first.status_code == 200, first.text
+    assert (await create(kind="group")).json()["chat"]["roomId"] == first.json()[
+        "chat"
+    ]["roomId"]
+    other = await create()
+    assert other.status_code == 409
+    assert _code(other) == "REQUEST_REUSED"
+
+
+async def test_a_group_does_not_open_with_a_greeting(chats: _Harness) -> None:
+    agent = await chats.agent("helper", owner=chats.alice)
+    created = await chats.client.post(
+        "/chats",
+        json={
+            "agentId": agent.id,
+            "kind": "group",
+            "greeting": "Hi",
+            "requestId": "c1",
+        },
+        headers=chats.as_user(chats.alice),
+    )
+    assert created.status_code == 422
+    assert _code(created) == "GREETING_NEEDS_ONE_AGENT"
+
+
 async def test_a_create_with_people_is_retried_as_one_request(
     chats: _Harness,
 ) -> None:
