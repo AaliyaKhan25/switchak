@@ -69,7 +69,7 @@ describe('RoomConfigurationPanel for a group chat', () => {
     expect(html).toContain('Planning');
     expect(html).toContain('Helper');
     expect(html).toContain('1 agent · 2 people');
-    expect(html).toContain('Add participant');
+    expect(html).toContain('Add participants');
     expect(html).not.toContain('Add agent');
     expect(html).not.toContain('Add person');
     expect(html).not.toContain('From a template');
@@ -81,7 +81,7 @@ describe('RoomConfigurationPanel for a group chat', () => {
   it('shows the participants without controls to someone who cannot manage', () => {
     const html = render(false);
     expect(html).toContain('Bob');
-    expect(html).not.toContain('Add participant');
+    expect(html).not.toContain('Add participants');
     expect(html).not.toContain('aria-label="Remove');
   });
 });

@@ -89,6 +89,7 @@ export function ParticipantPicker({
   inputId,
   autoFocus,
   busy,
+  overlay,
 }: {
   candidates: Participant[];
   picked: Participant[];
@@ -100,6 +101,8 @@ export function ParticipantPicker({
   autoFocus: boolean;
   /** A pick is being applied: the field takes no other until it is, and says so. */
   busy: boolean;
+  /** The results float over what follows the field; otherwise they push it down, as a dialog needs. */
+  overlay: boolean;
 }) {
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
@@ -115,7 +118,7 @@ export function ParticipantPicker({
   };
 
   return (
-    <div>
+    <div className={cn(overlay && 'relative')}>
       <div
         // The standard input's border, radius and focus ring, around chips that wrap.
         className="focus-within:ring-primary/30 dark:bg-input/30 flex min-h-8 w-full flex-wrap items-center gap-1 rounded-md border border-border bg-transparent px-1 py-0.5 transition-[color,box-shadow] focus-within:border-border-primary focus-within:ring-2 hover:border-border-1"
@@ -183,11 +186,14 @@ export function ParticipantPicker({
         )}
       </div>
       {open && (
-        // In the flow rather than floating: the dialog clips what overflows it, so the list grows it instead.
+        // A dialog clips what overflows it, so there the list grows it instead of floating.
         <div
           id={`${inputId}-results`}
           role="listbox"
-          className="mt-1 max-h-60 overflow-y-auto rounded-[10px] border border-border bg-background p-1 shadow-sm"
+          className={cn(
+            'mt-1 max-h-60 overflow-y-auto rounded-[10px] border border-border bg-background p-1',
+            overlay ? 'absolute inset-x-0 top-full z-20 shadow-lg' : 'shadow-sm'
+          )}
         >
           {loading ? (
             <p className="px-2.5 py-2 text-sm text-foreground-muted">Loading…</p>

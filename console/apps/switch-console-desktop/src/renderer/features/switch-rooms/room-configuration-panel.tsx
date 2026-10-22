@@ -185,10 +185,20 @@ const ChatParticipantsSection = observer(function ChatParticipantsSection({
             onClick={() => setAdding((v) => !v)}
           >
             <Plus className="size-3.5" />
-            Add participant
+            Add participants
           </Button>
         )}
       </div>
+
+      {adding && (
+        <ChatAddParticipantPanel
+          serverId={serverId}
+          workspaceId={workspaceId}
+          chat={chat}
+          memberIds={new Set(people.map((person) => person.userId))}
+          onAddedPeople={(next) => queryClient.setQueryData(membersKey, next)}
+        />
+      )}
 
       {members.isError && (
         <p className="text-xs text-destructive">{chatFailure(members.error).message}</p>
@@ -206,16 +216,6 @@ const ChatParticipantsSection = observer(function ChatParticipantsSection({
         }))}
         manage={manage}
       />
-
-      {adding && (
-        <ChatAddParticipantPanel
-          serverId={serverId}
-          workspaceId={workspaceId}
-          chat={chat}
-          memberIds={new Set(people.map((person) => person.userId))}
-          onAddedPeople={(next) => queryClient.setQueryData(membersKey, next)}
-        />
-      )}
     </section>
   );
 });
@@ -296,6 +296,7 @@ const ChatAddParticipantPanel = observer(function ChatAddParticipantPanel({
         inputId="chat-add-participant"
         autoFocus
         busy={adding !== null}
+        overlay
         candidates={candidates}
         picked={[]}
         onChange={(next) => {

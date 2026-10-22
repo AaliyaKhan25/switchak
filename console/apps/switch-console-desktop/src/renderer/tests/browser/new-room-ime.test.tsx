@@ -57,6 +57,7 @@ describe('New room IME', () => {
         inputId="participants"
         autoFocus={false}
         busy={false}
+        overlay={false}
       />
     );
     await act(async () => input.focus());
@@ -103,6 +104,7 @@ describe('Participant field while a pick is being added', () => {
           inputId="add"
           autoFocus={false}
           busy={busy}
+          overlay={false}
         />
       );
     }
@@ -118,5 +120,31 @@ describe('Participant field while a pick is being added', () => {
     expect(input.readOnly).toBe(false);
     await act(async () => enter(input, { keyCode: 13 }));
     expect(added).toEqual(['a1', 'a1']);
+  });
+});
+
+describe('Participant field results', () => {
+  it('float over what follows when asked to, and push it down otherwise', async () => {
+    for (const overlay of [true, false]) {
+      const input = await render(
+        <ParticipantPicker
+          candidates={[helper]}
+          picked={[]}
+          onChange={() => {}}
+          serverId={null}
+          loading={false}
+          inputId="p"
+          autoFocus={false}
+          busy={false}
+          overlay={overlay}
+        />
+      );
+      await act(async () => input.focus());
+      const list = container!.querySelector('[role="listbox"]')!;
+      expect(list.classList.contains('absolute')).toBe(overlay);
+      await act(async () => root!.unmount());
+      root = null;
+      container!.remove();
+    }
   });
 });

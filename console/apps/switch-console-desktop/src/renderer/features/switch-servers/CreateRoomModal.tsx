@@ -243,6 +243,7 @@ export const CreateRoomModal = observer(function CreateRoomModal({
               inputId="new-room-participants"
               autoFocus={false}
               busy={isSubmitting}
+              overlay={false}
               candidates={candidates}
               picked={picked}
               onChange={setPicked}
