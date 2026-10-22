@@ -308,6 +308,21 @@ describe('ChatsStore', () => {
     expect(timeline.loadError).toBeNull();
   });
 
+  it('lists again and clears the error when retried on the same server', async () => {
+    let up = false;
+    const { store, api } = setup(async () =>
+      up ? [summary('r1', 1)] : Promise.reject(new Error('Could not reach the server'))
+    );
+    await store.connect('s1');
+    expect(store.listError).not.toBeNull();
+
+    up = true;
+    await store.connect('s1');
+    expect(api.list).toHaveBeenCalledTimes(2);
+    expect(store.listError).toBeNull();
+    expect(store.chat('r1')?.name).toBe('r1');
+  });
+
   it('reads a chat once the person is let into it after a refused first load', async () => {
     const { store } = setup(async () => []);
     await store.connect('s1');
