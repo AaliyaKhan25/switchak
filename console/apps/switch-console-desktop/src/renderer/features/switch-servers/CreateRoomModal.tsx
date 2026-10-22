@@ -30,6 +30,7 @@ import { MessagingAppSelector, SWITCH_CONSOLE } from './messaging-app-selector';
 import { ParticipantPicker } from './participant-picker';
 import type { Participant } from './participant-search';
 import { CreateRequestIds, canCreate, roomCreateRequest } from './room-create-request';
+import { RoomNameInput } from './room-name-input';
 import { switchServersStore } from './switch-servers-store';
 
 type CreateRoomModalArgs = {
@@ -220,19 +221,15 @@ export const CreateRoomModal = observer(function CreateRoomModal({
             </p>
           )}
 
-          <input
-            autoFocus
-            aria-label="Room name"
-            placeholder="Room name"
+          <RoomNameInput
             value={name}
-            onChange={(e) => {
-              setName(e.target.value);
+            onChange={(next) => {
+              setName(next);
               setError(null);
             }}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && canSubmit) void handleSubmit();
+            onSubmit={() => {
+              if (canSubmit) void handleSubmit();
             }}
-            className="w-full border-b border-border bg-transparent pb-2 text-xl font-semibold text-foreground outline-none placeholder:font-normal placeholder:text-foreground-passive focus:border-foreground-muted"
           />
           {/* What the name becomes, where it becomes it: a bridged room is a
               channel of the same name in its app. */}

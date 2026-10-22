@@ -137,6 +137,8 @@ export function ParticipantPicker({
           onFocus={() => setOpen(true)}
           onBlur={() => setOpen(false)}
           onKeyDown={(event) => {
+            // keyCode 229: a key the IME is handling, which some IMEs send with isComposing false.
+            if (event.nativeEvent.isComposing || event.keyCode === 229) return;
             const action = pickerKey(event.key, {
               query,
               open,
