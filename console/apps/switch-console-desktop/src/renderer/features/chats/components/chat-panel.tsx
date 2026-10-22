@@ -149,7 +149,7 @@ export const ChatPanel = observer(function ChatPanel({
           className="flex items-center justify-between gap-3 bg-background-1 px-5 py-2 text-sm"
         >
           <span>{timeline.loadError}</span>
-          <Button size="sm" variant="outline" onClick={() => void timeline.load()}>
+          <Button size="sm" variant="outline" onClick={() => timeline.retryLoad()}>
             Try again
           </Button>
         </div>

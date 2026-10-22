@@ -247,4 +247,29 @@ describe('ChatTimeline', () => {
     );
     expect(timeline.hasMore).toBe(false);
   });
+
+  it('retries a failed load of earlier messages, not the newest page, and clears the error', async () => {
+    let fail = false;
+    const asked: (number | null)[] = [];
+    const { value } = api({
+      messages: async (_room, before) => {
+        asked.push(before);
+        if (fail) throw networkError();
+        return before === null
+          ? { messages: [message(51), message(52)], headSeq: 52, hasMore: true }
+          : { messages: [message(50)], headSeq: 52, hasMore: false };
+      },
+    });
+    const timeline = new ChatTimeline('room-1', value);
+    await timeline.load();
+    fail = true;
+    await timeline.loadOlder();
+    expect(timeline.loadError).not.toBeNull();
+
+    fail = false;
+    timeline.retryLoad();
+    await vi.waitFor(() => expect(timeline.messages.map((m) => m.seq)).toEqual([50, 51, 52]));
+    expect(asked).toEqual([null, 51, 51]);
+    expect(timeline.loadError).toBeNull();
+  });
 });

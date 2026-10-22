@@ -102,6 +102,8 @@ export class ChatTimeline {
   loaded = false;
   loading = false;
   loadError: string | null = null;
+  /** The failure in {@link loadError} was loading earlier messages, not the newest. */
+  olderFailed = false;
   /** The person is not a member of the room. */
   notMember = false;
   /** The person was a member and lost access while the chat was known. */
@@ -165,6 +167,7 @@ export class ChatTimeline {
     if (this.loading) return;
     this.loading = true;
     this.loadError = null;
+    this.olderFailed = false;
     const held = this.newestSeq;
     try {
       let page = await this.api.messages(this.roomId, null, PAGE_SIZE);
@@ -204,16 +207,24 @@ export class ChatTimeline {
       runInAction(() => {
         for (const message of page.messages) this.apply(message);
         this.hasMore = page.hasMore;
+        this.loadError = null;
+        this.olderFailed = false;
       });
     } catch (error) {
       runInAction(() => {
         this.loadError = chatFailure(error).message;
+        this.olderFailed = true;
       });
     } finally {
       runInAction(() => {
         this.loading = false;
       });
     }
+  }
+
+  /** Ask again for what last failed to load. */
+  retryLoad(): void {
+    void (this.olderFailed ? this.loadOlder() : this.load());
   }
 
   /** Send a message; returns its request id. */
