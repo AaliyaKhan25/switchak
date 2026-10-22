@@ -295,7 +295,6 @@ export const ChatTimelineView = observer(function ChatTimelineView({
               >
                 <PersonAvatar name={message.sender.name} />
                 <div className="flex max-w-[85%] min-w-0 flex-col items-start gap-1">
-                  {chip && <ThreadChipButton chip={chip} />}
                   <span className="flex items-center gap-1.5 text-xs">
                     <span className="font-medium text-foreground-muted">{message.sender.name}</span>
                     {isBridged(message) && (
@@ -304,6 +303,7 @@ export const ChatTimelineView = observer(function ChatTimelineView({
                       </span>
                     )}
                   </span>
+                  {chip && <ThreadChipButton chip={chip} />}
                   <div className="min-w-0 rounded-2xl bg-background-1 px-4 py-2.5 text-sm leading-relaxed break-words whitespace-pre-wrap">
                     <MentionText body={message.body} agents={agents} serverId={serverId} />
                   </div>
