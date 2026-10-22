@@ -307,7 +307,9 @@ const ActivityUnavailable = observer(function ActivityUnavailable({
   const feedDown = activities.length > 0 && agentActivities.feedDown.has(serverId);
   const tooOld = agentActivities.feedDown.get(serverId) === SERVER_TOO_OLD_FOR_ACTIVITY;
   const notes = activities.flatMap((activity) =>
-    [activity.feedError, activity.resolveError].filter((note) => note !== null)
+    [activity.feedError, activity.resolveError, activity.reasoningError].filter(
+      (note) => note !== null
+    )
   );
   const unique = [...new Set(notes)].filter(
     (note) => !(feedDown && tooOld && note === SERVER_TOO_OLD_FOR_ACTIVITY)
