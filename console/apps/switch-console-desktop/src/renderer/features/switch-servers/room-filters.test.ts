@@ -8,7 +8,16 @@ import {
   withConsoleGroupChats,
 } from './room-filters';
 
-const agent = { id: 'a', name: 'a', displayName: null, iconUrl: null, provider: null, alias: null, ownerName: null, ownedByViewer: false };
+const agent = {
+  id: 'a',
+  name: 'a',
+  displayName: null,
+  iconUrl: null,
+  provider: null,
+  alias: null,
+  ownerName: null,
+  ownedByViewer: false,
+};
 
 describe('isConsoleDirectChat', () => {
   it('returns true for a direct unbridged room with one agent', () => {
@@ -61,7 +70,9 @@ const chat = (roomId: string, extra: Partial<ChatSummary> = {}): ChatSummary => 
   channelName: null,
   agents: [agent],
   canManage: false,
-  ownsAgent: false, memberUserIds: [], memberCount: 0,
+  ownsAgent: false,
+  memberUserIds: [],
+  memberCount: 0,
   lastMessage: null,
   ...extra,
 });
@@ -97,7 +108,12 @@ describe('withConsoleGroupChats', () => {
   it('adds the group chats not already listed, sorted by name', () => {
     const listed = withConsoleGroupChats(
       [room('b'), room('d')],
-      [chat('a'), chat('b'), chat('c', { channelType: 'direct' }), chat('e', { bridgeType: 'slack' })]
+      [
+        chat('a'),
+        chat('b'),
+        chat('c', { channelType: 'direct' }),
+        chat('e', { bridgeType: 'slack' }),
+      ]
     );
     expect(listed.map((each) => each.id)).toEqual(['a', 'b', 'd']);
     expect(listed[1].ownerId).toBe('u');

@@ -14,7 +14,9 @@ function summary(roomId: string, seq: number | null): ChatSummary {
     channelName: null,
     agents: [],
     canManage: true,
-    ownsAgent: false, memberUserIds: [], memberCount: 0,
+    ownsAgent: false,
+    memberUserIds: [],
+    memberCount: 0,
     lastMessage:
       seq === null ? null : { seq, sentAt: '2026-01-01T00:00:00Z', preview: '', senderName: '' },
   };
@@ -32,7 +34,10 @@ function message(roomId: string, seq: number): ChatMessage {
     format: null,
     threadRootId: null,
     attachments: [],
-    clientTxn: null, namedAgentIds: [], threadReplyCount: 0, threadLastReplySeq: null,
+    clientTxn: null,
+    namedAgentIds: [],
+    threadReplyCount: 0,
+    threadLastReplySeq: null,
   };
 }
 

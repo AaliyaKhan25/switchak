@@ -20,7 +20,10 @@ function message(seq: number, extra: Partial<ChatMessage> = {}): ChatMessage {
     format: null,
     threadRootId: null,
     attachments: [],
-    clientTxn: null, namedAgentIds: [], threadReplyCount: 0, threadLastReplySeq: null,
+    clientTxn: null,
+    namedAgentIds: [],
+    threadReplyCount: 0,
+    threadLastReplySeq: null,
     ...extra,
   };
 }
