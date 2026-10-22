@@ -269,10 +269,21 @@ const ChatAddParticipantPanel = observer(function ChatAddParticipantPanel({
     queryFn: () => rpc.chats.workspaceMembers({ serverId, tenantId: tenantId as string }),
     enabled: tenantId !== null,
   });
+  const allowed = useQuery({
+    // Keyed by the chat's agents, so adding or removing one asks again.
+    queryKey: [
+      'chat-agent-candidates',
+      serverId,
+      workspaceId,
+      chat.roomId,
+      chat.agents.map((agent) => agent.id).join(','),
+    ],
+    queryFn: () => rpc.chats.agentCandidates({ serverId, roomId: chat.roomId }),
+  });
   const [adding, setAdding] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const candidates = [
-    ...addableAgents(agents.data ?? [], chat.agents).map((agent) =>
+    ...addableAgents(agents.data ?? [], allowed.data ?? []).map((agent) =>
       agentParticipant(agent, knownAgentTypeDisplayName(agent.knownAgentType) ?? 'Agent')
     ),
     ...addablePeople(roster.data ?? [], memberIds).map(personParticipant),
@@ -306,12 +317,12 @@ const ChatAddParticipantPanel = observer(function ChatAddParticipantPanel({
           if (picked) void add(picked);
         }}
         serverId={serverId}
-        loading={agents.isPending || (tenantId !== null && roster.isPending)}
+        loading={agents.isPending || allowed.isPending || (tenantId !== null && roster.isPending)}
       />
       {error !== null && <p className="text-xs text-destructive">{error}</p>}
-      {agents.isError && (
+      {(agents.isError || allowed.isError) && (
         <p className="text-xs text-destructive">
-          {failureText(agents.error, 'Could not list the agents.')}
+          {failureText(agents.error ?? allowed.error, 'Could not list the agents.')}
         </p>
       )}
       {tenantId === null ? (

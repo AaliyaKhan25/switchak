@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+from typing import Any
 
 import httpx
 import pytest
@@ -597,6 +598,37 @@ async def test_a_manager_removes_an_agent_they_may_no_longer_use(
     )
     assert removed.status_code == 204
     assert await _agent_ids(chats, room_id) == {helper.id}
+
+
+async def _candidates(chats: _Harness, user: User, room_id: str | None) -> Any:
+    return await chats.client.get(
+        "/chats/agent-candidates",
+        params={"roomId": room_id} if room_id is not None else {},
+        headers=chats.as_user(user),
+    )
+
+
+async def test_agent_candidates_are_the_agents_the_caller_may_add(
+    chats: _Harness,
+) -> None:
+    mine = await chats.agent("mine", owner=chats.alice)
+    spare = await chats.agent("spare", owner=chats.alice)
+    private = await chats.agent("private", owner=chats.bob)
+    await _set_policy(chats, private, {"rules": [{"owner": True, "users": []}]})
+    scoped = await chats.agent("scoped", owner=chats.bob)
+    room_id = await chats.new_chat(chats.alice, mine, "c1")
+    await _set_policy(chats, scoped, {"rules": [{"rooms": [room_id]}]})
+
+    new_chat = await _candidates(chats, chats.alice, None)
+    assert new_chat.status_code == 200, new_chat.text
+    assert set(new_chat.json()["agentIds"]) == {mine.id, spare.id}
+
+    in_room = await _candidates(chats, chats.alice, room_id)
+    assert set(in_room.json()["agentIds"]) == {spare.id, scoped.id}
+
+    outsider = await _candidates(chats, chats.bob, room_id)
+    assert outsider.status_code == 403
+    assert _code(outsider) == "NOT_A_MANAGER"
 
 
 # ── Mentions ─────────────────────────────────────────────────────────────────

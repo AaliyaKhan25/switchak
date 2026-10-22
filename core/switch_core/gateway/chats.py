@@ -302,6 +302,25 @@ async def chat_events_stream(
     )
 
 
+class AgentCandidates(CamelModel):
+    agent_ids: list[str]
+
+
+@router.get("/agent-candidates", response_model=AgentCandidates)
+async def agent_candidates(
+    user: CurrentUser,
+    service: Service,
+    room_id: Annotated[str | None, Query(alias="roomId")] = None,
+) -> AgentCandidates:
+    """The agents the caller could add to a new chat, or with `roomId` to
+    that chat, which they must manage."""
+    tenant_id = require_tenant_id()
+    async with tenant_session(service.session_factory, tenant_id) as session:
+        return AgentCandidates(
+            agent_ids=await service.agent_candidates(session, tenant_id, user, room_id)
+        )
+
+
 @router.get("/activity/events")
 async def chat_activity_stream(
     user: CurrentUser, service: Service

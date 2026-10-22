@@ -7,7 +7,7 @@ import { agentsStore } from '@renderer/features/locations/stores/agents-store';
 import { useManagedAgents } from '@renderer/features/managed-agents/use-managed-agents';
 import { openRoomView } from '@renderer/features/sidebar/sidebar-room-grouping';
 import { refreshSidebarRoomState } from '@renderer/features/sidebar/sidebar-tree-data';
-import { addablePeople } from '@renderer/features/switch-rooms/room-labels';
+import { addableAgents, addablePeople } from '@renderer/features/switch-rooms/room-labels';
 import { workspacesStore } from '@renderer/features/workspaces/workspaces-store';
 import { agentProviderLabel } from '@renderer/lib/components/agent-mark';
 import { agentProviderLabelFor } from '@renderer/lib/components/agent-picker';
@@ -92,6 +92,11 @@ export const CreateRoomModal = observer(function CreateRoomModal({
     queryFn: () => rpc.chats.workspaceMembers({ serverId, tenantId: tenantId as string }),
     enabled: tenantId !== null,
   });
+  const allowedQuery = useQuery({
+    queryKey: ['chat-agent-candidates', serverId, workspaceId, null],
+    queryFn: () => rpc.chats.agentCandidates({ serverId, roomId: null }),
+    enabled: serverId !== '',
+  });
   const managedQuery = useManagedAgents(serverId || null);
 
   // Only a running bridge allowed to create channels can back a new room.
@@ -109,17 +114,18 @@ export const CreateRoomModal = observer(function CreateRoomModal({
       : (knownAgentTypeDisplayName(knownType) ?? agentProviderLabelFor(agentId, workspaceId));
   // A bridged room is driven from this install, so it takes only the agents
   // this install registered or manages, and no people at creation. A Switch
-  // Console room is driven through the server: any agent the workspace shows,
-  // the server refusing one the person may not use, and its people.
-  const agentCandidates = (agentsQuery.data ?? []).filter(
-    (remote) =>
-      !selectedBridge ||
-      (workspaceId !== null &&
-        (managedProviders.has(remote.id) ||
-          agentsStore
-            .agentsInWorkspace(workspaceId)
-            .some((local) => local.switchAgentId === remote.id)))
-  );
+  // Console room is driven through the server: the agents the server says the
+  // person may use, and its people.
+  const agentCandidates = selectedBridge
+    ? (agentsQuery.data ?? []).filter(
+        (remote) =>
+          workspaceId !== null &&
+          (managedProviders.has(remote.id) ||
+            agentsStore
+              .agentsInWorkspace(workspaceId)
+              .some((local) => local.switchAgentId === remote.id))
+      )
+    : addableAgents(agentsQuery.data ?? [], allowedQuery.data ?? []);
   const candidates: Participant[] = [
     ...agentCandidates.map((agent) =>
       agentParticipant(agent, providerLabel(agent.id, agent.knownAgentType))
@@ -248,14 +254,18 @@ export const CreateRoomModal = observer(function CreateRoomModal({
               picked={picked}
               onChange={setPicked}
               serverId={serverId || null}
-              loading={agentsQuery.isLoading || rosterQuery.isLoading}
+              loading={
+                agentsQuery.isLoading ||
+                rosterQuery.isLoading ||
+                (!selectedBridge && allowedQuery.isLoading)
+              }
             />
             <span className="text-xs text-foreground-muted">
               Agents answer only when someone @-mentions them.
             </span>
-            {agentsQuery.isError && (
+            {(agentsQuery.isError || (!selectedBridge && allowedQuery.isError)) && (
               <p className="text-xs text-destructive">
-                {failureText(agentsQuery.error, 'Could not load the agents.')}
+                {failureText(agentsQuery.error ?? allowedQuery.error, 'Could not load the agents.')}
               </p>
             )}
             {rosterQuery.isError && (

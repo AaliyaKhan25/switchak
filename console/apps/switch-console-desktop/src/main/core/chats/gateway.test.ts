@@ -7,6 +7,7 @@ import {
   createChat,
   fetchThreadMessages,
   listWorkspaceMembers,
+  listAgentCandidates,
   parseChatRows,
   removeChatAgent,
   sendChatMessage,
@@ -240,5 +241,22 @@ describe('fetchThreadMessages', () => {
       '/chats/room-1/threads/msg-root/messages?limit=20&beforeSeq=50',
       { authenticated: true }
     );
+  });
+});
+
+describe('listAgentCandidates', () => {
+  it('asks for a new chat without a room and for a chat with its id', async () => {
+    const server = { id: 'server-1' } as SwitchServer;
+    vi.mocked(gatewayFetch)
+      .mockResolvedValueOnce(new Response(JSON.stringify({ agentIds: ['a1'] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ agentIds: [] }), { status: 200 }));
+    expect(await listAgentCandidates(server, null)).toEqual(['a1']);
+    expect(await listAgentCandidates(server, 'room 1')).toEqual([]);
+    expect(gatewayFetch).toHaveBeenCalledWith(server, '/chats/agent-candidates', {
+      authenticated: true,
+    });
+    expect(gatewayFetch).toHaveBeenCalledWith(server, '/chats/agent-candidates?roomId=room%201', {
+      authenticated: true,
+    });
   });
 });

@@ -47,6 +47,7 @@ import {
   listChatMembers,
   listChats,
   listWorkspaceMembers,
+  listAgentCandidates,
   removeChatAgent,
   removeChatMember,
   renameChat,
@@ -190,6 +191,9 @@ export const chatsController = createRPCController({
   /** The people of a workspace on the server, who a chat can be opened to. */
   workspaceMembers: (params: { serverId: string; tenantId: string }): Promise<WorkspaceMember[]> =>
     onServer(params.serverId, (server) => listWorkspaceMembers(server, params.tenantId)),
+  /** The agents the viewer may add to a new chat (`roomId` null) or to that chat. */
+  agentCandidates: (params: { serverId: string; roomId: string | null }): Promise<string[]> =>
+    onServer(params.serverId, (server) => listAgentCandidates(server, params.roomId)),
   messages: (params: {
     serverId: string;
     roomId: string;

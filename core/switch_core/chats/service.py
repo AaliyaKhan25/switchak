@@ -1045,18 +1045,35 @@ class ChatService:
         agent = await self._agent_store.get(session, agent_id)
         if agent is None or agent.tenant_id != tenant_id:
             raise ChatError(404, "AGENT_NOT_FOUND", "Agent not found.")
-        if not allows_on_behalf_of(
-            parse_policy(agent.addressing_policy),
-            room_id=room_id,
-            group_id=group_id,
-            user_id=user.id,
-            external_user_ids=[],
-            owner_user_id=agent.owner_id,
-        ):
+        if not _may_use(agent, user, room_id=room_id, group_id=group_id):
             raise ChatError(
                 403, "AGENT_NOT_ALLOWED", "You may not chat with this agent here."
             )
         return agent
+
+    async def agent_candidates(
+        self, session: AsyncSession, tenant_id: str, user: User, room_id: str | None
+    ) -> list[str]:
+        """The ids of the agents the user could add: to a new chat when
+        `room_id` is None, else to that room, which they must manage, less
+        the agents already in it. The rule `_require_may_use_agent` applies."""
+        target_room_id, group_id, present = "", None, set[str]()
+        if room_id is not None:
+            room = await self._room(session, tenant_id, room_id)
+            await self._require_manager(session, tenant_id, user, room)
+            target_room_id, group_id = room.id, room.group_id
+            present = set(await self._room_store.get_agent_ids(session, room.id))
+        agents = (
+            await session.execute(
+                select(Agent).where(Agent.tenant_id == tenant_id).order_by(Agent.name)
+            )
+        ).scalars()
+        return [
+            agent.id
+            for agent in agents
+            if agent.id not in present
+            and _may_use(agent, user, room_id=target_room_id, group_id=group_id)
+        ]
 
     def _operation_id(self, tenant_id: str, user_id: str, request_id: str) -> str:
         return str(uuid.uuid5(_CHATS_NAMESPACE, f"{tenant_id}:{user_id}:{request_id}"))
@@ -1621,6 +1638,19 @@ class ChatService:
         if not prefix:
             return body
         return f"{prefix} {body}" if body else prefix
+
+
+def _may_use(agent: Agent, user: User, *, room_id: str, group_id: str | None) -> bool:
+    """Whether `user` may address `agent` themselves in `room_id` ("" for a
+    room not made yet), with no claimed platform account consulted."""
+    return allows_on_behalf_of(
+        parse_policy(agent.addressing_policy),
+        room_id=room_id,
+        group_id=group_id,
+        user_id=user.id,
+        external_user_ids=[],
+        owner_user_id=agent.owner_id,
+    )
 
 
 def _owns_agent_in_room(user_id: str) -> ColumnElement[bool]:

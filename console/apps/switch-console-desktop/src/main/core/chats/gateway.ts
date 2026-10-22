@@ -29,6 +29,7 @@ import {
   chatMemberListSchema,
   type WorkspaceMember,
   workspaceMemberSchema,
+  agentCandidatesSchema,
 } from '@shared/core/chats/chats';
 import type { SwitchServer } from '@shared/core/switch-servers/switch-servers';
 
@@ -206,6 +207,15 @@ export async function listWorkspaceMembers(
     `/tenants/${encodeURIComponent(tenantId)}/members`,
     workspaceMemberSchema.array()
   );
+}
+
+/** The ids of the agents the viewer may add to a new chat (`roomId` null) or to that chat. */
+export async function listAgentCandidates(
+  server: SwitchServer,
+  roomId: string | null
+): Promise<string[]> {
+  const query = roomId === null ? '' : `?roomId=${encodeURIComponent(roomId)}`;
+  return (await json(server, `/chats/agent-candidates${query}`, agentCandidatesSchema)).agentIds;
 }
 
 export async function sendChatMessage(

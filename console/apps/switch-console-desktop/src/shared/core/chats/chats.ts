@@ -118,6 +118,8 @@ export const workspaceMemberSchema = z
     serviceAccount: service_account ?? false,
   }));
 export type WorkspaceMember = z.infer<typeof workspaceMemberSchema>;
+/** The agents the viewer may add to a new chat, or to one they manage. */
+export const agentCandidatesSchema = z.object({ agentIds: z.array(z.string()) });
 export const chatUploadSchema = z.object({
   uploadId: z.string(),
   uri: z.string(),

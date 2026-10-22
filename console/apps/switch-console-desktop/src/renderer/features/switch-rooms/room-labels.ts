@@ -36,11 +36,11 @@ export function addablePeople<T extends { userId: string; serviceAccount: boolea
   return roster.filter((person) => !person.serviceAccount && !memberIds.has(person.userId));
 }
 
-/** The agents not in the chat yet: one already in is not offered again. */
-export function addableAgents<T extends { id: string }>(
-  agents: T[],
-  inChat: { id: string }[]
-): T[] {
-  const ids = new Set(inChat.map((agent) => agent.id));
-  return agents.filter((agent) => !ids.has(agent.id));
+/**
+ * The agents the server says the viewer may add (`GET /chats/agent-candidates`):
+ * one the viewer may not use, or already in the chat, is not offered.
+ */
+export function addableAgents<T extends { id: string }>(agents: T[], candidateIds: string[]): T[] {
+  const ids = new Set(candidateIds);
+  return agents.filter((agent) => ids.has(agent.id));
 }

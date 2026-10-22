@@ -42,7 +42,9 @@ describe('addablePeople', () => {
 });
 
 describe('addableAgents', () => {
-  it('offers only the agents not in the chat yet', () => {
-    expect(addableAgents([{ id: 'a1' }, { id: 'a2' }], [{ id: 'a1' }])).toEqual([{ id: 'a2' }]);
+  it('offers only the agents the server names as candidates', () => {
+    expect(addableAgents([{ id: 'a1' }, { id: 'a2' }, { id: 'a3' }], ['a2', 'gone'])).toEqual([
+      { id: 'a2' },
+    ]);
   });
 });
