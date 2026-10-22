@@ -1,4 +1,4 @@
-import { X } from 'lucide-react';
+import { Loader2, X } from 'lucide-react';
 import { useState } from 'react';
 import { useAgentAccent } from '@renderer/lib/components/agent-accent';
 import { AgentAvatar } from '@renderer/lib/components/agent-avatar';
@@ -88,6 +88,7 @@ export function ParticipantPicker({
   loading,
   inputId,
   autoFocus,
+  busy,
 }: {
   candidates: Participant[];
   picked: Participant[];
@@ -97,6 +98,8 @@ export function ParticipantPicker({
   /** For the field's label. */
   inputId: string;
   autoFocus: boolean;
+  /** A pick is being applied: the field takes no other until it is, and says so. */
+  busy: boolean;
 }) {
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
@@ -105,6 +108,7 @@ export function ParticipantPicker({
   const current = Math.min(active, Math.max(results.length - 1, 0));
 
   const add = (participant: Participant) => {
+    if (busy) return;
     onChange([...picked, participant]);
     setQuery('');
     setActive(0);
@@ -135,7 +139,10 @@ export function ParticipantPicker({
           aria-controls={`${inputId}-results`}
           aria-label="Add agents or people"
           placeholder={picked.length === 0 ? 'Add agents or people…' : ''}
-          className="h-6 min-w-32 flex-1 bg-transparent px-1.5 text-sm outline-none placeholder:text-foreground-passive"
+          className="h-6 min-w-32 flex-1 bg-transparent px-1.5 text-sm outline-none placeholder:text-foreground-passive aria-disabled:opacity-50"
+          // Read-only rather than disabled while busy, so focus stays for the next pick.
+          readOnly={busy}
+          aria-disabled={busy}
           value={query}
           onChange={(event) => {
             setQuery(event.target.value);
@@ -165,6 +172,15 @@ export function ParticipantPicker({
             else setOpen(false);
           }}
         />
+        {busy && (
+          <span
+            role="status"
+            className="flex items-center gap-1 px-1.5 text-xs text-foreground-muted"
+          >
+            <Loader2 className="size-3 animate-spin" />
+            Adding…
+          </span>
+        )}
       </div>
       {open && (
         // In the flow rather than floating: the dialog clips what overflows it, so the list grows it instead.
@@ -187,12 +203,13 @@ export function ParticipantPicker({
                 key={`${participant.kind}:${participant.id}`}
                 role="option"
                 aria-selected={index === current}
+                aria-disabled={busy}
                 // Keeps focus in the field, so the list stays open for the next pick.
                 onMouseDown={(event) => event.preventDefault()}
                 onMouseEnter={() => setActive(index)}
                 onClick={() => add(participant)}
                 className={cn(
-                  'flex cursor-pointer items-center gap-2.5 rounded-md px-2.5 py-1.5 text-sm',
+                  'flex cursor-pointer items-center gap-2.5 rounded-md px-2.5 py-1.5 text-sm aria-disabled:cursor-wait aria-disabled:opacity-50',
                   index === current && 'bg-[var(--sel-soft)]'
                 )}
               >

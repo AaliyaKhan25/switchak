@@ -4,7 +4,7 @@
  * the room. A plain Enter still does both.
  */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act } from 'react';
+import { act, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { RoomNameInput } from '@renderer/features/switch-servers/room-name-input';
@@ -56,6 +56,7 @@ describe('New room IME', () => {
         loading={false}
         inputId="participants"
         autoFocus={false}
+        busy={false}
       />
     );
     await act(async () => input.focus());
@@ -76,5 +77,46 @@ describe('New room IME', () => {
     expect(onSubmit).not.toHaveBeenCalled();
     await act(async () => enter(input, { keyCode: 13 }));
     expect(onSubmit).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('Participant field while a pick is being added', () => {
+  it('takes no second pick until the first is added, and says it is adding', async () => {
+    const bob: Participant = { kind: 'person', id: 'u2', name: 'Bob', detail: 'bob@example.com' };
+    let finish!: () => void;
+    const added: string[] = [];
+    function Harness() {
+      const [busy, setBusy] = useState(false);
+      return (
+        <ParticipantPicker
+          candidates={[helper, bob]}
+          picked={[]}
+          onChange={(next) => {
+            const pick = next.at(-1)!;
+            added.push(pick.id);
+            setBusy(true);
+            // The first add answers late.
+            void new Promise<void>((resolve) => (finish = resolve)).then(() => setBusy(false));
+          }}
+          serverId={null}
+          loading={false}
+          inputId="add"
+          autoFocus={false}
+          busy={busy}
+        />
+      );
+    }
+    const input = await render(<Harness />);
+    await act(async () => input.focus());
+    await act(async () => enter(input, { keyCode: 13 }));
+    expect(added).toEqual(['a1']);
+    expect(input.readOnly).toBe(true);
+    expect(container!.textContent).toContain('Adding…');
+    await act(async () => enter(input, { keyCode: 13 }));
+    expect(added).toEqual(['a1']);
+    await act(async () => finish());
+    expect(input.readOnly).toBe(false);
+    await act(async () => enter(input, { keyCode: 13 }));
+    expect(added).toEqual(['a1', 'a1']);
   });
 });

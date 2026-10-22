@@ -85,6 +85,7 @@ describe('ParticipantPicker', () => {
         loading: false,
         inputId: 'participants',
         autoFocus: false,
+        busy: false,
       })
     );
     expect(html).toContain('aria-label="Remove helper"');

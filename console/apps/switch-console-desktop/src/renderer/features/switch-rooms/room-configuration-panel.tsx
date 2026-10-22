@@ -277,7 +277,6 @@ const ChatAddParticipantPanel = observer(function ChatAddParticipantPanel({
   ];
 
   async function add(participant: Participant) {
-    if (adding !== null) return;
     setAdding(participant.id);
     setError(null);
     try {
@@ -296,6 +295,7 @@ const ChatAddParticipantPanel = observer(function ChatAddParticipantPanel({
       <ParticipantPicker
         inputId="chat-add-participant"
         autoFocus
+        busy={adding !== null}
         candidates={candidates}
         picked={[]}
         onChange={(next) => {
