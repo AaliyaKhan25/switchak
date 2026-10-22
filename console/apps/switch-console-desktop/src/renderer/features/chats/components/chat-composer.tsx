@@ -12,7 +12,6 @@ import { type ChatAgent, type ChatMessage, chatAgentLabel } from '@shared/core/c
 import { snippetOf } from '../chat-threads';
 import {
   filterMentionAgents,
-  MENTION_BADGE,
   mentionAgentIds,
   mentionQuery,
   mentionSegments,
@@ -30,6 +29,7 @@ import {
   PromptInputSubmit,
   PromptInputTextarea,
 } from '../ui/prompt-input';
+import { MentionMark } from './mention-mark';
 
 async function toBase64(file: File): Promise<string> {
   const bytes = new Uint8Array(await file.arrayBuffer());
@@ -404,10 +404,15 @@ export const ChatComposer = observer(function ChatComposer({
                 className="pointer-events-none absolute inset-0 overflow-y-auto px-1 py-1.5 text-sm break-words whitespace-pre-wrap text-transparent"
               >
                 {mentionSegments(draft, tokens).map((segment, index) =>
-                  segment.mention ? (
-                    <mark key={index} className={cn(MENTION_BADGE, 'text-transparent')}>
+                  segment.agentId ? (
+                    <MentionMark
+                      key={index}
+                      agent={agents.find((each) => each.id === segment.agentId) ?? null}
+                      serverId={serverId}
+                      className="text-transparent"
+                    >
                       {segment.text}
-                    </mark>
+                    </MentionMark>
                   ) : (
                     <span key={index}>{segment.text}</span>
                   )

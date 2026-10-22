@@ -47,9 +47,9 @@ describe('mentionTokens', () => {
   it('splits text into plain and mention runs', () => {
     const text = 'x @cc y';
     expect(mentionSegments(text, mentionTokens(text, agents))).toEqual([
-      { text: 'x ', mention: false },
-      { text: '@cc', mention: true },
-      { text: ' y', mention: false },
+      { text: 'x ', agentId: null },
+      { text: '@cc', agentId: 'a3' },
+      { text: ' y', agentId: null },
     ]);
   });
 });

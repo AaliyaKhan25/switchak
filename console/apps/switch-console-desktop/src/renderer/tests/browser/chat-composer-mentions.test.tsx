@@ -3,6 +3,7 @@
  * they only line up with the text if that layer scrolls exactly like the
  * textarea. And Enter that an IME is handling must never send.
  */
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -30,7 +31,9 @@ async function render(node: React.ReactNode): Promise<HTMLTextAreaElement> {
   container.style.width = '600px';
   document.body.appendChild(container);
   root = createRoot(container);
-  await act(async () => root!.render(node));
+  await act(async () =>
+    root!.render(<QueryClientProvider client={new QueryClient()}>{node}</QueryClientProvider>)
+  );
   return container.querySelector('textarea')!;
 }
 

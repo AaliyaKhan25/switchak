@@ -15,7 +15,7 @@ import {
 } from '@shared/core/chats/chats';
 import { foldTurnEndNotices, placeTurns, type TurnActivity } from '../activity-join';
 import { messageAnchorId, threadChip } from '../chat-threads';
-import { MENTION_BADGE, mentionSegments, mentionTokens } from '../mentions';
+import { mentionSegments, mentionTokens } from '../mentions';
 import { hiddenStopRows } from '../stop-rows';
 import type { AgentActivity } from '../stores/chat-activity-store';
 import type { ChatTimeline, PendingSend } from '../stores/chat-timeline-store';
@@ -29,6 +29,7 @@ import {
   turnShown,
 } from './chat-activity-block';
 import { ChatAttachments } from './chat-attachments';
+import { MentionMark } from './mention-mark';
 
 /** Messages more than this far apart start a new dated group. */
 const GROUP_GAP_MS = 30 * 60 * 1000;
@@ -56,12 +57,25 @@ function isBridged(message: ChatMessage): boolean {
 
 /** A person's initials disc: people have no picture in Switch. */
 /** `body` with each `@name` or `@alias` of a chat agent drawn as a badge. */
-function MentionText({ body, agents }: { body: string; agents: ChatAgent[] }) {
+function MentionText({
+  body,
+  agents,
+  serverId,
+}: {
+  body: string;
+  agents: ChatAgent[];
+  serverId: string;
+}) {
   return mentionSegments(body, mentionTokens(body, agents)).map((segment, index) =>
-    segment.mention ? (
-      <mark key={index} className={cn(MENTION_BADGE, 'text-foreground')}>
+    segment.agentId ? (
+      <MentionMark
+        key={index}
+        agent={agents.find((agent) => agent.id === segment.agentId) ?? null}
+        serverId={serverId}
+        className="text-foreground"
+      >
         {segment.text}
-      </mark>
+      </MentionMark>
     ) : (
       <Fragment key={index}>{segment.text}</Fragment>
     )
@@ -291,7 +305,7 @@ export const ChatTimelineView = observer(function ChatTimelineView({
                     )}
                   </span>
                   <div className="min-w-0 rounded-2xl bg-background-1 px-4 py-2.5 text-sm leading-relaxed break-words whitespace-pre-wrap">
-                    <MentionText body={message.body} agents={agents} />
+                    <MentionText body={message.body} agents={agents} serverId={serverId} />
                   </div>
                   <ChatAttachments
                     serverId={serverId}

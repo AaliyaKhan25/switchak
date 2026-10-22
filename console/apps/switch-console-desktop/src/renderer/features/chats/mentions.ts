@@ -75,19 +75,19 @@ export function tokenToRemove(
   );
 }
 
-/** `text` split into plain runs and mention runs, for drawing badges. */
+/** `text` split into plain runs and mention runs (with their agent), for drawing badges. */
 export function mentionSegments(
   text: string,
   tokens: MentionToken[]
-): { text: string; mention: boolean }[] {
-  const segments: { text: string; mention: boolean }[] = [];
+): { text: string; agentId: string | null }[] {
+  const segments: { text: string; agentId: string | null }[] = [];
   let at = 0;
   for (const token of tokens) {
-    if (token.start > at) segments.push({ text: text.slice(at, token.start), mention: false });
-    segments.push({ text: text.slice(token.start, token.end), mention: true });
+    if (token.start > at) segments.push({ text: text.slice(at, token.start), agentId: null });
+    segments.push({ text: text.slice(token.start, token.end), agentId: token.agentId });
     at = token.end;
   }
-  if (at < text.length) segments.push({ text: text.slice(at), mention: false });
+  if (at < text.length) segments.push({ text: text.slice(at), agentId: null });
   return segments;
 }
 
