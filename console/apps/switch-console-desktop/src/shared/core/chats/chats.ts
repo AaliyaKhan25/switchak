@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from "zod";
 
 /**
  * A chat is a Switch room the signed-in person is a member of and that has at
@@ -22,7 +22,13 @@ export type ChatAgent = z.infer<typeof chatAgentSchema>;
 export const chatSummarySchema = z.object({
   roomId: z.string(),
   name: z.string(),
-  channelType: z.enum(['lobby', 'channel_public', 'channel_private', 'group', 'direct']),
+  channelType: z.enum([
+    "lobby",
+    "channel_public",
+    "channel_private",
+    "group",
+    "direct",
+  ]),
   bridgeType: z.string().nullable(),
   channelName: z.string().nullable(),
   agents: z.array(chatAgentSchema),
@@ -46,7 +52,7 @@ export type ChatSummary = z.infer<typeof chatSummarySchema>;
 export const chatSenderSchema = z.object({
   clientId: z.string(),
   name: z.string(),
-  kind: z.enum(['human', 'agent', 'system']),
+  kind: z.enum(["human", "agent", "system"]),
   agentId: z.string().nullable(),
   userId: z.string().nullable(),
 });
@@ -92,8 +98,12 @@ export const chatThreadMessagesPageSchema = z.object({
   headSeq: z.number().int(),
   hasMore: z.boolean(),
 });
-export type ChatThreadMessagesPage = z.infer<typeof chatThreadMessagesPageSchema>;
-export const chatSentSchema = z.object({ messages: z.array(chatMessageSchema) });
+export type ChatThreadMessagesPage = z.infer<
+  typeof chatThreadMessagesPageSchema
+>;
+export const chatSentSchema = z.object({
+  messages: z.array(chatMessageSchema),
+});
 export const chatAgentAddedSchema = z.object({ chat: chatSummarySchema });
 export const chatMemberSchema = z.object({
   userId: z.string(),
@@ -101,11 +111,24 @@ export const chatMemberSchema = z.object({
   isOwner: z.boolean(),
 });
 export type ChatMember = z.infer<typeof chatMemberSchema>;
-export const chatMemberListSchema = z.object({ members: z.array(chatMemberSchema) });
+export const chatMemberListSchema = z.object({
+  members: z.array(chatMemberSchema),
+});
 /** A person in the workspace, from its roster, who could be added to a chat. */
 export const workspaceMemberSchema = z
-  .object({ user_id: z.string(), name: z.string(), email: z.string().nullish() })
-  .transform(({ user_id, name, email }) => ({ userId: user_id, name, email: email || null }));
+  .object({
+    user_id: z.string(),
+    name: z.string(),
+    email: z.string().nullish(),
+    // Older servers do not report it; they have no way to mark one.
+    service_account: z.boolean().optional(),
+  })
+  .transform(({ user_id, name, email, service_account }) => ({
+    userId: user_id,
+    name,
+    email: email || null,
+    serviceAccount: service_account ?? false,
+  }));
 export type WorkspaceMember = z.infer<typeof workspaceMemberSchema>;
 export const chatUploadSchema = z.object({
   uploadId: z.string(),
@@ -119,7 +142,7 @@ export type ChatUpload = z.infer<typeof chatUploadSchema>;
  * `access`: the person lost the room (membership, workspace role, archive).
  * `unlisted`: still a member, but the room no longer qualifies for the list.
  */
-export const chatRemovalReasonSchema = z.enum(['access', 'unlisted']);
+export const chatRemovalReasonSchema = z.enum(["access", "unlisted"]);
 export type ChatRemovalReason = z.infer<typeof chatRemovalReasonSchema>;
 export const chatRemovedSchema = z.object({
   roomId: z.string(),
@@ -135,7 +158,7 @@ export const chatErrorBodySchema = z.object({
  * The live feed's state. `live` is only reached after the server's `ready`,
  * which it sends once every member room has been caught up from its cursor.
  */
-export type ChatStreamState = 'connecting' | 'catching-up' | 'live' | 'offline';
+export type ChatStreamState = "connecting" | "catching-up" | "live" | "offline";
 
 export type ChatSendInput = {
   serverId: string;
@@ -158,22 +181,28 @@ export type ChatUploadInput = {
 };
 
 /** The display name the room and the platforms show for an agent. */
-export function chatAgentLabel(agent: Pick<ChatAgent, 'name' | 'displayName'>): string {
+export function chatAgentLabel(
+  agent: Pick<ChatAgent, "name" | "displayName">,
+): string {
   return agent.displayName ?? agent.name;
 }
 
 /** The `clientTxn` a Console send's parts carry: `{requestId}:{index}`. */
 export function requestIdOfClientTxn(clientTxn: string | null): string | null {
   if (clientTxn === null) return null;
-  const at = clientTxn.lastIndexOf(':');
+  const at = clientTxn.lastIndexOf(":");
   return at > 0 ? clientTxn.slice(0, at) : null;
 }
 
 /** The notice an agent posts to a room while a session starts to answer it. */
-export const SESSION_STARTING_MESSAGE = 'Starting a session to handle this — one moment.';
+export const SESSION_STARTING_MESSAGE =
+  "Starting a session to handle this — one moment.";
 
 export function isSessionStartingNotice(message: ChatMessage): boolean {
-  return message.sender.kind === 'agent' && message.body.trim() === SESSION_STARTING_MESSAGE;
+  return (
+    message.sender.kind === "agent" &&
+    message.body.trim() === SESSION_STARTING_MESSAGE
+  );
 }
 
 /**
@@ -183,52 +212,63 @@ export function isSessionStartingNotice(message: ChatMessage): boolean {
  */
 export function liveSessionStartingNotices(
   messages: readonly ChatMessage[],
-  turnAgents: ReadonlyMap<string, ReadonlySet<string>>
+  turnAgents: ReadonlyMap<string, ReadonlySet<string>>,
 ): Set<string> {
   const live = new Set<string>();
   const seen = new Set<string>();
   for (let at = messages.length - 1; at >= 0; at--) {
     const message = messages[at];
-    if (message.sender.kind !== 'agent' || seen.has(message.sender.clientId)) continue;
+    if (message.sender.kind !== "agent" || seen.has(message.sender.clientId))
+      continue;
     seen.add(message.sender.clientId);
     if (!isSessionStartingNotice(message)) continue;
     let from = at;
-    while (from > 0 && messages[from].sender.kind !== 'human') from--;
+    while (from > 0 && messages[from].sender.kind !== "human") from--;
     const agentId = message.sender.agentId;
     const working = messages
       .slice(from)
-      .some((each) => agentId !== null && turnAgents.get(each.messageId)?.has(agentId));
+      .some(
+        (each) =>
+          agentId !== null && turnAgents.get(each.messageId)?.has(agentId),
+      );
     if (!working) live.add(message.messageId);
   }
   return live;
 }
 
 /** What the host posts for a turn that ended without the agent posting, then why it ended. */
-export const UNPOSTED_REPLY_MESSAGE = 'I finished without replying.';
-export const TURN_FAILED_PHRASE = 'The turn failed';
-export const TURN_INTERRUPTED_PHRASE = 'The turn was interrupted';
+export const UNPOSTED_REPLY_MESSAGE = "I finished without replying.";
+export const TURN_FAILED_PHRASE = "The turn failed";
+export const TURN_INTERRUPTED_PHRASE = "The turn was interrupted";
 
 export type TurnEndNotice = {
-  outcome: 'completed' | 'failed' | 'interrupted';
+  outcome: "completed" | "failed" | "interrupted";
   reason: string | null;
 };
 
 /** The host's notice of a turn that ended without a reply, or null for any other message. */
 export function turnEndNotice(message: ChatMessage): TurnEndNotice | null {
   const body = message.body.trim();
-  if (message.sender.kind !== 'agent' || !body.startsWith(UNPOSTED_REPLY_MESSAGE)) return null;
+  if (
+    message.sender.kind !== "agent" ||
+    !body.startsWith(UNPOSTED_REPLY_MESSAGE)
+  )
+    return null;
   const rest = body.slice(UNPOSTED_REPLY_MESSAGE.length).trim();
-  if (!rest) return { outcome: 'completed', reason: null };
+  if (!rest) return { outcome: "completed", reason: null };
   for (const [phrase, outcome] of [
-    [TURN_FAILED_PHRASE, 'failed'],
-    [TURN_INTERRUPTED_PHRASE, 'interrupted'],
+    [TURN_FAILED_PHRASE, "failed"],
+    [TURN_INTERRUPTED_PHRASE, "interrupted"],
   ] as const) {
     if (rest === `${phrase}.`) return { outcome, reason: null };
     // An interrupt is the person's Stop; the provider's raw reason for it says nothing more.
     if (rest.startsWith(`${phrase}: `))
       return {
         outcome,
-        reason: outcome === 'interrupted' ? null : rest.slice(phrase.length + 2).trim(),
+        reason:
+          outcome === "interrupted"
+            ? null
+            : rest.slice(phrase.length + 2).trim(),
       };
   }
   return null;

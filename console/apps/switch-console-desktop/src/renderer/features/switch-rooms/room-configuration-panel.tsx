@@ -1,57 +1,72 @@
-import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ExternalLink, FileText, Loader2, Plus, RefreshCw, Search, X } from 'lucide-react';
-import { observer } from 'mobx-react-lite';
-import { useState } from 'react';
-import { opensAsConsoleChat } from '@renderer/features/chats/console-chat-redirect';
-import { chatFailure } from '@renderer/features/chats/stores/chat-errors';
-import { chatsStore } from '@renderer/features/chats/stores/chats';
-import { agentsStore } from '@renderer/features/locations/stores/agents-store';
-import { isConsoleGroupChatSummary } from '@renderer/features/switch-servers/room-filters';
-import { switchRoomsStore } from '@renderer/features/switch-servers/switch-rooms-store';
-import { switchServersStore } from '@renderer/features/switch-servers/switch-servers-store';
-import { workspacesStore } from '@renderer/features/workspaces/workspaces-store';
-import { AgentAvatar } from '@renderer/lib/components/agent-avatar';
-import { bridgePlatformLabel } from '@renderer/lib/components/bridge-platform';
-import { describeFailure, failureText } from '@renderer/lib/errors/describe-failure';
-import { rpc } from '@renderer/lib/ipc';
-import { useNavigate } from '@renderer/lib/layout/navigation-provider';
-import { useShowModal } from '@renderer/lib/modal/modal-provider';
-import { useWorkspaceAgents } from '@renderer/lib/stores/use-workspace-agents';
-import { Button } from '@renderer/lib/ui/button';
-import { Input } from '@renderer/lib/ui/input';
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  ExternalLink,
+  FileText,
+  Loader2,
+  Plus,
+  RefreshCw,
+  Search,
+  X,
+} from "lucide-react";
+import { observer } from "mobx-react-lite";
+import { useState } from "react";
+import { opensAsConsoleChat } from "@renderer/features/chats/console-chat-redirect";
+import { chatFailure } from "@renderer/features/chats/stores/chat-errors";
+import { chatsStore } from "@renderer/features/chats/stores/chats";
+import { agentsStore } from "@renderer/features/locations/stores/agents-store";
+import { isConsoleGroupChatSummary } from "@renderer/features/switch-servers/room-filters";
+import { switchRoomsStore } from "@renderer/features/switch-servers/switch-rooms-store";
+import { switchServersStore } from "@renderer/features/switch-servers/switch-servers-store";
+import { workspacesStore } from "@renderer/features/workspaces/workspaces-store";
+import { AgentAvatar } from "@renderer/lib/components/agent-avatar";
+import { bridgePlatformLabel } from "@renderer/lib/components/bridge-platform";
+import {
+  describeFailure,
+  failureText,
+} from "@renderer/lib/errors/describe-failure";
+import { rpc } from "@renderer/lib/ipc";
+import { useNavigate } from "@renderer/lib/layout/navigation-provider";
+import { useShowModal } from "@renderer/lib/modal/modal-provider";
+import { useWorkspaceAgents } from "@renderer/lib/stores/use-workspace-agents";
+import { Button } from "@renderer/lib/ui/button";
+import { Input } from "@renderer/lib/ui/input";
 import {
   InputGroup,
   InputGroupAddon,
   InputGroupButton,
   InputGroupInput,
-} from '@renderer/lib/ui/input-group';
-import { Textarea } from '@renderer/lib/ui/textarea';
-import { cn } from '@renderer/utils/utils';
-import { agentInitials } from '@shared/core/agents/agent-avatar';
-import { type ChatSummary, chatAgentLabel } from '@shared/core/chats/chats';
-import { providerDisplayName } from '@shared/core/providers/agent-provider-registry';
-import { runsOnThisComputer } from '@shared/core/switch-servers/switch-servers';
+} from "@renderer/lib/ui/input-group";
+import { Textarea } from "@renderer/lib/ui/textarea";
+import { cn } from "@renderer/utils/utils";
+import { agentInitials } from "@shared/core/agents/agent-avatar";
+import { type ChatSummary, chatAgentLabel } from "@shared/core/chats/chats";
+import { providerDisplayName } from "@shared/core/providers/agent-provider-registry";
+import { runsOnThisComputer } from "@shared/core/switch-servers/switch-servers";
 import type {
   RemoteAgentSummary,
   RemoteRoomDetail,
-} from '@shared/core/switch-servers/switch-servers';
-import { administersWorkspace } from '@shared/core/workspaces/workspaces';
-import { channelOnDeleteSummary } from './room-delete-wording';
-import { membershipSummary, roomTitle } from './room-labels';
-import { openRoomChannel } from './room-links';
+} from "@shared/core/switch-servers/switch-servers";
+import { administersWorkspace } from "@shared/core/workspaces/workspaces";
+import { channelOnDeleteSummary } from "./room-delete-wording";
+import { addablePeople, membershipSummary, roomTitle } from "./room-labels";
+import { openRoomChannel } from "./room-links";
 
 /** Query key for one room's own settings — shared so a save can write the
  * server's answer straight back into what the page is reading. */
 function roomDetailKey(workspaceId: string, roomId: string) {
-  return ['remote-room-detail', workspaceId, roomId] as const;
+  return ["remote-room-detail", workspaceId, roomId] as const;
 }
 
 /** One room read from its server; `workspaceId` is null until the room list has loaded. */
 function useRoomDetail(roomId: string) {
   const workspaceId = switchRoomsStore.roomWorkspaceId(roomId);
   const query = useQuery({
-    queryKey: roomDetailKey(workspaceId ?? '', roomId),
-    queryFn: () => rpc.workspaces.getRoomDetail({ workspaceId: workspaceId as string, roomId }),
+    queryKey: roomDetailKey(workspaceId ?? "", roomId),
+    queryFn: () =>
+      rpc.workspaces.getRoomDetail({
+        workspaceId: workspaceId as string,
+        roomId,
+      }),
     enabled: workspaceId !== null && !opensAsConsoleChat(roomId),
   });
   return { workspaceId, query };
@@ -69,29 +84,48 @@ const ChatConfiguration = observer(function ChatConfiguration({
   serverId: string;
   chat: ChatSummary;
 }) {
-  const workspaceId = switchRoomsStore.roomWorkspaceId(chat.roomId) ?? workspacesStore.activeId;
+  const workspaceId =
+    switchRoomsStore.roomWorkspaceId(chat.roomId) ?? workspacesStore.activeId;
   const detail = useQuery({
-    queryKey: roomDetailKey(workspaceId ?? '', chat.roomId),
+    queryKey: roomDetailKey(workspaceId ?? "", chat.roomId),
     queryFn: () =>
-      rpc.workspaces.getRoomDetail({ workspaceId: workspaceId as string, roomId: chat.roomId }),
+      rpc.workspaces.getRoomDetail({
+        workspaceId: workspaceId as string,
+        roomId: chat.roomId,
+      }),
     enabled: workspaceId !== null && chat.canManage,
   });
   return (
     <div className="h-full overflow-y-auto">
       <div className="mx-auto flex w-full max-w-[880px] flex-col gap-8 px-10 py-8">
         <div className="flex min-w-0 flex-col gap-1">
-          <h1 className="truncate text-2xl font-semibold text-foreground">{chat.name}</h1>
-          <p className="text-sm text-foreground-muted">Group chat in Switch Console</p>
+          <h1 className="truncate text-2xl font-semibold text-foreground">
+            {chat.name}
+          </h1>
+          <p className="text-sm text-foreground-muted">
+            Group chat in Switch Console
+          </p>
         </div>
         {workspaceId !== null && detail.data && (
-          <GeneralSection key={chat.roomId} workspaceId={workspaceId} room={detail.data} />
+          <GeneralSection
+            key={chat.roomId}
+            workspaceId={workspaceId}
+            room={detail.data}
+          />
         )}
         {detail.isError && (
           <p className="text-xs text-foreground-muted">
-            {failureText(detail.error, 'Could not read this chat’s description and instructions.')}
+            {failureText(
+              detail.error,
+              "Could not read this chat’s description and instructions.",
+            )}
           </p>
         )}
-        <ChatParticipantsSection serverId={serverId} workspaceId={workspaceId} chat={chat} />
+        <ChatParticipantsSection
+          serverId={serverId}
+          workspaceId={workspaceId}
+          chat={chat}
+        />
       </div>
     </div>
   );
@@ -102,7 +136,12 @@ const ChatConfiguration = observer(function ChatConfiguration({
  * so an add, a removal or a swap by anyone reads the list again.
  */
 export function chatMembersQueryKey(serverId: string, chat: ChatSummary) {
-  return ['chat-members', serverId, chat.roomId, chat.memberUserIds.join(',')] as const;
+  return [
+    "chat-members",
+    serverId,
+    chat.roomId,
+    chat.memberUserIds.join(","),
+  ] as const;
 }
 
 /** Who is in a group chat; a manager adds and removes agents and people through the chat. */
@@ -122,7 +161,7 @@ const ChatParticipantsSection = observer(function ChatParticipantsSection({
     queryKey: membersKey,
     queryFn: () => rpc.chats.members(serverId, roomId),
   });
-  const [adding, setAdding] = useState<'agent' | 'person' | null>(null);
+  const [adding, setAdding] = useState<"agent" | "person" | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const people = members.data ?? [];
@@ -163,7 +202,9 @@ const ChatParticipantsSection = observer(function ChatParticipantsSection({
     <section className="flex flex-col gap-3">
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-baseline gap-2">
-          <h2 className="text-sm font-semibold text-foreground">Participants</h2>
+          <h2 className="text-sm font-semibold text-foreground">
+            Participants
+          </h2>
           <span className="text-xs text-foreground-muted">
             {membershipSummary(agentIds.length, people.length)}
           </span>
@@ -173,8 +214,8 @@ const ChatParticipantsSection = observer(function ChatParticipantsSection({
             <Button
               variant="outline"
               size="sm"
-              aria-expanded={adding === 'agent'}
-              onClick={() => setAdding((v) => (v === 'agent' ? null : 'agent'))}
+              aria-expanded={adding === "agent"}
+              onClick={() => setAdding((v) => (v === "agent" ? null : "agent"))}
             >
               <Plus className="size-3.5" />
               Add agent
@@ -182,8 +223,10 @@ const ChatParticipantsSection = observer(function ChatParticipantsSection({
             <Button
               variant="outline"
               size="sm"
-              aria-expanded={adding === 'person'}
-              onClick={() => setAdding((v) => (v === 'person' ? null : 'person'))}
+              aria-expanded={adding === "person"}
+              onClick={() =>
+                setAdding((v) => (v === "person" ? null : "person"))
+              }
             >
               <Plus className="size-3.5" />
               Add person
@@ -193,26 +236,34 @@ const ChatParticipantsSection = observer(function ChatParticipantsSection({
       </div>
 
       {members.isError && (
-        <p className="text-xs text-destructive">{chatFailure(members.error).message}</p>
+        <p className="text-xs text-destructive">
+          {chatFailure(members.error).message}
+        </p>
       )}
       {error !== null && <p className="text-xs text-destructive">{error}</p>}
 
       <ParticipantList
         workspaceId={workspaceId}
         agentIds={agentIds}
-        agentNames={new Map(chat.agents.map((agent) => [agent.id, chatAgentLabel(agent)]))}
+        agentNames={
+          new Map(chat.agents.map((agent) => [agent.id, chatAgentLabel(agent)]))
+        }
         people={people.map((person) => ({
           id: person.userId,
           name: person.name,
-          detail: person.isOwner ? 'owner' : 'member',
+          detail: person.isOwner ? "owner" : "member",
         }))}
         manage={manage}
       />
 
-      {adding === 'agent' && workspaceId !== null && (
-        <ChatAddAgentPanel serverId={serverId} workspaceId={workspaceId} chat={chat} />
+      {adding === "agent" && workspaceId !== null && (
+        <ChatAddAgentPanel
+          serverId={serverId}
+          workspaceId={workspaceId}
+          chat={chat}
+        />
       )}
-      {adding === 'person' && (
+      {adding === "person" && (
         <ChatAddPersonPanel
           serverId={serverId}
           workspaceId={workspaceId}
@@ -245,22 +296,35 @@ const ChatAddAgentPanel = observer(function ChatAddAgentPanel({
       searchPlaceholder="Search agents in this workspace…"
       allInText="Every agent in this workspace is already in this chat."
       loading={agents.isPending}
-      loadError={agents.isError ? failureText(agents.error, 'Could not list the agents.') : null}
+      loadError={
+        agents.isError
+          ? failureText(agents.error, "Could not list the agents.")
+          : null
+      }
       candidates={(agents.data ?? [])
         .filter((agent) => !inChat.has(agent.id))
         .map((agent) => ({
           id: agent.id,
           name: agent.displayName ?? agent.name,
           mark: (
-            <AgentAvatar name={agent.name} iconUrl={agent.iconUrl} serverId={serverId} size={22} />
+            <AgentAvatar
+              name={agent.name}
+              iconUrl={agent.iconUrl}
+              serverId={serverId}
+              size={22}
+            />
           ),
-          detail: providerDisplayName(agent.knownAgentType) ?? 'Agent',
+          detail: providerDisplayName(agent.knownAgentType) ?? "Agent",
         }))}
       onAdd={async (agentId) => {
         try {
           chatsStore.add(
             serverId,
-            await rpc.chats.addAgent({ serverId, roomId: chat.roomId, agentId })
+            await rpc.chats.addAgent({
+              serverId,
+              roomId: chat.roomId,
+              agentId,
+            }),
           );
         } catch (cause) {
           throw new Error(chatFailure(cause).message);
@@ -288,8 +352,9 @@ function ChatAddPersonPanel({
   onAdded: (members: Awaited<ReturnType<typeof rpc.chats.addMember>>) => void;
 }) {
   const roster = useQuery({
-    queryKey: ['workspace-members', serverId, tenantId],
-    queryFn: () => rpc.chats.workspaceMembers({ serverId, tenantId: tenantId as string }),
+    queryKey: ["workspace-members", serverId, tenantId],
+    queryFn: () =>
+      rpc.chats.workspaceMembers({ serverId, tenantId: tenantId as string }),
     enabled: tenantId !== null,
   });
   return (
@@ -300,20 +365,23 @@ function ChatAddPersonPanel({
       loading={tenantId !== null && roster.isPending}
       loadError={
         tenantId === null
-          ? 'This workspace has no tenant to list people from.'
+          ? "This workspace has no tenant to list people from."
           : roster.isError
-            ? failureText(roster.error, 'Could not list the people.')
+            ? failureText(roster.error, "Could not list the people.")
             : null
       }
-      candidates={(roster.data ?? [])
-        .filter((person) => !memberIds.has(person.userId))
-        .map((person) => ({
-          id: person.userId,
-          name: person.name,
-          mark: <PersonMark name={person.name} size="sm" />,
-          detail: person.email ?? '',
-        }))}
-      footer={<InviteHint workspaceId={workspaceId} canInvite={canInvite(serverId, workspaceId)} />}
+      candidates={addablePeople(roster.data ?? [], memberIds).map((person) => ({
+        id: person.userId,
+        name: person.name,
+        mark: <PersonMark name={person.name} size="sm" />,
+        detail: person.email ?? "",
+      }))}
+      footer={
+        <InviteHint
+          workspaceId={workspaceId}
+          canInvite={canInvite(serverId, workspaceId)}
+        />
+      }
       onAdd={async (userId) => {
         try {
           onAdded(await rpc.chats.addMember({ serverId, roomId, userId }));
@@ -327,8 +395,10 @@ function ChatAddPersonPanel({
 
 /** Whether the viewer may invite people to the workspace, as the workspace menu decides it. */
 function canInvite(serverId: string, workspaceId: string | null): boolean {
-  const workspace = workspacesStore.workspaces.find((each) => each.id === workspaceId) ?? null;
-  const server = switchServersStore.servers.find((each) => each.id === serverId) ?? null;
+  const workspace =
+    workspacesStore.workspaces.find((each) => each.id === workspaceId) ?? null;
+  const server =
+    switchServersStore.servers.find((each) => each.id === serverId) ?? null;
   return (
     workspace !== null &&
     server !== null &&
@@ -345,10 +415,10 @@ export function InviteHint({
   workspaceId: string | null;
   canInvite: boolean;
 }) {
-  const showInvitePeopleModal = useShowModal('invitePeopleModal');
+  const showInvitePeopleModal = useShowModal("invitePeopleModal");
   return (
     <p className="px-1 text-xs text-foreground-muted">
-      Don&apos;t see someone?{' '}
+      Don&apos;t see someone?{" "}
       {canInvite && workspaceId !== null ? (
         <button
           type="button"
@@ -358,7 +428,7 @@ export function InviteHint({
           Invite them to the workspace
         </button>
       ) : (
-        'Ask a workspace admin to invite them.'
+        "Ask a workspace admin to invite them."
       )}
     </p>
   );
@@ -403,14 +473,18 @@ export const RoomConfigurationPanel = observer(function RoomConfigurationPanel({
   if (query.isError) {
     const settingsReadFailure = describeFailure(
       query.error,
-      'Could not read this room’s settings.'
+      "Could not read this room’s settings.",
     );
     return (
       <PanelNotice
         title={settingsReadFailure.headline}
         detail={settingsReadFailure.detail ?? undefined}
         action={
-          <Button variant="outline" size="sm" onClick={() => void query.refetch()}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => void query.refetch()}
+          >
             <RefreshCw className="size-3" />
             Retry
           </Button>
@@ -423,7 +497,10 @@ export const RoomConfigurationPanel = observer(function RoomConfigurationPanel({
   return (
     <div className="h-full overflow-y-auto">
       <div className="mx-auto flex w-full max-w-[880px] flex-col gap-8 px-10 py-8">
-        <RoomHeading serverId={switchRoomsStore.roomServerId(roomId)} room={room} />
+        <RoomHeading
+          serverId={switchRoomsStore.roomServerId(roomId)}
+          room={room}
+        />
         {/* Keyed on the room so the drafts below belong to the room on screen:
             switching rooms starts a fresh form rather than carrying half-typed
             text across. */}
@@ -449,7 +526,7 @@ const DeleteRoomSection = observer(function DeleteRoomSection({
   workspaceId: string;
   room: RemoteRoomDetail;
 }) {
-  const showDeleteRoomModal = useShowModal('deleteRoomModal');
+  const showDeleteRoomModal = useShowModal("deleteRoomModal");
   const { navigate } = useNavigate();
 
   if (!switchRoomsStore.canDeleteRoom(workspaceId, room)) return null;
@@ -462,8 +539,8 @@ const DeleteRoomSection = observer(function DeleteRoomSection({
           <p className="text-xs text-foreground-muted">
             Removes the room and its conversation for everyone in it.
             {room.bridgeType
-              ? ` ${channelOnDeleteSummary(bridgePlatformLabel(room.bridgeType), room.channelOnDelete) ?? ''}`
-              : ''}
+              ? ` ${channelOnDeleteSummary(bridgePlatformLabel(room.bridgeType), room.channelOnDelete) ?? ""}`
+              : ""}
           </p>
         </div>
         <Button
@@ -477,7 +554,7 @@ const DeleteRoomSection = observer(function DeleteRoomSection({
               roomName: roomTitle(room),
               // The page this is on is the deleted room's own, so staying would
               // leave a settings form for something that no longer exists.
-              onSuccess: () => navigate('home'),
+              onSuccess: () => navigate("home"),
             })
           }
         >
@@ -488,17 +565,25 @@ const DeleteRoomSection = observer(function DeleteRoomSection({
   );
 });
 
-function RoomHeading({ serverId, room }: { serverId: string | null; room: RemoteRoomDetail }) {
+function RoomHeading({
+  serverId,
+  room,
+}: {
+  serverId: string | null;
+  room: RemoteRoomDetail;
+}) {
   const platform = bridgePlatformLabel(room.bridgeType);
   const { navigate } = useNavigate();
   return (
     <div className="flex items-start justify-between gap-4">
       <div className="flex min-w-0 flex-col gap-1">
-        <h1 className="truncate text-2xl font-semibold text-foreground">{roomTitle(room)}</h1>
+        <h1 className="truncate text-2xl font-semibold text-foreground">
+          {roomTitle(room)}
+        </h1>
         <p className="text-sm text-foreground-muted">
           {room.bridgeDisplayName
             ? `Room bridged to ${room.bridgeDisplayName}`
-            : 'Room with no messaging app'}
+            : "Room with no messaging app"}
         </p>
       </div>
       <div className="flex shrink-0 items-center gap-2">
@@ -506,7 +591,9 @@ function RoomHeading({ serverId, room }: { serverId: string | null; room: Remote
           <Button
             variant="outline"
             size="sm"
-            onClick={() => navigate('templateCapture', { serverId, roomId: room.id })}
+            onClick={() =>
+              navigate("templateCapture", { serverId, roomId: room.id })
+            }
           >
             <FileText className="size-3.5" />
             Capture as template
@@ -519,7 +606,11 @@ function RoomHeading({ serverId, room }: { serverId: string | null; room: Remote
                 {room.bridgeDisplayName}
               </span>
             )}
-            <Button variant="outline" size="sm" onClick={() => openRoomChannel(room.id)}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => openRoomChannel(room.id)}
+            >
               <ExternalLink className="size-3.5" />
               Open in {platform}
             </Button>
@@ -531,7 +622,8 @@ function RoomHeading({ serverId, room }: { serverId: string | null; room: Remote
 }
 
 /** What the section is doing, once the user has stopped typing in it. */
-type SaveState = { phase: 'idle' | 'saving' | 'saved' } | { phase: 'failed'; message: string };
+type SaveState =
+  { phase: "idle" | "saving" | "saved" } | { phase: "failed"; message: string };
 
 /**
  * Description and instructions, written when Save is pressed.
@@ -544,18 +636,25 @@ type SaveState = { phase: 'idle' | 'saving' | 'saved' } | { phase: 'failed'; mes
  *
  * One request carries both fields, so the pair is stored together or not at all.
  */
-function GeneralSection({ workspaceId, room }: { workspaceId: string; room: RemoteRoomDetail }) {
+function GeneralSection({
+  workspaceId,
+  room,
+}: {
+  workspaceId: string;
+  room: RemoteRoomDetail;
+}) {
   const queryClient = useQueryClient();
   const savedDescription = room.description;
-  const savedInstructions = room.instructions ?? '';
+  const savedInstructions = room.instructions ?? "";
   const [description, setDescription] = useState(savedDescription);
   const [instructions, setInstructions] = useState(savedInstructions);
-  const [state, setState] = useState<SaveState>({ phase: 'idle' });
+  const [state, setState] = useState<SaveState>({ phase: "idle" });
 
-  const dirty = description !== savedDescription || instructions !== savedInstructions;
+  const dirty =
+    description !== savedDescription || instructions !== savedInstructions;
 
   async function save() {
-    setState({ phase: 'saving' });
+    setState({ phase: "saving" });
     try {
       const updated = await rpc.workspaces.updateRoom({
         workspaceId,
@@ -564,9 +663,12 @@ function GeneralSection({ workspaceId, room }: { workspaceId: string; room: Remo
         instructions,
       });
       queryClient.setQueryData(roomDetailKey(workspaceId, room.id), updated);
-      setState({ phase: 'saved' });
+      setState({ phase: "saved" });
     } catch (cause) {
-      setState({ phase: 'failed', message: failureText(cause, 'Could not save the change.') });
+      setState({
+        phase: "failed",
+        message: failureText(cause, "Could not save the change."),
+      });
     }
   }
 
@@ -584,19 +686,22 @@ function GeneralSection({ workspaceId, room }: { workspaceId: string; room: Remo
           value={description}
           onChange={(e) => {
             setDescription(e.target.value);
-            setState({ phase: 'idle' });
+            setState({ phase: "idle" });
           }}
         />
       </Field>
 
-      <Field label="Instructions" hint="Sent to every agent as it joins the room.">
+      <Field
+        label="Instructions"
+        hint="Sent to every agent as it joins the room."
+      >
         <Textarea
           rows={4}
           placeholder="Optional guidance shown to agents when they enter the room"
           value={instructions}
           onChange={(e) => {
             setInstructions(e.target.value);
-            setState({ phase: 'idle' });
+            setState({ phase: "idle" });
           }}
         />
       </Field>
@@ -608,10 +713,10 @@ function GeneralSection({ workspaceId, room }: { workspaceId: string; room: Remo
         <Button
           type="button"
           size="sm"
-          disabled={!dirty || state.phase === 'saving'}
+          disabled={!dirty || state.phase === "saving"}
           onClick={() => void save()}
         >
-          {state.phase === 'saving' ? 'Saving…' : 'Save'}
+          {state.phase === "saving" ? "Saving…" : "Save"}
         </Button>
       </div>
     </section>
@@ -620,14 +725,20 @@ function GeneralSection({ workspaceId, room }: { workspaceId: string; room: Remo
 
 /** Says where the edits stand, so an unsaved change is never silent. */
 function SaveStatus({ state, dirty }: { state: SaveState; dirty: boolean }) {
-  if (state.phase === 'failed') {
-    return <span className="text-xs text-destructive">Not saved — {state.message}</span>;
+  if (state.phase === "failed") {
+    return (
+      <span className="text-xs text-destructive">
+        Not saved — {state.message}
+      </span>
+    );
   }
-  if (state.phase === 'saved' && !dirty) {
+  if (state.phase === "saved" && !dirty) {
     return <span className="text-xs text-foreground-muted">Saved.</span>;
   }
   if (dirty) {
-    return <span className="text-xs text-foreground-muted">Unsaved changes.</span>;
+    return (
+      <span className="text-xs text-foreground-muted">Unsaved changes.</span>
+    );
   }
   return null;
 }
@@ -666,10 +777,12 @@ const ParticipantsSection = observer(function ParticipantsSection({
 }) {
   const queryClient = useQueryClient();
   const [adding, setAdding] = useState(false);
-  const showAddAgentsToRoomModal = useShowModal('addAgentsToRoomModal');
+  const showAddAgentsToRoomModal = useShowModal("addAgentsToRoomModal");
 
   async function refresh() {
-    await queryClient.invalidateQueries({ queryKey: roomDetailKey(workspaceId, room.id) });
+    await queryClient.invalidateQueries({
+      queryKey: roomDetailKey(workspaceId, room.id),
+    });
     await switchRoomsStore.refreshRoomState();
   }
 
@@ -677,9 +790,14 @@ const ParticipantsSection = observer(function ParticipantsSection({
     <section className="flex flex-col gap-3">
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-baseline gap-2">
-          <h2 className="text-sm font-semibold text-foreground">Participants</h2>
+          <h2 className="text-sm font-semibold text-foreground">
+            Participants
+          </h2>
           <span className="text-xs text-foreground-muted">
-            {membershipSummary(room.agentIds.length, room.connectedUserNames.length)}
+            {membershipSummary(
+              room.agentIds.length,
+              room.connectedUserNames.length,
+            )}
           </span>
         </div>
         <div className="flex items-center gap-2">
@@ -710,12 +828,18 @@ const ParticipantsSection = observer(function ParticipantsSection({
         people={room.connectedUserNames.map((name) => ({
           id: `user:${name}`,
           name,
-          detail: 'person',
+          detail: "person",
         }))}
         manage={null}
       />
 
-      {adding && <AddAgentPanel workspaceId={workspaceId} room={room} onAdded={refresh} />}
+      {adding && (
+        <AddAgentPanel
+          workspaceId={workspaceId}
+          room={room}
+          onAdded={refresh}
+        />
+      )}
     </section>
   );
 });
@@ -755,8 +879,17 @@ const ParticipantList = observer(function ParticipantList({
       {agentIds.map((agentId) => (
         <ParticipantCard
           key={agentId}
-          mark={<AgentMark agentId={agentId} workspaceId={workspaceId} remoteById={remoteById} />}
-          name={agentNames.get(agentId) ?? agentNameFor(agentId, workspaceId, remoteById)}
+          mark={
+            <AgentMark
+              agentId={agentId}
+              workspaceId={workspaceId}
+              remoteById={remoteById}
+            />
+          }
+          name={
+            agentNames.get(agentId) ??
+            agentNameFor(agentId, workspaceId, remoteById)
+          }
           detail={agentKindFor(agentId, workspaceId, remoteById)}
           removing={manage?.removing === agentId}
           onRemove={manage && (() => manage.removeAgent(agentId))}
@@ -777,12 +910,12 @@ const ParticipantList = observer(function ParticipantList({
 });
 
 /** A person's initials disc: people have no picture in Switch. */
-function PersonMark({ name, size }: { name: string; size: 'sm' | 'md' }) {
+function PersonMark({ name, size }: { name: string; size: "sm" | "md" }) {
   return (
     <span
       className={cn(
-        'flex shrink-0 items-center justify-center rounded-full bg-[var(--fill-2)] font-medium text-foreground',
-        size === 'md' ? 'size-7 text-xs' : 'size-[22px] text-[10px]'
+        "flex shrink-0 items-center justify-center rounded-full bg-[var(--fill-2)] font-medium text-foreground",
+        size === "md" ? "size-7 text-xs" : "size-[22px] text-[10px]",
       )}
     >
       {agentInitials(name)}
@@ -807,7 +940,9 @@ function ParticipantCard({
     <div className="flex items-center gap-3 rounded-[10px] border border-border bg-[var(--surface-2)] px-3.5 py-3">
       {mark}
       <div className="flex min-w-0 flex-1 flex-col">
-        <span className="truncate text-sm font-medium text-foreground">{name}</span>
+        <span className="truncate text-sm font-medium text-foreground">
+          {name}
+        </span>
         <span className="truncate text-xs text-foreground-muted">{detail}</span>
       </div>
       {onRemove && (
@@ -826,7 +961,12 @@ function ParticipantCard({
   );
 }
 
-type Candidate = { id: string; name: string; mark: React.ReactNode; detail: string };
+type Candidate = {
+  id: string;
+  name: string;
+  mark: React.ReactNode;
+  detail: string;
+};
 
 /**
  * A searchable list of who could join, each row adding one. A refusal is shown
@@ -852,13 +992,14 @@ function AddParticipantPanel({
   footer: React.ReactNode;
   onAdd: (id: string) => Promise<void>;
 }) {
-  const [filter, setFilter] = useState('');
+  const [filter, setFilter] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const query = filter.trim().toLowerCase();
   const shown = candidates.filter(
     (candidate) =>
-      query === '' || `${candidate.name}\n${candidate.detail}`.toLowerCase().includes(query)
+      query === "" ||
+      `${candidate.name}\n${candidate.detail}`.toLowerCase().includes(query),
   );
 
   async function add(id: string) {
@@ -886,12 +1027,12 @@ function AddParticipantPanel({
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
         />
-        {filter !== '' && (
+        {filter !== "" && (
           <InputGroupAddon align="inline-end">
             <InputGroupButton
               size="icon-xs"
               aria-label="Clear the search"
-              onClick={() => setFilter('')}
+              onClick={() => setFilter("")}
             >
               <X className="size-3.5" />
             </InputGroupButton>
@@ -899,15 +1040,21 @@ function AddParticipantPanel({
         )}
       </InputGroup>
 
-      {error !== null && <p className="text-xs text-destructive">Not added — {error}</p>}
-      {loadError !== null && <p className="text-xs text-destructive">{loadError}</p>}
+      {error !== null && (
+        <p className="text-xs text-destructive">Not added — {error}</p>
+      )}
+      {loadError !== null && (
+        <p className="text-xs text-destructive">{loadError}</p>
+      )}
 
       {loading ? (
         <p className="px-1 py-2 text-sm text-foreground-muted">Loading…</p>
       ) : shown.length === 0 ? (
         loadError === null && (
           <p className="px-1 py-2 text-sm text-foreground-muted">
-            {query === '' ? allInText : `No ${noun} here matches “${filter.trim()}”.`}
+            {query === ""
+              ? allInText
+              : `No ${noun} here matches “${filter.trim()}”.`}
           </p>
         )
       ) : (
@@ -919,17 +1066,19 @@ function AddParticipantPanel({
               disabled={busyId !== null}
               onClick={() => void add(candidate.id)}
               className={cn(
-                'flex w-full cursor-pointer items-center gap-3 bg-background px-3.5 py-2.5 text-left transition-colors hover:bg-[var(--fill)]',
-                busyId !== null && 'cursor-wait'
+                "flex w-full cursor-pointer items-center gap-3 bg-background px-3.5 py-2.5 text-left transition-colors hover:bg-[var(--fill)]",
+                busyId !== null && "cursor-wait",
               )}
             >
               {candidate.mark}
               <span className="min-w-0 flex-1 truncate text-sm text-foreground">
                 {candidate.name}
               </span>
-              <span className="shrink-0 text-xs text-foreground-muted">{candidate.detail}</span>
+              <span className="shrink-0 text-xs text-foreground-muted">
+                {candidate.detail}
+              </span>
               <span className="shrink-0 text-xs font-medium text-foreground">
-                {busyId === candidate.id ? 'Adding…' : 'Add'}
+                {busyId === candidate.id ? "Adding…" : "Add"}
               </span>
             </button>
           ))}
@@ -958,7 +1107,9 @@ const AddAgentPanel = observer(function AddAgentPanel({
 }) {
   const members = new Set(room.agentIds);
   const { data: remoteAgents } = useWorkspaceAgents(workspaceId);
-  const remoteById = new Map((remoteAgents ?? []).map((agent) => [agent.id, agent]));
+  const remoteById = new Map(
+    (remoteAgents ?? []).map((agent) => [agent.id, agent]),
+  );
   return (
     <AddParticipantPanel
       noun="agent"
@@ -969,7 +1120,10 @@ const AddAgentPanel = observer(function AddAgentPanel({
       loadError={null}
       candidates={agentsStore
         .agentsInWorkspace(workspaceId)
-        .filter((agent) => agent.switchAgentId !== null && !members.has(agent.switchAgentId))
+        .filter(
+          (agent) =>
+            agent.switchAgentId !== null && !members.has(agent.switchAgentId),
+        )
         .map((agent) => {
           const switchAgentId = agent.switchAgentId as string;
           return {
@@ -983,7 +1137,7 @@ const AddAgentPanel = observer(function AddAgentPanel({
                 size={22}
               />
             ),
-            detail: providerDisplayName(agent.providerId) ?? 'Agent',
+            detail: providerDisplayName(agent.providerId) ?? "Agent",
           };
         })}
       onAdd={async (switchAgentId) => {
@@ -991,7 +1145,7 @@ const AddAgentPanel = observer(function AddAgentPanel({
           workspaceId,
           roomId: room.id,
           agentIds: [switchAgentId],
-          direction: 'agents_to_room',
+          direction: "agents_to_room",
         });
         await onAdded();
       }}
@@ -1014,7 +1168,9 @@ function PanelNotice({
     <div className="flex h-full flex-col items-center justify-center gap-3 p-8 text-center">
       {icon && <div className="text-foreground-passive">{icon}</div>}
       <p className="text-sm font-medium text-foreground">{title}</p>
-      {detail && <p className="max-w-md text-xs text-foreground-muted">{detail}</p>}
+      {detail && (
+        <p className="max-w-md text-xs text-foreground-muted">{detail}</p>
+      )}
       {action}
     </div>
   );
@@ -1048,20 +1204,21 @@ function AgentMark({
 function localAgentFor(switchAgentId: string, workspaceId: string | null) {
   if (workspaceId === null) return null;
   return (
-    agentsStore.agentsInWorkspace(workspaceId).find((a) => a.switchAgentId === switchAgentId) ??
-    null
+    agentsStore
+      .agentsInWorkspace(workspaceId)
+      .find((a) => a.switchAgentId === switchAgentId) ?? null
   );
 }
 
 function agentNameFor(
   switchAgentId: string,
   workspaceId: string | null,
-  remoteById: Map<string, RemoteAgentSummary>
+  remoteById: Map<string, RemoteAgentSummary>,
 ): string {
   return (
     localAgentFor(switchAgentId, workspaceId)?.name ??
     remoteById.get(switchAgentId)?.name ??
-    'Agent'
+    "Agent"
   );
 }
 
@@ -1070,9 +1227,12 @@ function agentNameFor(
 function agentKindFor(
   switchAgentId: string,
   workspaceId: string | null,
-  remoteById: Map<string, RemoteAgentSummary>
+  remoteById: Map<string, RemoteAgentSummary>,
 ): string {
-  const providerId = localAgentFor(switchAgentId, workspaceId)?.providerId ?? null;
+  const providerId =
+    localAgentFor(switchAgentId, workspaceId)?.providerId ?? null;
   const knownType = remoteById.get(switchAgentId)?.knownAgentType ?? null;
-  return providerDisplayName(providerId) ?? providerDisplayName(knownType) ?? 'agent';
+  return (
+    providerDisplayName(providerId) ?? providerDisplayName(knownType) ?? "agent"
+  );
 }

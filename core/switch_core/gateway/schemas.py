@@ -1086,6 +1086,9 @@ class MemberDetail(BaseModel):
     email: str
     role: str
     created_at: str
+    # The agent-registration bootstrap owner: kept in the roster, never a
+    # person to add to a chat.
+    service_account: bool
 
 
 class UsageTotalResponse(BaseModel):

@@ -12,7 +12,10 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from switch_core.db.models import Agent, Message, Room, room_agents
+from switch_core.bridges.agent.registration_bootstrap import (
+    BOOTSTRAP_OWNER_MARKER_META_KEY,
+)
+from switch_core.db.models import Agent, Message, Room, User, room_agents
 from tests.switch_core.gateway.conftest import _Harness
 from tests.switch_core.gateway.test_chats_routes import (
     _code,
@@ -405,6 +408,43 @@ async def test_a_create_refuses_someone_outside_the_workspace(
     )
     assert refused.status_code == 422
     assert _code(refused) == "NOT_A_TENANT_MEMBER"
+
+
+async def _make_bootstrap_owner(chats: _Harness, user: User) -> None:
+    async with chats.factory() as session:
+        row = await session.get(User, user.id)
+        assert row is not None
+        row.metadata_ = {BOOTSTRAP_OWNER_MARKER_META_KEY: True}
+        await session.commit()
+
+
+async def test_the_bootstrap_owner_is_not_a_person_to_chat_with(
+    chats: _Harness,
+) -> None:
+    await _make_bootstrap_owner(chats, chats.bob)
+    agent = await chats.agent("helper", owner=chats.alice)
+    owned = await chats.agent("bootstrapped", owner=chats.bob)
+    room_id = await chats.new_chat(chats.alice, agent, "c1")
+
+    refused = await chats.invite(chats.alice, room_id, chats.bob)
+    assert refused.status_code == 422
+    assert _code(refused) == "NOT_A_PERSON"
+    created = await chats.client.post(
+        "/chats",
+        json={"agentIds": [], "memberUserIds": [chats.bob.id], "requestId": "c2"},
+        headers=chats.as_user(chats.alice),
+    )
+    assert created.status_code == 422
+    assert _code(created) == "NOT_A_PERSON"
+
+    # Its agents are still welcome, and the flag is the marker, not a name.
+    assert (await _add_agent(chats, chats.alice.id, room_id, owned)).status_code == 200
+    async with chats.factory() as session:
+        admin = await session.get(User, chats.admin.id)
+        assert admin is not None
+        admin.name = "Agent Bootstrap"
+        await session.commit()
+    assert (await chats.invite(chats.alice, room_id, chats.admin)).status_code == 200
 
 
 # ── Adding and removing agents ───────────────────────────────────────────────

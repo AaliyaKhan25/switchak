@@ -47,6 +47,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from switch_core.addressing import allows_on_behalf_of, parse_policy
 from switch_core.authz import administers_tenant
 from switch_core.bridges.agent.protocol.agent_connections import AgentConnectionRegistry
+from switch_core.bridges.agent.registration_bootstrap import is_bootstrap_owner
 from switch_core.chats import MEMBER_CLIENT_TYPE
 from switch_core.chats.views import (
     COMMAND_EVENT_TYPE,
@@ -786,6 +787,8 @@ class ChatService:
                 "NOT_A_TENANT_MEMBER",
                 "That person is not a member of this workspace.",
             )
+        if is_bootstrap_owner(user):
+            raise ChatError(422, "NOT_A_PERSON", "That account can't join chats.")
         return user
 
     async def _make_group(self, session: AsyncSession, room: Room) -> None:
