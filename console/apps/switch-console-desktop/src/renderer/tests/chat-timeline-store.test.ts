@@ -272,4 +272,28 @@ describe('ChatTimeline', () => {
     expect(asked).toEqual([null, 51, 51]);
     expect(timeline.loadError).toBeNull();
   });
+
+  it('loads again when asked during a load, picking up what was posted in between', async () => {
+    let head = 1;
+    let release!: () => void;
+    const first = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let calls = 0;
+    const { value } = api({
+      messages: async () => {
+        const seqs = Array.from({ length: head }, (_, i) => i + 1);
+        if (calls++ === 0) await first;
+        return { messages: seqs.map((seq) => message(seq)), headSeq: head, hasMore: false };
+      },
+    });
+    const timeline = new ChatTimeline('room-1', value);
+    const loading = timeline.load();
+    head = 2;
+    void timeline.load();
+    release();
+    await loading;
+    await vi.waitFor(() => expect(timeline.messages.map((m) => m.seq)).toEqual([1, 2]));
+    expect(calls).toBe(2);
+  });
 });

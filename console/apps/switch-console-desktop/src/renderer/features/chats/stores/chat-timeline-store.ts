@@ -104,6 +104,8 @@ export class ChatTimeline {
   loadError: string | null = null;
   /** The failure in {@link loadError} was loading earlier messages, not the newest. */
   olderFailed = false;
+  /** A load was asked for while another was in flight; it runs once that one ends. */
+  private reloadQueued = false;
   /** The person is not a member of the room. */
   notMember = false;
   /** The person was a member and lost access while the chat was known. */
@@ -164,7 +166,10 @@ export class ChatTimeline {
   }
 
   async load(): Promise<void> {
-    if (this.loading) return;
+    if (this.loading) {
+      this.reloadQueued = true;
+      return;
+    }
     this.loading = true;
     this.loadError = null;
     this.olderFailed = false;
@@ -195,6 +200,10 @@ export class ChatTimeline {
       runInAction(() => {
         this.loading = false;
       });
+      if (this.reloadQueued) {
+        this.reloadQueued = false;
+        void this.load();
+      }
     }
   }
 
@@ -219,6 +228,10 @@ export class ChatTimeline {
       runInAction(() => {
         this.loading = false;
       });
+      if (this.reloadQueued) {
+        this.reloadQueued = false;
+        void this.load();
+      }
     }
   }
 
