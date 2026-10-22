@@ -2007,6 +2007,14 @@ version of their own to them without also giving them a release of their own.
   it is — on stays on, off stays off — unless none of them has used the server
   in the last 14 days. The note now says so.
 
+### [0.39.1] - 2026-10-13
+
+#### Fixed
+- **Support the gateway and API on different hosts when connecting a
+  service.** Some deployments serve the Switch dashboard and its API from
+  separate addresses. Console now accepts either of your server's own
+  addresses, over HTTPS.
+
 ### [0.39.0] - 2026-10-12
 
 #### Added
