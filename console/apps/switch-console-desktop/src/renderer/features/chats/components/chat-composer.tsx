@@ -417,7 +417,7 @@ export const ChatComposer = observer(function ChatComposer({
               </div>
               <PromptInputTextarea
                 ref={input}
-                className="relative min-h-0 px-1 py-1.5"
+                className="relative block min-h-0 px-1 py-1.5"
                 aria-label={`Message ${recipient}`}
                 placeholder={disabled ?? `Message ${recipient}...`}
                 value={draft}
