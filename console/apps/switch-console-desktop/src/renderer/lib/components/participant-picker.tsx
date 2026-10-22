@@ -45,10 +45,12 @@ export function ParticipantChip({
   participant,
   serverId,
   onRemove,
+  disabled,
 }: {
   participant: Participant;
   serverId: string | null;
   onRemove: () => void;
+  disabled: boolean;
 }) {
   const accent = useAgentAccent(participant.kind === 'agent' ? participant : null, serverId);
   return (
@@ -66,8 +68,9 @@ export function ParticipantChip({
       <button
         type="button"
         aria-label={`Remove ${participant.name}`}
+        disabled={disabled}
         onClick={onRemove}
-        className="flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-full text-foreground-muted hover:bg-[var(--sel-soft)] hover:text-foreground"
+        className="flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-full text-foreground-muted hover:bg-[var(--sel-soft)] hover:text-foreground disabled:cursor-wait disabled:opacity-50"
       >
         <X className="size-3" />
       </button>
@@ -132,6 +135,8 @@ export function ParticipantPicker({
             participant={participant}
             serverId={serverId}
             onRemove={() => onChange(picked.filter((each) => each !== participant))}
+            // The picks are being applied as they stand; changing them now would change nothing.
+            disabled={busy}
           />
         ))}
         <input
@@ -157,6 +162,8 @@ export function ParticipantPicker({
           onKeyDown={(event) => {
             // keyCode 229: a key the IME is handling, which some IMEs send with isComposing false.
             if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+            // ⌘↩ / Ctrl+↩ confirms the form around the field; it is not a pick.
+            if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) return;
             const action = pickerKey(event.key, {
               query,
               open,
@@ -171,8 +178,9 @@ export function ParticipantPicker({
               setOpen(true);
               setActive(action.active);
             } else if (action.type === 'add') add(results[current]);
-            else if (action.type === 'removeLast') onChange(picked.slice(0, -1));
-            else setOpen(false);
+            else if (action.type === 'removeLast') {
+              if (!busy) onChange(picked.slice(0, -1));
+            } else setOpen(false);
           }}
         />
         {busy && (

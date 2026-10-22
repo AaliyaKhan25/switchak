@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { RoomNameInput } from '@renderer/features/switch-servers/room-name-input';
 import { ParticipantPicker } from '@renderer/lib/components/participant-picker';
 import type { Participant } from '@renderer/lib/components/participant-search';
+import { ConfirmButton } from '@renderer/lib/ui/confirm-button';
 
 let container: HTMLDivElement | null = null;
 let root: Root | null = null;
@@ -77,6 +78,9 @@ describe('New room IME', () => {
     await act(async () => enter(input, { keyCode: 229 }));
     expect(onSubmit).not.toHaveBeenCalled();
     await act(async () => enter(input, { keyCode: 13 }));
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    // ⌘↩ is left to the dialog's confirm button.
+    await act(async () => enter(input, { keyCode: 13, metaKey: true, ctrlKey: true }));
     expect(onSubmit).toHaveBeenCalledTimes(1);
   });
 });
@@ -146,5 +150,72 @@ describe('Participant field results', () => {
       root = null;
       container!.remove();
     }
+  });
+});
+
+describe('Participant field with a confirm button', () => {
+  const smiley: Participant = { ...helper, id: 'a2', name: 'smiley' };
+  const mod = navigator.platform.toLowerCase().includes('mac')
+    ? { metaKey: true }
+    : { ctrlKey: true };
+
+  it('lets ⌘↩ confirm the picks instead of taking the highlighted result', async () => {
+    const submitted: string[][] = [];
+    function Harness() {
+      const [picked, setPicked] = useState<Participant[]>([]);
+      return (
+        <>
+          <ParticipantPicker
+            candidates={[helper, smiley]}
+            picked={picked}
+            onChange={setPicked}
+            serverId={null}
+            loading={false}
+            inputId="confirm"
+            autoFocus={false}
+            busy={false}
+            overlay
+          />
+          <ConfirmButton onClick={() => submitted.push(picked.map((each) => each.id))}>
+            Add
+          </ConfirmButton>
+        </>
+      );
+    }
+    const input = await render(<Harness />);
+    await act(async () => input.focus());
+    await act(async () => enter(input, { keyCode: 13 }));
+    // The results are open again on smiley.
+    expect(container!.querySelector('[role="listbox"]')).not.toBeNull();
+    await act(async () => enter(input, { keyCode: 13, ...mod }));
+    expect(submitted).toEqual([['a1']]);
+    expect(container!.querySelectorAll('[aria-label^="Remove"]')).toHaveLength(1);
+  });
+
+  it('keeps the picks as they are while they are being added', async () => {
+    const onChange = vi.fn();
+    const input = await render(
+      <ParticipantPicker
+        candidates={[helper, smiley]}
+        picked={[helper, smiley]}
+        onChange={onChange}
+        serverId={null}
+        loading={false}
+        inputId="busy"
+        autoFocus={false}
+        busy
+        overlay
+      />
+    );
+    await act(async () => input.focus());
+    await act(async () =>
+      input.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Backspace', bubbles: true, cancelable: true })
+      )
+    );
+    const remove = container!.querySelector<HTMLButtonElement>('[aria-label="Remove smiley"]')!;
+    expect(remove.disabled).toBe(true);
+    await act(async () => remove.click());
+    expect(onChange).not.toHaveBeenCalled();
   });
 });
