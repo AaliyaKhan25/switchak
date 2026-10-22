@@ -296,4 +296,33 @@ describe('ChatTimeline', () => {
     await vi.waitFor(() => expect(timeline.messages.map((m) => m.seq)).toEqual([1, 2]));
     expect(calls).toBe(2);
   });
+
+  it('catches up from the history it completed, not from a live message after a failed catch-up', async () => {
+    let head = 3;
+    let failOlder = false;
+    const { value } = api({
+      messages: async (_room, before, limit) => {
+        if (before !== null && failOlder) throw networkError();
+        const top = Math.min(before ?? head + 1, head + 1);
+        const from = Math.max(1, top - limit);
+        const seqs = Array.from({ length: top - from }, (_, i) => from + i);
+        return { messages: seqs.map((seq) => message(seq)), headSeq: head, hasMore: from > 1 };
+      },
+    });
+    const timeline = new ChatTimeline('room-1', value);
+    await timeline.load();
+    head = 130;
+    failOlder = true;
+    await timeline.load();
+    expect(timeline.loadError).not.toBeNull();
+
+    head = 131;
+    timeline.apply(message(131));
+    failOlder = false;
+    await timeline.load();
+    expect(timeline.messages.map((m) => m.seq)).toEqual(
+      Array.from({ length: 131 }, (_, i) => i + 1)
+    );
+    expect(timeline.loadError).toBeNull();
+  });
 });

@@ -260,6 +260,29 @@ describe('ChatsStore', () => {
     await vi.waitFor(() => expect(timeline.messages.map((m) => m.seq)).toEqual([1, 2]));
   });
 
+  it('loads again when the feed goes live during a first load', async () => {
+    let release!: () => void;
+    const first = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let calls = 0;
+    const messages = vi.fn(async () => {
+      if (calls++ === 0) {
+        await first;
+        return { messages: [message('r1', 1)], headSeq: 1, hasMore: false };
+      }
+      return { messages: [message('r1', 1), message('r1', 2)], headSeq: 2, hasMore: false };
+    });
+    const { store, live } = setup(async () => [summary('r1', 2)], { messages });
+    await store.connect('s1');
+    const timeline = store.timelines.get('s1', 'r1');
+    const loading = timeline.load();
+    live();
+    release();
+    await loading;
+    await vi.waitFor(() => expect(timeline.messages.map((m) => m.seq)).toEqual([1, 2]));
+  });
+
   it('revokes a chat unlisted earlier once access is lost', async () => {
     const { store } = setup(async () => [summary('r1', 1)]);
     await store.connect('s1');
