@@ -45,6 +45,12 @@ version of their own to them without also giving them a release of their own.
 ### [Unreleased]
 
 #### Fixed
+- **The template guide agents read now covers a room's `roles:`,
+  `references:` and `docs:`.** All three already worked in a room resource
+  and appear when a room is captured, but the guide stopped at `aliases:`, so
+  an agent writing a template did not know they existed or what shape they
+  take. It now gives each one's fields, a sentence on what it does, and a
+  short example.
 - **The Teams command menu fits Teams' limit again.** Switch's own Teams app
   listed thirteen commands, one more than Teams allows, once `/remove-agent`
   joined it. Both Teams apps now offer the same twelve: `/remove-agent` is in,
