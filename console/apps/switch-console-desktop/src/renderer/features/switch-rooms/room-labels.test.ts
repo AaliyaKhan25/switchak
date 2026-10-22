@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { addablePeople, membershipSummary, roomTitle } from './room-labels';
+import { addableAgents, addablePeople, membershipSummary, roomTitle } from './room-labels';
 
 describe('roomTitle', () => {
   it('marks a bridged room as the channel it is', () => {
@@ -38,5 +38,11 @@ describe('addablePeople', () => {
       { userId: 'u3', name: 'alice', serviceAccount: false },
     ];
     expect(addablePeople(roster, new Set(['u3'])).map((person) => person.userId)).toEqual(['u2']);
+  });
+});
+
+describe('addableAgents', () => {
+  it('offers only the agents not in the chat yet', () => {
+    expect(addableAgents([{ id: 'a1' }, { id: 'a2' }], [{ id: 'a1' }])).toEqual([{ id: 'a2' }]);
   });
 });

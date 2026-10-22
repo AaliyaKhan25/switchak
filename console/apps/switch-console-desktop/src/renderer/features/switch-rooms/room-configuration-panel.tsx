@@ -29,7 +29,10 @@ import { Textarea } from '@renderer/lib/ui/textarea';
 import { cn } from '@renderer/utils/utils';
 import { agentInitials } from '@shared/core/agents/agent-avatar';
 import { type ChatSummary, chatAgentLabel } from '@shared/core/chats/chats';
-import { providerDisplayName } from '@shared/core/providers/agent-provider-registry';
+import {
+  knownAgentTypeDisplayName,
+  providerDisplayName,
+} from '@shared/core/providers/agent-provider-registry';
 import { runsOnThisComputer } from '@shared/core/switch-servers/switch-servers';
 import type {
   RemoteAgentSummary,
@@ -37,7 +40,7 @@ import type {
 } from '@shared/core/switch-servers/switch-servers';
 import { administersWorkspace } from '@shared/core/workspaces/workspaces';
 import { channelOnDeleteSummary } from './room-delete-wording';
-import { addablePeople, membershipSummary, roomTitle } from './room-labels';
+import { addableAgents, addablePeople, membershipSummary, roomTitle } from './room-labels';
 import { openRoomChannel } from './room-links';
 
 /** Query key for one room's own settings — shared so a save can write the
@@ -237,7 +240,6 @@ const ChatAddAgentPanel = observer(function ChatAddAgentPanel({
   chat: ChatSummary;
 }) {
   const agents = useWorkspaceAgents(workspaceId);
-  const inChat = new Set(chat.agents.map((agent) => agent.id));
   return (
     <AddParticipantPanel
       noun="agent"
@@ -246,16 +248,14 @@ const ChatAddAgentPanel = observer(function ChatAddAgentPanel({
       allInText="Every agent in this workspace is already in this chat."
       loading={agents.isPending}
       loadError={agents.isError ? failureText(agents.error, 'Could not list the agents.') : null}
-      candidates={(agents.data ?? [])
-        .filter((agent) => !inChat.has(agent.id))
-        .map((agent) => ({
-          id: agent.id,
-          name: agent.displayName ?? agent.name,
-          mark: (
-            <AgentAvatar name={agent.name} iconUrl={agent.iconUrl} serverId={serverId} size={22} />
-          ),
-          detail: providerDisplayName(agent.knownAgentType) ?? 'Agent',
-        }))}
+      candidates={addableAgents(agents.data ?? [], chat.agents).map((agent) => ({
+        id: agent.id,
+        name: agent.displayName ?? agent.name,
+        mark: (
+          <AgentAvatar name={agent.name} iconUrl={agent.iconUrl} serverId={serverId} size={22} />
+        ),
+        detail: knownAgentTypeDisplayName(agent.knownAgentType) ?? 'Agent',
+      }))}
       onAdd={async (agentId) => {
         try {
           chatsStore.add(
@@ -1072,5 +1072,5 @@ function agentKindFor(
 ): string {
   const providerId = localAgentFor(switchAgentId, workspaceId)?.providerId ?? null;
   const knownType = remoteById.get(switchAgentId)?.knownAgentType ?? null;
-  return providerDisplayName(providerId) ?? providerDisplayName(knownType) ?? 'agent';
+  return providerDisplayName(providerId) ?? knownAgentTypeDisplayName(knownType) ?? 'agent';
 }

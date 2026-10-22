@@ -35,3 +35,12 @@ export function addablePeople<T extends { userId: string; serviceAccount: boolea
 ): T[] {
   return roster.filter((person) => !person.serviceAccount && !memberIds.has(person.userId));
 }
+
+/** The agents not in the chat yet: one already in is not offered again. */
+export function addableAgents<T extends { id: string }>(
+  agents: T[],
+  inChat: { id: string }[]
+): T[] {
+  const ids = new Set(inChat.map((agent) => agent.id));
+  return agents.filter((agent) => !ids.has(agent.id));
+}

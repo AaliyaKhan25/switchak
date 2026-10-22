@@ -107,6 +107,32 @@ describe('createChat', () => {
       body: { requestId: 'req-1', agentId: 'agent-1' },
     });
   });
+
+  it('asks for a group of one agent when kind is group', async () => {
+    const server = { id: 'server-1' } as SwitchServer;
+    vi.mocked(gatewayFetch).mockResolvedValueOnce(
+      new Response(JSON.stringify({ chat: row('room-new', 'channel_private') }), { status: 200 })
+    );
+    await createChat(server, {
+      agentIds: ['agent-1'],
+      memberUserIds: [],
+      name: 'Solo',
+      requestId: 'req-1',
+      greeting: null,
+      kind: 'group',
+    });
+    expect(gatewayFetch).toHaveBeenCalledWith(server, '/chats', {
+      authenticated: true,
+      method: 'POST',
+      body: {
+        requestId: 'req-1',
+        agentId: 'agent-1',
+        memberUserIds: [],
+        name: 'Solo',
+        kind: 'group',
+      },
+    });
+  });
 });
 
 describe('addChatAgent', () => {

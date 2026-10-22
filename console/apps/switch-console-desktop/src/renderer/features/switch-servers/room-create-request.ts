@@ -9,6 +9,8 @@ export type RoomCreateRequest =
         memberUserIds: string[];
         requestId: string;
         greeting: null;
+        /** A room made here is a group even with one agent and nobody else. */
+        kind: 'group';
       };
     }
   | {
@@ -32,19 +34,23 @@ export function roomCreateRequest(form: {
   description: string;
   instructions: string;
   agentIds: string[];
+  /** The people to add; a bridged room is created without them. */
+  memberUserIds: string[];
   requestId: string;
 }): RoomCreateRequest {
   const name = form.name.trim();
+  const agentIds = [...new Set(form.agentIds)];
   if (form.bridgeId === null)
     return {
       kind: 'chat',
       params: {
         serverId: form.serverId,
         name,
-        agentIds: form.agentIds,
-        memberUserIds: [],
+        agentIds,
+        memberUserIds: [...new Set(form.memberUserIds)],
         requestId: form.requestId,
         greeting: null,
+        kind: 'group',
       },
     };
   return {
@@ -55,7 +61,7 @@ export function roomCreateRequest(form: {
       description: form.description.trim(),
       instructions: form.instructions.trim() || undefined,
       bridgeId: form.bridgeId,
-      agentIds: form.agentIds,
+      agentIds,
     },
   };
 }
@@ -77,8 +83,18 @@ export class CreateRequestIds {
 
   constructor(private readonly newId: () => string) {}
 
-  for(form: { bridgeId: string | null; name: string; agentIds: string[] }): string {
-    const key = JSON.stringify([form.bridgeId, form.name.trim(), form.agentIds]);
+  for(form: {
+    bridgeId: string | null;
+    name: string;
+    agentIds: string[];
+    memberUserIds: string[];
+  }): string {
+    const key = JSON.stringify([
+      form.bridgeId,
+      form.name.trim(),
+      form.agentIds,
+      form.memberUserIds,
+    ]);
     if (key !== this.key) {
       this.key = key;
       this.id = this.newId();

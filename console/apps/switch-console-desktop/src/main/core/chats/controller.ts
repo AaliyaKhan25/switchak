@@ -161,10 +161,12 @@ export const chatsController = createRPCController({
     name: string | null;
     requestId: string;
     greeting: string | null;
+    kind?: 'group';
   }): Promise<ChatSummary> => {
     const chat = await onServer(params.serverId, (server) => createChat(server, params));
     const agentIds = params.agentIds ?? [];
-    if (agentIds.length === 1)
+    // A group's agent answers only when mentioned, so there is no first turn to get ready for.
+    if (agentIds.length === 1 && params.kind !== 'group')
       void warmChat(
         { serverId: params.serverId, agentId: agentIds[0], roomId: chat.roomId },
         false

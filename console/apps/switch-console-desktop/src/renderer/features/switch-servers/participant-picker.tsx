@@ -1,0 +1,201 @@
+import { X } from 'lucide-react';
+import { useState } from 'react';
+import { useAgentAccent } from '@renderer/lib/components/agent-accent';
+import { AgentAvatar } from '@renderer/lib/components/agent-avatar';
+import { cn } from '@renderer/utils/utils';
+import { agentInitials } from '@shared/core/agents/agent-avatar';
+import { type Participant, pickerKey, searchParticipants } from './participant-search';
+
+/** A person's initials disc, as the chat timeline draws people. */
+function Initials({ name, size }: { name: string; size: number }) {
+  return (
+    <span
+      aria-hidden
+      style={{ width: size, height: size, fontSize: Math.round(size * 0.42) }}
+      className="flex shrink-0 items-center justify-center rounded-full bg-[var(--fill-2)] font-medium text-foreground"
+    >
+      {agentInitials(name)}
+    </span>
+  );
+}
+
+function Mark({
+  participant,
+  serverId,
+  size,
+}: {
+  participant: Participant;
+  serverId: string | null;
+  size: number;
+}) {
+  return participant.kind === 'agent' ? (
+    <AgentAvatar
+      name={participant.name}
+      iconUrl={participant.iconUrl}
+      serverId={serverId}
+      size={size}
+    />
+  ) : (
+    <Initials name={participant.name} size={size} />
+  );
+}
+
+/** A picked participant: an agent tinted with its avatar's colour, a person in grey. */
+export function ParticipantChip({
+  participant,
+  serverId,
+  onRemove,
+}: {
+  participant: Participant;
+  serverId: string | null;
+  onRemove: () => void;
+}) {
+  const accent = useAgentAccent(participant.kind === 'agent' ? participant : null, serverId);
+  return (
+    <span
+      className={cn(
+        'flex h-7 max-w-full items-center gap-1.5 rounded-full py-0.5 pr-1 pl-1 text-sm text-foreground',
+        !accent && 'bg-[var(--fill-2)]'
+      )}
+      style={
+        accent ? { backgroundColor: `color-mix(in srgb, ${accent} 20%, transparent)` } : undefined
+      }
+    >
+      <Mark participant={participant} serverId={serverId} size={20} />
+      <span className="truncate">{participant.name}</span>
+      <button
+        type="button"
+        aria-label={`Remove ${participant.name}`}
+        onClick={onRemove}
+        className="flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-full text-foreground-muted hover:bg-[var(--sel-soft)] hover:text-foreground"
+      >
+        <X className="size-3" />
+      </button>
+    </span>
+  );
+}
+
+/**
+ * One field that finds agents and people together and keeps the picked ones
+ * as chips inside it. Up and down move through the results, Enter adds,
+ * Backspace on an empty field takes the last chip back, Escape closes the list.
+ */
+export function ParticipantPicker({
+  candidates,
+  picked,
+  onChange,
+  serverId,
+  loading,
+}: {
+  candidates: Participant[];
+  picked: Participant[];
+  onChange: (next: Participant[]) => void;
+  serverId: string | null;
+  loading: boolean;
+}) {
+  const [query, setQuery] = useState('');
+  const [open, setOpen] = useState(false);
+  const [active, setActive] = useState(0);
+  const results = searchParticipants(candidates, picked, query);
+  const current = Math.min(active, Math.max(results.length - 1, 0));
+
+  const add = (participant: Participant) => {
+    onChange([...picked, participant]);
+    setQuery('');
+    setActive(0);
+  };
+
+  return (
+    <div>
+      <div
+        className="flex min-h-11 flex-wrap items-center gap-1.5 rounded-[10px] border border-border px-2 py-1.5 focus-within:border-foreground-muted"
+        onClick={(event) =>
+          (event.currentTarget.querySelector('input') as HTMLInputElement | null)?.focus()
+        }
+      >
+        {picked.map((participant) => (
+          <ParticipantChip
+            key={`${participant.kind}:${participant.id}`}
+            participant={participant}
+            serverId={serverId}
+            onRemove={() => onChange(picked.filter((each) => each !== participant))}
+          />
+        ))}
+        <input
+          role="combobox"
+          aria-expanded={open}
+          aria-controls="new-room-participants"
+          aria-label="Add agents or people"
+          placeholder={picked.length === 0 ? 'Add agents or people…' : ''}
+          className="h-7 min-w-32 flex-1 bg-transparent px-1 text-sm outline-none placeholder:text-foreground-passive"
+          value={query}
+          onChange={(event) => {
+            setQuery(event.target.value);
+            setActive(0);
+            setOpen(true);
+          }}
+          onFocus={() => setOpen(true)}
+          onBlur={() => setOpen(false)}
+          onKeyDown={(event) => {
+            const action = pickerKey(event.key, {
+              query,
+              open,
+              active: current,
+              results: results.length,
+              picked: picked.length,
+            });
+            if (!action) return;
+            event.preventDefault();
+            event.stopPropagation();
+            if (action.type === 'move') {
+              setOpen(true);
+              setActive(action.active);
+            } else if (action.type === 'add') add(results[current]);
+            else if (action.type === 'removeLast') onChange(picked.slice(0, -1));
+            else setOpen(false);
+          }}
+        />
+      </div>
+      {open && (
+        // In the flow rather than floating: the dialog clips what overflows it, so the list grows it instead.
+        <div
+          id="new-room-participants"
+          role="listbox"
+          className="mt-1 max-h-60 overflow-y-auto rounded-[10px] border border-border bg-background p-1 shadow-sm"
+        >
+          {loading ? (
+            <p className="px-2.5 py-2 text-sm text-foreground-muted">Loading…</p>
+          ) : results.length === 0 ? (
+            <p className="px-2.5 py-2 text-sm text-foreground-muted">
+              {query.trim() === ''
+                ? 'Everyone you can add is already in.'
+                : `No agent or person matches “${query.trim()}”.`}
+            </p>
+          ) : (
+            results.map((participant, index) => (
+              <div
+                key={`${participant.kind}:${participant.id}`}
+                role="option"
+                aria-selected={index === current}
+                // Keeps focus in the field, so the list stays open for the next pick.
+                onMouseDown={(event) => event.preventDefault()}
+                onMouseEnter={() => setActive(index)}
+                onClick={() => add(participant)}
+                className={cn(
+                  'flex cursor-pointer items-center gap-2.5 rounded-md px-2.5 py-1.5 text-sm',
+                  index === current && 'bg-[var(--sel-soft)]'
+                )}
+              >
+                <Mark participant={participant} serverId={serverId} size={22} />
+                <span className="min-w-0 flex-1 truncate text-foreground">{participant.name}</span>
+                <span className="shrink-0 truncate text-xs text-foreground-muted">
+                  {participant.detail}
+                </span>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
