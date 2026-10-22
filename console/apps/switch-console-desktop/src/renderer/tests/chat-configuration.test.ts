@@ -4,6 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import {
   chatMembersQueryKey,
+  InviteHint,
   RoomConfigurationPanel,
 } from '@renderer/features/switch-rooms/room-configuration-panel';
 import type { ChatSummary } from '@shared/core/chats/chats';
@@ -18,6 +19,9 @@ vi.mock('@renderer/features/chats/stores/chats', () => ({
     add: vi.fn(),
   },
 }));
+
+const showModal = vi.hoisted(() => vi.fn());
+vi.mock('@renderer/lib/modal/modal-provider', () => ({ useShowModal: () => showModal }));
 
 const agent = {
   id: 'agent-1',
@@ -99,5 +103,27 @@ describe('chatMembersQueryKey', () => {
     expect(
       key(['u1', 'u2'], { lastMessage: { seq: 9, sentAt: '', preview: 'hi', senderName: 'Bob' } })
     ).toEqual(now);
+  });
+});
+
+describe('group chat people', () => {
+  it('labels the owner and everyone else as a member', () => {
+    const html = render(false);
+    expect(html).toMatch(/Alice<\/span><span[^>]*>owner</);
+    expect(html).toMatch(/Bob<\/span><span[^>]*>member</);
+    expect(html).not.toContain('>person<');
+  });
+
+  it('offers the invite to someone who may invite, and says who to ask otherwise', () => {
+    const can = renderToStaticMarkup(
+      createElement(InviteHint, { workspaceId: 'w', canInvite: true })
+    );
+    expect(can).toContain('Invite them to the workspace');
+    expect(can).toContain('<button');
+    const cannot = renderToStaticMarkup(
+      createElement(InviteHint, { workspaceId: 'w', canInvite: false })
+    );
+    expect(cannot).toContain('Ask a workspace admin to invite them.');
+    expect(cannot).not.toContain('<button');
   });
 });

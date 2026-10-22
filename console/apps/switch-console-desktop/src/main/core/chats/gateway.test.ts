@@ -29,7 +29,9 @@ function row(roomId: string, channelType: string) {
     channelName: null,
     agents: [],
     canManage: true,
-    ownsAgent: false, memberUserIds: [], memberCount: 0,
+    ownsAgent: false,
+    memberUserIds: [],
+    memberCount: 0,
     lastMessage: null,
   };
 }
@@ -159,7 +161,9 @@ describe('chat members', () => {
         status: 200,
       })
     );
-    expect(await listWorkspaceMembers(server, 't-1')).toEqual([{ userId: 'u2', name: 'Bob' }]);
+    expect(await listWorkspaceMembers(server, 't-1')).toEqual([
+      { userId: 'u2', name: 'Bob', email: null },
+    ]);
     expect(gatewayFetch).toHaveBeenCalledWith(server, '/tenants/t-1/members', {
       authenticated: true,
     });

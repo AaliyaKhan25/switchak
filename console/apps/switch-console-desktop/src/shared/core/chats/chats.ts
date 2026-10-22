@@ -104,8 +104,8 @@ export type ChatMember = z.infer<typeof chatMemberSchema>;
 export const chatMemberListSchema = z.object({ members: z.array(chatMemberSchema) });
 /** A person in the workspace, from its roster, who could be added to a chat. */
 export const workspaceMemberSchema = z
-  .object({ user_id: z.string(), name: z.string() })
-  .transform(({ user_id, name }) => ({ userId: user_id, name }));
+  .object({ user_id: z.string(), name: z.string(), email: z.string().nullish() })
+  .transform(({ user_id, name, email }) => ({ userId: user_id, name, email: email || null }));
 export type WorkspaceMember = z.infer<typeof workspaceMemberSchema>;
 export const chatUploadSchema = z.object({
   uploadId: z.string(),

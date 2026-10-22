@@ -8,6 +8,7 @@ import { chatsStore } from '@renderer/features/chats/stores/chats';
 import { agentsStore } from '@renderer/features/locations/stores/agents-store';
 import { isConsoleGroupChatSummary } from '@renderer/features/switch-servers/room-filters';
 import { switchRoomsStore } from '@renderer/features/switch-servers/switch-rooms-store';
+import { switchServersStore } from '@renderer/features/switch-servers/switch-servers-store';
 import { workspacesStore } from '@renderer/features/workspaces/workspaces-store';
 import { AgentAvatar } from '@renderer/lib/components/agent-avatar';
 import { bridgePlatformLabel } from '@renderer/lib/components/bridge-platform';
@@ -29,10 +30,12 @@ import { cn } from '@renderer/utils/utils';
 import { agentInitials } from '@shared/core/agents/agent-avatar';
 import { type ChatSummary, chatAgentLabel } from '@shared/core/chats/chats';
 import { providerDisplayName } from '@shared/core/providers/agent-provider-registry';
+import { runsOnThisComputer } from '@shared/core/switch-servers/switch-servers';
 import type {
   RemoteAgentSummary,
   RemoteRoomDetail,
 } from '@shared/core/switch-servers/switch-servers';
+import { administersWorkspace } from '@shared/core/workspaces/workspaces';
 import { channelOnDeleteSummary } from './room-delete-wording';
 import { membershipSummary, roomTitle } from './room-labels';
 import { openRoomChannel } from './room-links';
@@ -201,7 +204,7 @@ const ChatParticipantsSection = observer(function ChatParticipantsSection({
         people={people.map((person) => ({
           id: person.userId,
           name: person.name,
-          detail: person.isOwner ? 'owner' : 'person',
+          detail: person.isOwner ? 'owner' : 'member',
         }))}
         manage={manage}
       />
@@ -212,6 +215,7 @@ const ChatParticipantsSection = observer(function ChatParticipantsSection({
       {adding === 'person' && (
         <ChatAddPersonPanel
           serverId={serverId}
+          workspaceId={workspaceId}
           tenantId={chatsStore.tenantId}
           roomId={roomId}
           memberIds={new Set(people.map((person) => person.userId))}
@@ -237,6 +241,7 @@ const ChatAddAgentPanel = observer(function ChatAddAgentPanel({
   return (
     <AddParticipantPanel
       noun="agent"
+      footer={null}
       searchPlaceholder="Search agents in this workspace…"
       allInText="Every agent in this workspace is already in this chat."
       loading={agents.isPending}
@@ -268,12 +273,14 @@ const ChatAddAgentPanel = observer(function ChatAddAgentPanel({
 /** The workspace's people not yet in the chat. */
 function ChatAddPersonPanel({
   serverId,
+  workspaceId,
   tenantId,
   roomId,
   memberIds,
   onAdded,
 }: {
   serverId: string;
+  workspaceId: string | null;
   /** The workspace the chats follow; its roster is the one offered. */
   tenantId: string | null;
   roomId: string;
@@ -304,8 +311,9 @@ function ChatAddPersonPanel({
           id: person.userId,
           name: person.name,
           mark: <PersonMark name={person.name} size="sm" />,
-          detail: 'person',
+          detail: person.email ?? '',
         }))}
+      footer={<InviteHint workspaceId={workspaceId} canInvite={canInvite(serverId, workspaceId)} />}
       onAdd={async (userId) => {
         try {
           onAdded(await rpc.chats.addMember({ serverId, roomId, userId }));
@@ -314,6 +322,45 @@ function ChatAddPersonPanel({
         }
       }}
     />
+  );
+}
+
+/** Whether the viewer may invite people to the workspace, as the workspace menu decides it. */
+function canInvite(serverId: string, workspaceId: string | null): boolean {
+  const workspace = workspacesStore.workspaces.find((each) => each.id === workspaceId) ?? null;
+  const server = switchServersStore.servers.find((each) => each.id === serverId) ?? null;
+  return (
+    workspace !== null &&
+    server !== null &&
+    administersWorkspace(workspace) &&
+    !runsOnThisComputer(server)
+  );
+}
+
+/** Where to go for someone the roster does not have yet. */
+export function InviteHint({
+  workspaceId,
+  canInvite,
+}: {
+  workspaceId: string | null;
+  canInvite: boolean;
+}) {
+  const showInvitePeopleModal = useShowModal('invitePeopleModal');
+  return (
+    <p className="px-1 text-xs text-foreground-muted">
+      Don&apos;t see someone?{' '}
+      {canInvite && workspaceId !== null ? (
+        <button
+          type="button"
+          className="cursor-pointer underline hover:text-foreground"
+          onClick={() => showInvitePeopleModal({ workspaceId })}
+        >
+          Invite them to the workspace
+        </button>
+      ) : (
+        'Ask a workspace admin to invite them.'
+      )}
+    </p>
   );
 }
 
@@ -792,6 +839,7 @@ function AddParticipantPanel({
   loading,
   loadError,
   candidates,
+  footer,
   onAdd,
 }: {
   noun: string;
@@ -800,6 +848,8 @@ function AddParticipantPanel({
   loading: boolean;
   loadError: string | null;
   candidates: Candidate[];
+  /** Under the list, such as where to go for someone who is not in it. */
+  footer: React.ReactNode;
   onAdd: (id: string) => Promise<void>;
 }) {
   const [filter, setFilter] = useState('');
@@ -807,7 +857,8 @@ function AddParticipantPanel({
   const [error, setError] = useState<string | null>(null);
   const query = filter.trim().toLowerCase();
   const shown = candidates.filter(
-    (candidate) => query === '' || candidate.name.toLowerCase().includes(query)
+    (candidate) =>
+      query === '' || `${candidate.name}\n${candidate.detail}`.toLowerCase().includes(query)
   );
 
   async function add(id: string) {
@@ -884,6 +935,7 @@ function AddParticipantPanel({
           ))}
         </div>
       )}
+      {footer}
     </div>
   );
 }
@@ -910,6 +962,7 @@ const AddAgentPanel = observer(function AddAgentPanel({
   return (
     <AddParticipantPanel
       noun="agent"
+      footer={null}
       searchPlaceholder="Search agents on this computer…"
       allInText="Every agent on this computer is already in this room."
       loading={false}
