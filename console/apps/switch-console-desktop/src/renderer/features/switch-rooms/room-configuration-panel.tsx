@@ -24,6 +24,7 @@ import { useNavigate } from '@renderer/lib/layout/navigation-provider';
 import { useShowModal } from '@renderer/lib/modal/modal-provider';
 import { useWorkspaceAgents } from '@renderer/lib/stores/use-workspace-agents';
 import { Button } from '@renderer/lib/ui/button';
+import { ConfirmButton } from '@renderer/lib/ui/confirm-button';
 import { Input } from '@renderer/lib/ui/input';
 import {
   InputGroup,
@@ -243,10 +244,38 @@ export async function addToChat(
 
 const ADD_PARTICIPANT_INPUT = 'chat-add-participant';
 
+/** The Add button's label: how many it adds once there is more than one. */
+export function addLabel(count: number): string {
+  return count > 1 ? `Add ${count}` : 'Add';
+}
+
 /**
- * The New room dialog's participant field, adding each pick at once: an agent
- * the workspace shows (the server decides who may use which) or a person on
- * its roster, never someone already in the chat.
+ * Adds each pick in turn through the chats API, telling `onAdded` of each
+ * success; resolves to the picks the server refused, each with its reason.
+ * One at a time, so each add sees the chat as the one before left it.
+ */
+export async function addAllToChat(
+  api: Pick<typeof rpc.chats, 'addAgent' | 'addMember'>,
+  serverId: string,
+  roomId: string,
+  picks: Participant[],
+  onAdded: (added: Awaited<ReturnType<typeof addToChat>>) => void
+): Promise<{ participant: Participant; reason: string }[]> {
+  const failures: { participant: Participant; reason: string }[] = [];
+  for (const participant of picks) {
+    try {
+      onAdded(await addToChat(api, serverId, roomId, participant));
+    } catch (cause) {
+      failures.push({ participant, reason: chatFailure(cause).message });
+    }
+  }
+  return failures;
+}
+
+/**
+ * The New room dialog's participant field: picks gather as chips, and Add
+ * puts them all in the chat. It offers the agents the viewer may add and the
+ * people on the roster, never someone already in the chat.
  */
 const ChatAddParticipantPanel = observer(function ChatAddParticipantPanel({
   serverId,
@@ -280,8 +309,9 @@ const ChatAddParticipantPanel = observer(function ChatAddParticipantPanel({
     ],
     queryFn: () => rpc.chats.agentCandidates({ serverId, roomId: chat.roomId }),
   });
-  const [adding, setAdding] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [picked, setPicked] = useState<Participant[]>([]);
+  const [adding, setAdding] = useState(false);
+  const [refused, setRefused] = useState<string[]>([]);
   const candidates = [
     ...addableAgents(agents.data ?? [], allowed.data ?? []).map((agent) =>
       agentParticipant(agent, knownAgentTypeDisplayName(agent.knownAgentType) ?? 'Agent')
@@ -289,37 +319,53 @@ const ChatAddParticipantPanel = observer(function ChatAddParticipantPanel({
     ...addablePeople(roster.data ?? [], memberIds).map(personParticipant),
   ];
 
-  async function add(participant: Participant) {
-    setAdding(participant.id);
-    setError(null);
-    try {
-      const added = await addToChat(rpc.chats, serverId, chat.roomId, participant);
+  async function addAll() {
+    if (adding || picked.length === 0) return;
+    setAdding(true);
+    setRefused([]);
+    const failures = await addAllToChat(rpc.chats, serverId, chat.roomId, picked, (added) => {
       if (added.kind === 'agent') chatsStore.add(serverId, added.chat);
       else onAddedPeople(added.members);
-    } catch (cause) {
-      setError(`${participant.name} was not added — ${chatFailure(cause).message}`);
-    } finally {
-      setAdding(null);
-    }
+    });
+    setPicked(failures.map((failure) => failure.participant));
+    setRefused(
+      failures.map(({ participant, reason }) => `${participant.name} was not added — ${reason}`)
+    );
+    setAdding(false);
   }
 
   return (
     <div className="flex flex-col gap-2 pt-1">
-      <ParticipantPicker
-        inputId={ADD_PARTICIPANT_INPUT}
-        autoFocus={false}
-        busy={adding !== null}
-        overlay
-        candidates={candidates}
-        picked={[]}
-        onChange={(next) => {
-          const picked = next.at(-1);
-          if (picked) void add(picked);
-        }}
-        serverId={serverId}
-        loading={agents.isPending || allowed.isPending || (tenantId !== null && roster.isPending)}
-      />
-      {error !== null && <p className="text-xs text-destructive">{error}</p>}
+      <div className="flex items-start gap-2">
+        <div className="min-w-0 flex-1">
+          <ParticipantPicker
+            inputId={ADD_PARTICIPANT_INPUT}
+            autoFocus={false}
+            busy={adding}
+            overlay
+            candidates={candidates}
+            picked={picked}
+            onChange={setPicked}
+            serverId={serverId}
+            loading={
+              agents.isPending || allowed.isPending || (tenantId !== null && roster.isPending)
+            }
+          />
+        </div>
+        <ConfirmButton
+          size="sm"
+          className="h-8 shrink-0"
+          disabled={picked.length === 0 || adding}
+          onClick={() => void addAll()}
+        >
+          {addLabel(picked.length)}
+        </ConfirmButton>
+      </div>
+      {refused.map((line) => (
+        <p key={line} className="text-xs text-destructive">
+          {line}
+        </p>
+      ))}
       {(agents.isError || allowed.isError) && (
         <p className="text-xs text-destructive">
           {failureText(agents.error ?? allowed.error, 'Could not list the agents.')}

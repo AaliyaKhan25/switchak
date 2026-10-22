@@ -3,12 +3,15 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import {
+  addAllToChat,
+  addLabel,
   addToChat,
   chatMembersQueryKey,
   InviteHint,
   RoomConfigurationPanel,
 } from '@renderer/features/switch-rooms/room-configuration-panel';
 import type { ChatSummary } from '@shared/core/chats/chats';
+import { RpcError } from '@shared/lib/ipc/rpc-error';
 
 const chat = vi.hoisted(() => ({ current: null as ChatSummary | null }));
 vi.mock('@renderer/lib/ipc', () => ({ events: { on: vi.fn() }, rpc: {} }));
@@ -84,6 +87,8 @@ describe('RoomConfigurationPanel for a group chat', () => {
     expect(field).toBeGreaterThan(html.indexOf('Add participants'));
     expect(html.indexOf('Don&#x27;t see someone?')).toBeGreaterThan(field);
     expect(html.indexOf('aria-label="Remove Helper"')).toBeGreaterThan(field);
+    // Nothing picked yet: Add sits beside the field, disabled.
+    expect(html).toMatch(/<button[^>]* disabled=""[^>]*><span[^>]*>Add<span data-slot="shortcut"/);
   });
 
   it('shows the participants without controls to someone who cannot manage', () => {
@@ -165,5 +170,48 @@ describe('addToChat', () => {
       members: [{ userId: 'u2', name: 'Bob', isOwner: false }],
     });
     expect(api.addMember).toHaveBeenCalledWith({ serverId: 's', roomId: 'r', userId: 'u2' });
+  });
+});
+
+describe('adding the picked participants', () => {
+  const agentPick = {
+    kind: 'agent' as const,
+    id: 'a1',
+    name: 'helper',
+    iconUrl: null,
+    detail: 'Agent · Claude Code',
+  };
+  const refusedPick = { ...agentPick, id: 'a2', name: 'agent-b' };
+  const bobPick = { kind: 'person' as const, id: 'u2', name: 'Bob', detail: 'bob@example.com' };
+
+  it('counts the picks on the button', () => {
+    expect(addLabel(0)).toBe('Add');
+    expect(addLabel(1)).toBe('Add');
+    expect(addLabel(3)).toBe('Add 3');
+  });
+
+  it('adds every pick and gives back only the refused ones, with the reason', async () => {
+    render(true);
+    const api = {
+      addAgent: vi.fn(async ({ agentId }: { agentId: string }) => {
+        if (agentId === 'a2')
+          throw new RpcError({
+            __switchConsoleRpcError: true,
+            code: 'ChatApiError',
+            message: 'You may not chat with this agent here.',
+            data: { apiCode: 'AGENT_NOT_ALLOWED', status: 403 },
+          });
+        return chat.current!;
+      }),
+      addMember: vi.fn(async () => [{ userId: 'u2', name: 'Bob', isOwner: false }]),
+    };
+    const onAdded = vi.fn();
+    const failures = await addAllToChat(api, 's', 'r', [agentPick, refusedPick, bobPick], onAdded);
+    expect(api.addAgent).toHaveBeenCalledTimes(2);
+    expect(api.addMember).toHaveBeenCalledWith({ serverId: 's', roomId: 'r', userId: 'u2' });
+    expect(onAdded).toHaveBeenCalledTimes(2);
+    expect(failures).toEqual([
+      { participant: refusedPick, reason: 'You may not chat with this agent here.' },
+    ]);
   });
 });
