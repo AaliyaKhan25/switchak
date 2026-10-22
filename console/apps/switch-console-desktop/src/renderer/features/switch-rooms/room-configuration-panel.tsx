@@ -131,7 +131,6 @@ const ChatParticipantsSection = observer(function ChatParticipantsSection({
     queryKey: membersKey,
     queryFn: () => rpc.chats.members(serverId, roomId),
   });
-  const [adding, setAdding] = useState(false);
   const [removing, setRemoving] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const people = members.data ?? [];
@@ -181,8 +180,9 @@ const ChatParticipantsSection = observer(function ChatParticipantsSection({
           <Button
             variant="outline"
             size="sm"
-            aria-expanded={adding}
-            onClick={() => setAdding((v) => !v)}
+            aria-controls={ADD_PARTICIPANT_INPUT}
+            // Focusing the field opens its results.
+            onClick={() => document.getElementById(ADD_PARTICIPANT_INPUT)?.focus()}
           >
             <Plus className="size-3.5" />
             Add participants
@@ -190,7 +190,7 @@ const ChatParticipantsSection = observer(function ChatParticipantsSection({
         )}
       </div>
 
-      {adding && (
+      {chat.canManage && (
         <ChatAddParticipantPanel
           serverId={serverId}
           workspaceId={workspaceId}
@@ -240,6 +240,8 @@ export async function addToChat(
     members: await api.addMember({ serverId, roomId, userId: participant.id }),
   };
 }
+
+const ADD_PARTICIPANT_INPUT = 'chat-add-participant';
 
 /**
  * The New room dialog's participant field, adding each pick at once: an agent
@@ -293,8 +295,8 @@ const ChatAddParticipantPanel = observer(function ChatAddParticipantPanel({
   return (
     <div className="flex flex-col gap-2 pt-1">
       <ParticipantPicker
-        inputId="chat-add-participant"
-        autoFocus
+        inputId={ADD_PARTICIPANT_INPUT}
+        autoFocus={false}
         busy={adding !== null}
         overlay
         candidates={candidates}

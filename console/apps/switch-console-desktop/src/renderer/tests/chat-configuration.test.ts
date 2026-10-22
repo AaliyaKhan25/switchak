@@ -70,7 +70,7 @@ describe('RoomConfigurationPanel for a group chat', () => {
     expect(html).toContain('Helper');
     expect(html).toContain('1 agent · 2 people');
     expect(html).toContain('Add participants');
-    expect(html).not.toContain('Add agent');
+    expect(html).not.toMatch(/>\s*Add agent\s*</);
     expect(html).not.toContain('Add person');
     expect(html).not.toContain('From a template');
     expect(html).toContain('aria-label="Remove Helper"');
@@ -78,10 +78,19 @@ describe('RoomConfigurationPanel for a group chat', () => {
     expect(html).not.toContain('aria-label="Remove Alice"');
   });
 
+  it('keeps the add field open under the header, above the cards, with the invite line under it', () => {
+    const html = render(true);
+    const field = html.indexOf('id="chat-add-participant"');
+    expect(field).toBeGreaterThan(html.indexOf('Add participants'));
+    expect(html.indexOf('Don&#x27;t see someone?')).toBeGreaterThan(field);
+    expect(html.indexOf('aria-label="Remove Helper"')).toBeGreaterThan(field);
+  });
+
   it('shows the participants without controls to someone who cannot manage', () => {
     const html = render(false);
     expect(html).toContain('Bob');
     expect(html).not.toContain('Add participants');
+    expect(html).not.toContain('id="chat-add-participant"');
     expect(html).not.toContain('aria-label="Remove');
   });
 });
