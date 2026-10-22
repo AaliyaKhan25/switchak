@@ -246,6 +246,20 @@ describe('ChatsStore', () => {
     expect(timeline.accessLost).toBe(false);
   });
 
+  it('catches an open timeline up to the feed once it is live', async () => {
+    let page = [message('r1', 1)];
+    const messages = vi.fn(async () => ({ messages: page, headSeq: page.length, hasMore: false }));
+    const { store, live } = setup(async () => [summary('r1', 1)], { messages });
+    await store.connect('s1');
+    const timeline = store.timelines.get('s1', 'r1');
+    await timeline.load();
+
+    // Posted before the feed took its cursor: the feed will never deliver it.
+    page = [message('r1', 1), message('r1', 2)];
+    live();
+    await vi.waitFor(() => expect(timeline.messages.map((m) => m.seq)).toEqual([1, 2]));
+  });
+
   it('revokes a chat unlisted earlier once access is lost', async () => {
     const { store } = setup(async () => [summary('r1', 1)]);
     await store.connect('s1');

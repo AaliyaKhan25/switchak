@@ -227,4 +227,24 @@ describe('ChatTimeline', () => {
     expect(timeline.notMember).toBe(true);
     expect(timeline.loadError).toBeNull();
   });
+
+  it('pages back to what it holds when loading again, so a gap is not skipped', async () => {
+    let head = 3;
+    const { value } = api({
+      messages: async (_room, before, limit) => {
+        const top = Math.min(before ?? head + 1, head + 1);
+        const from = Math.max(1, top - limit);
+        const seqs = Array.from({ length: top - from }, (_, i) => from + i);
+        return { messages: seqs.map((seq) => message(seq)), headSeq: head, hasMore: from > 1 };
+      },
+    });
+    const timeline = new ChatTimeline('room-1', value);
+    await timeline.load();
+    head = 130;
+    await timeline.load();
+    expect(timeline.messages.map((m) => m.seq)).toEqual(
+      Array.from({ length: 130 }, (_, i) => i + 1)
+    );
+    expect(timeline.hasMore).toBe(false);
+  });
 });

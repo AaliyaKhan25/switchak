@@ -165,10 +165,19 @@ export class ChatTimeline {
     if (this.loading) return;
     this.loading = true;
     this.loadError = null;
+    const held = this.newestSeq;
     try {
-      const page = await this.api.messages(this.roomId, null, PAGE_SIZE);
+      let page = await this.api.messages(this.roomId, null, PAGE_SIZE);
+      const fetched = [...page.messages];
+      // Page back until the newest held message, so a gap since the last load is not skipped.
+      let oldest = Math.min(...page.messages.map((message) => message.seq));
+      while (held !== null && page.hasMore && page.messages.length && oldest > held) {
+        page = await this.api.messages(this.roomId, oldest, PAGE_SIZE);
+        fetched.push(...page.messages);
+        oldest = Math.min(oldest, ...page.messages.map((message) => message.seq));
+      }
       runInAction(() => {
-        for (const message of page.messages) this.apply(message);
+        for (const message of fetched) this.apply(message);
         if (!this.loaded) this.hasMore = page.hasMore;
         this.loaded = true;
         this.notMember = false;
@@ -381,10 +390,11 @@ export class ChatTimelines {
     return this.timelines.get(`${serverId}\u0000${roomId}`);
   }
 
-  /** Load again each of the server's timelines whose last load failed. */
-  reloadFailed(serverId: string): void {
+  /** Load again each of the server's timelines that loaded or failed to, catching up to the live feed. */
+  reload(serverId: string): void {
     for (const [key, timeline] of this.timelines)
-      if (key.startsWith(`${serverId}\u0000`) && timeline.loadError) void timeline.load();
+      if (key.startsWith(`${serverId}\u0000`) && (timeline.loaded || timeline.loadError))
+        void timeline.load();
   }
 
   /** Forget everything held for a server: signed out, or the tenant changed. */
