@@ -54,14 +54,14 @@ export function ParticipantChip({
   return (
     <span
       className={cn(
-        'flex h-7 max-w-full items-center gap-1.5 rounded-full py-0.5 pr-1 pl-1 text-sm text-foreground',
+        'flex h-6 max-w-full items-center gap-1.5 rounded-full py-0.5 pr-0.5 pl-0.5 text-sm text-foreground',
         !accent && 'bg-[var(--fill-2)]'
       )}
       style={
         accent ? { backgroundColor: `color-mix(in srgb, ${accent} 20%, transparent)` } : undefined
       }
     >
-      <Mark participant={participant} serverId={serverId} size={20} />
+      <Mark participant={participant} serverId={serverId} size={18} />
       <span className="truncate">{participant.name}</span>
       <button
         type="button"
@@ -86,12 +86,17 @@ export function ParticipantPicker({
   onChange,
   serverId,
   loading,
+  inputId,
+  autoFocus,
 }: {
   candidates: Participant[];
   picked: Participant[];
   onChange: (next: Participant[]) => void;
   serverId: string | null;
   loading: boolean;
+  /** For the field's label. */
+  inputId: string;
+  autoFocus: boolean;
 }) {
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
@@ -108,7 +113,8 @@ export function ParticipantPicker({
   return (
     <div>
       <div
-        className="flex min-h-11 flex-wrap items-center gap-1.5 rounded-[10px] border border-border px-2 py-1.5 focus-within:border-foreground-muted"
+        // The standard input's border, radius and focus ring, around chips that wrap.
+        className="focus-within:ring-primary/30 dark:bg-input/30 flex min-h-8 w-full flex-wrap items-center gap-1 rounded-md border border-border bg-transparent px-1 py-0.5 transition-[color,box-shadow] focus-within:border-border-primary focus-within:ring-2 hover:border-border-1"
         onClick={(event) =>
           (event.currentTarget.querySelector('input') as HTMLInputElement | null)?.focus()
         }
@@ -122,12 +128,14 @@ export function ParticipantPicker({
           />
         ))}
         <input
+          id={inputId}
+          autoFocus={autoFocus}
           role="combobox"
           aria-expanded={open}
-          aria-controls="new-room-participants"
+          aria-controls={`${inputId}-results`}
           aria-label="Add agents or people"
           placeholder={picked.length === 0 ? 'Add agents or people…' : ''}
-          className="h-7 min-w-32 flex-1 bg-transparent px-1 text-sm outline-none placeholder:text-foreground-passive"
+          className="h-6 min-w-32 flex-1 bg-transparent px-1.5 text-sm outline-none placeholder:text-foreground-passive"
           value={query}
           onChange={(event) => {
             setQuery(event.target.value);
@@ -161,7 +169,7 @@ export function ParticipantPicker({
       {open && (
         // In the flow rather than floating: the dialog clips what overflows it, so the list grows it instead.
         <div
-          id="new-room-participants"
+          id={`${inputId}-results`}
           role="listbox"
           className="mt-1 max-h-60 overflow-y-auto rounded-[10px] border border-border bg-background p-1 shadow-sm"
         >

@@ -3,6 +3,29 @@ export type Participant =
   | { kind: 'agent'; id: string; name: string; iconUrl: string | null; detail: string }
   | { kind: 'person'; id: string; name: string; detail: string };
 
+/** An agent the workspace lists, as a participant; `provider` names what runs it. */
+export function agentParticipant(
+  agent: { id: string; name: string; displayName: string | null; iconUrl: string | null },
+  provider: string
+): Participant {
+  return {
+    kind: 'agent',
+    id: agent.id,
+    name: agent.displayName ?? agent.name,
+    iconUrl: agent.iconUrl,
+    detail: `Agent · ${provider}`,
+  };
+}
+
+/** A person from the workspace roster, as a participant, shown with their email. */
+export function personParticipant(person: {
+  userId: string;
+  name: string;
+  email: string | null;
+}): Participant {
+  return { kind: 'person', id: person.userId, name: person.name, detail: person.email ?? '' };
+}
+
 const same = (a: Participant, b: Participant) => a.kind === b.kind && a.id === b.id;
 
 /** The candidates not yet picked whose name or detail (provider, email) contains the query. */

@@ -7,9 +7,9 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ParticipantPicker } from '@renderer/features/switch-servers/participant-picker';
-import type { Participant } from '@renderer/features/switch-servers/participant-search';
 import { RoomNameInput } from '@renderer/features/switch-servers/room-name-input';
+import { ParticipantPicker } from '@renderer/lib/components/participant-picker';
+import type { Participant } from '@renderer/lib/components/participant-search';
 
 let container: HTMLDivElement | null = null;
 let root: Root | null = null;
@@ -54,6 +54,8 @@ describe('New room IME', () => {
         onChange={onChange}
         serverId={null}
         loading={false}
+        inputId="participants"
+        autoFocus={false}
       />
     );
     await act(async () => input.focus());
@@ -67,7 +69,7 @@ describe('New room IME', () => {
   it('does not create the room on a composition Enter in the name, and does on a plain one', async () => {
     const onSubmit = vi.fn();
     const input = await render(
-      <RoomNameInput value="会議" onChange={() => {}} onSubmit={onSubmit} />
+      <RoomNameInput id="name" value="会議" onChange={() => {}} onSubmit={onSubmit} />
     );
     await act(async () => enter(input, { isComposing: true, keyCode: 13 }));
     await act(async () => enter(input, { keyCode: 229 }));

@@ -1,18 +1,22 @@
-/** The new room's name, large as its title; Enter submits, except an Enter the IME is handling. */
+import { Input } from '@renderer/lib/ui/input';
+
+/** The new room's name; Enter submits, except an Enter the IME is handling. */
 export function RoomNameInput({
+  id,
   value,
   onChange,
   onSubmit,
 }: {
+  id: string;
   value: string;
   onChange: (value: string) => void;
   onSubmit: () => void;
 }) {
   return (
-    <input
+    <Input
+      id={id}
       autoFocus
-      aria-label="Room name"
-      placeholder="Room name"
+      placeholder="Name this room"
       value={value}
       onChange={(e) => onChange(e.target.value)}
       onKeyDown={(e) => {
@@ -20,7 +24,6 @@ export function RoomNameInput({
         if (e.nativeEvent.isComposing || e.keyCode === 229) return;
         if (e.key === 'Enter') onSubmit();
       }}
-      className="w-full border-b border-border bg-transparent pb-2 text-xl font-semibold text-foreground outline-none placeholder:font-normal placeholder:text-foreground-passive focus:border-foreground-muted"
     />
   );
 }

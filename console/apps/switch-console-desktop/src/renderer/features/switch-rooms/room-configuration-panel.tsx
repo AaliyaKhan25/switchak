@@ -12,6 +12,12 @@ import { switchServersStore } from '@renderer/features/switch-servers/switch-ser
 import { workspacesStore } from '@renderer/features/workspaces/workspaces-store';
 import { AgentAvatar } from '@renderer/lib/components/agent-avatar';
 import { bridgePlatformLabel } from '@renderer/lib/components/bridge-platform';
+import { ParticipantPicker } from '@renderer/lib/components/participant-picker';
+import {
+  agentParticipant,
+  type Participant,
+  personParticipant,
+} from '@renderer/lib/components/participant-search';
 import { describeFailure, failureText } from '@renderer/lib/errors/describe-failure';
 import { rpc } from '@renderer/lib/ipc';
 import { useNavigate } from '@renderer/lib/layout/navigation-provider';
@@ -125,7 +131,7 @@ const ChatParticipantsSection = observer(function ChatParticipantsSection({
     queryKey: membersKey,
     queryFn: () => rpc.chats.members(serverId, roomId),
   });
-  const [adding, setAdding] = useState<'agent' | 'person' | null>(null);
+  const [adding, setAdding] = useState(false);
   const [removing, setRemoving] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const people = members.data ?? [];
@@ -172,26 +178,15 @@ const ChatParticipantsSection = observer(function ChatParticipantsSection({
           </span>
         </div>
         {chat.canManage && (
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              aria-expanded={adding === 'agent'}
-              onClick={() => setAdding((v) => (v === 'agent' ? null : 'agent'))}
-            >
-              <Plus className="size-3.5" />
-              Add agent
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              aria-expanded={adding === 'person'}
-              onClick={() => setAdding((v) => (v === 'person' ? null : 'person'))}
-            >
-              <Plus className="size-3.5" />
-              Add person
-            </Button>
-          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            aria-expanded={adding}
+            onClick={() => setAdding((v) => !v)}
+          >
+            <Plus className="size-3.5" />
+            Add participant
+          </Button>
         )}
       </div>
 
@@ -212,116 +207,125 @@ const ChatParticipantsSection = observer(function ChatParticipantsSection({
         manage={manage}
       />
 
-      {adding === 'agent' && workspaceId !== null && (
-        <ChatAddAgentPanel serverId={serverId} workspaceId={workspaceId} chat={chat} />
-      )}
-      {adding === 'person' && (
-        <ChatAddPersonPanel
+      {adding && (
+        <ChatAddParticipantPanel
           serverId={serverId}
           workspaceId={workspaceId}
-          tenantId={chatsStore.tenantId}
-          roomId={roomId}
+          chat={chat}
           memberIds={new Set(people.map((person) => person.userId))}
-          onAdded={(next) => queryClient.setQueryData(membersKey, next)}
+          onAddedPeople={(next) => queryClient.setQueryData(membersKey, next)}
         />
       )}
     </section>
   );
 });
 
-/** The workspace's agents the viewer can see, any install's; the server decides who may use which. */
-const ChatAddAgentPanel = observer(function ChatAddAgentPanel({
+/** Adds a picked participant through the chats API: an agent to the chat, a person as a member. */
+export async function addToChat(
+  api: Pick<typeof rpc.chats, 'addAgent' | 'addMember'>,
+  serverId: string,
+  roomId: string,
+  participant: Participant
+): Promise<
+  | { kind: 'agent'; chat: ChatSummary }
+  | { kind: 'person'; members: Awaited<ReturnType<typeof rpc.chats.addMember>> }
+> {
+  if (participant.kind === 'agent')
+    return {
+      kind: 'agent',
+      chat: await api.addAgent({ serverId, roomId, agentId: participant.id }),
+    };
+  return {
+    kind: 'person',
+    members: await api.addMember({ serverId, roomId, userId: participant.id }),
+  };
+}
+
+/**
+ * The New room dialog's participant field, adding each pick at once: an agent
+ * the workspace shows (the server decides who may use which) or a person on
+ * its roster, never someone already in the chat.
+ */
+const ChatAddParticipantPanel = observer(function ChatAddParticipantPanel({
   serverId,
   workspaceId,
   chat,
-}: {
-  serverId: string;
-  workspaceId: string;
-  chat: ChatSummary;
-}) {
-  const agents = useWorkspaceAgents(workspaceId);
-  return (
-    <AddParticipantPanel
-      noun="agent"
-      footer={null}
-      searchPlaceholder="Search agents in this workspace…"
-      allInText="Every agent in this workspace is already in this chat."
-      loading={agents.isPending}
-      loadError={agents.isError ? failureText(agents.error, 'Could not list the agents.') : null}
-      candidates={addableAgents(agents.data ?? [], chat.agents).map((agent) => ({
-        id: agent.id,
-        name: agent.displayName ?? agent.name,
-        mark: (
-          <AgentAvatar name={agent.name} iconUrl={agent.iconUrl} serverId={serverId} size={22} />
-        ),
-        detail: knownAgentTypeDisplayName(agent.knownAgentType) ?? 'Agent',
-      }))}
-      onAdd={async (agentId) => {
-        try {
-          chatsStore.add(
-            serverId,
-            await rpc.chats.addAgent({ serverId, roomId: chat.roomId, agentId })
-          );
-        } catch (cause) {
-          throw new Error(chatFailure(cause).message);
-        }
-      }}
-    />
-  );
-});
-
-/** The workspace's people not yet in the chat. */
-function ChatAddPersonPanel({
-  serverId,
-  workspaceId,
-  tenantId,
-  roomId,
   memberIds,
-  onAdded,
+  onAddedPeople,
 }: {
   serverId: string;
   workspaceId: string | null;
-  /** The workspace the chats follow; its roster is the one offered. */
-  tenantId: string | null;
-  roomId: string;
+  chat: ChatSummary;
+  /** The people in the chat, the viewer included. */
   memberIds: Set<string>;
-  onAdded: (members: Awaited<ReturnType<typeof rpc.chats.addMember>>) => void;
+  onAddedPeople: (members: Awaited<ReturnType<typeof rpc.chats.addMember>>) => void;
 }) {
+  const tenantId = chatsStore.tenantId;
+  const agents = useWorkspaceAgents(workspaceId);
   const roster = useQuery({
     queryKey: ['workspace-members', serverId, tenantId],
     queryFn: () => rpc.chats.workspaceMembers({ serverId, tenantId: tenantId as string }),
     enabled: tenantId !== null,
   });
+  const [adding, setAdding] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const candidates = [
+    ...addableAgents(agents.data ?? [], chat.agents).map((agent) =>
+      agentParticipant(agent, knownAgentTypeDisplayName(agent.knownAgentType) ?? 'Agent')
+    ),
+    ...addablePeople(roster.data ?? [], memberIds).map(personParticipant),
+  ];
+
+  async function add(participant: Participant) {
+    if (adding !== null) return;
+    setAdding(participant.id);
+    setError(null);
+    try {
+      const added = await addToChat(rpc.chats, serverId, chat.roomId, participant);
+      if (added.kind === 'agent') chatsStore.add(serverId, added.chat);
+      else onAddedPeople(added.members);
+    } catch (cause) {
+      setError(`${participant.name} was not added — ${chatFailure(cause).message}`);
+    } finally {
+      setAdding(null);
+    }
+  }
+
   return (
-    <AddParticipantPanel
-      noun="person"
-      searchPlaceholder="Search people in this workspace…"
-      allInText="Everyone in this workspace is already in this chat."
-      loading={tenantId !== null && roster.isPending}
-      loadError={
-        tenantId === null
-          ? 'This workspace has no tenant to list people from.'
-          : roster.isError
-            ? failureText(roster.error, 'Could not list the people.')
-            : null
-      }
-      candidates={addablePeople(roster.data ?? [], memberIds).map((person) => ({
-        id: person.userId,
-        name: person.name,
-        mark: <PersonMark name={person.name} size="sm" />,
-        detail: person.email ?? '',
-      }))}
-      footer={<InviteHint workspaceId={workspaceId} canInvite={canInvite(serverId, workspaceId)} />}
-      onAdd={async (userId) => {
-        try {
-          onAdded(await rpc.chats.addMember({ serverId, roomId, userId }));
-        } catch (cause) {
-          throw new Error(chatFailure(cause).message);
-        }
-      }}
-    />
+    <div className="flex flex-col gap-2 pt-1">
+      <ParticipantPicker
+        inputId="chat-add-participant"
+        autoFocus
+        candidates={candidates}
+        picked={[]}
+        onChange={(next) => {
+          const picked = next.at(-1);
+          if (picked) void add(picked);
+        }}
+        serverId={serverId}
+        loading={agents.isPending || (tenantId !== null && roster.isPending)}
+      />
+      {error !== null && <p className="text-xs text-destructive">{error}</p>}
+      {agents.isError && (
+        <p className="text-xs text-destructive">
+          {failureText(agents.error, 'Could not list the agents.')}
+        </p>
+      )}
+      {tenantId === null ? (
+        <p className="text-xs text-destructive">
+          This workspace has no tenant to list people from.
+        </p>
+      ) : (
+        roster.isError && (
+          <p className="text-xs text-destructive">
+            {failureText(roster.error, 'Could not list the people.')}
+          </p>
+        )
+      )}
+      <InviteHint workspaceId={workspaceId} canInvite={canInvite(serverId, workspaceId)} />
+    </div>
   );
-}
+});
 
 /** Whether the viewer may invite people to the workspace, as the workspace menu decides it. */
 function canInvite(serverId: string, workspaceId: string | null): boolean {

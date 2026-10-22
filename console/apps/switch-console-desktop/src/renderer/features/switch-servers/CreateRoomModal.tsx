@@ -11,6 +11,12 @@ import { addablePeople } from '@renderer/features/switch-rooms/room-labels';
 import { workspacesStore } from '@renderer/features/workspaces/workspaces-store';
 import { agentProviderLabel } from '@renderer/lib/components/agent-mark';
 import { agentProviderLabelFor } from '@renderer/lib/components/agent-picker';
+import { ParticipantPicker } from '@renderer/lib/components/participant-picker';
+import {
+  agentParticipant,
+  type Participant,
+  personParticipant,
+} from '@renderer/lib/components/participant-search';
 import { failureText } from '@renderer/lib/errors/describe-failure';
 import { rpc } from '@renderer/lib/ipc';
 import { type BaseModalProps, useModalContext } from '@renderer/lib/modal/modal-provider';
@@ -23,12 +29,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@renderer/lib/ui/dialog';
+import { Field, FieldLabel } from '@renderer/lib/ui/field';
 import { Input } from '@renderer/lib/ui/input';
 import { Textarea } from '@renderer/lib/ui/textarea';
 import { knownAgentTypeDisplayName } from '@shared/core/providers/agent-provider-registry';
 import { MessagingAppSelector, SWITCH_CONSOLE } from './messaging-app-selector';
-import { ParticipantPicker } from './participant-picker';
-import type { Participant } from './participant-search';
 import { CreateRequestIds, canCreate, roomCreateRequest } from './room-create-request';
 import { RoomNameInput } from './room-name-input';
 import { switchServersStore } from './switch-servers-store';
@@ -116,22 +121,11 @@ export const CreateRoomModal = observer(function CreateRoomModal({
             .some((local) => local.switchAgentId === remote.id)))
   );
   const candidates: Participant[] = [
-    ...agentCandidates.map(
-      (agent): Participant => ({
-        kind: 'agent',
-        id: agent.id,
-        name: agent.displayName ?? agent.name,
-        iconUrl: agent.iconUrl,
-        detail: `Agent · ${providerLabel(agent.id, agent.knownAgentType)}`,
-      })
+    ...agentCandidates.map((agent) =>
+      agentParticipant(agent, providerLabel(agent.id, agent.knownAgentType))
     ),
     ...addablePeople(selectedBridge ? [] : (rosterQuery.data ?? []), new Set([myUserId ?? ''])).map(
-      (person): Participant => ({
-        kind: 'person',
-        id: person.userId,
-        name: person.name,
-        detail: person.email ?? '',
-      })
+      personParticipant
     ),
   ];
   const agentIds = picked.filter((each) => each.kind === 'agent').map((each) => each.id);
@@ -221,29 +215,33 @@ export const CreateRoomModal = observer(function CreateRoomModal({
             </p>
           )}
 
-          <RoomNameInput
-            value={name}
-            onChange={(next) => {
-              setName(next);
-              setError(null);
-            }}
-            onSubmit={() => {
-              if (canSubmit) void handleSubmit();
-            }}
-          />
-          {/* What the name becomes, where it becomes it: a bridged room is a
-              channel of the same name in its app. */}
-          {trimmedName !== '' && selectedBridge && (
-            <span className="-mt-3 text-xs text-foreground-muted">
-              Created as #{trimmedName} in {selectedBridge.displayName}.
-            </span>
-          )}
+          <Field>
+            <FieldLabel htmlFor="new-room-name">Name</FieldLabel>
+            <RoomNameInput
+              id="new-room-name"
+              value={name}
+              onChange={(next) => {
+                setName(next);
+                setError(null);
+              }}
+              onSubmit={() => {
+                if (canSubmit) void handleSubmit();
+              }}
+            />
+            {/* What the name becomes, where it becomes it: a bridged room is a
+                channel of the same name in its app. */}
+            {trimmedName !== '' && selectedBridge && (
+              <span className="text-xs text-foreground-muted">
+                Created as #{trimmedName} in {selectedBridge.displayName}.
+              </span>
+            )}
+          </Field>
 
-          <section className="flex flex-col gap-2">
-            <span className="text-xs font-semibold tracking-wide text-foreground-muted uppercase">
-              Participants
-            </span>
+          <Field>
+            <FieldLabel htmlFor="new-room-participants">Participants</FieldLabel>
             <ParticipantPicker
+              inputId="new-room-participants"
+              autoFocus={false}
               candidates={candidates}
               picked={picked}
               onChange={setPicked}
@@ -263,7 +261,7 @@ export const CreateRoomModal = observer(function CreateRoomModal({
                 {failureText(rosterQuery.error, 'Could not load the people.')}
               </p>
             )}
-          </section>
+          </Field>
 
           {/* A bridged room's own settings; a Switch Console room has none to start with. */}
           {selectedBridge && (

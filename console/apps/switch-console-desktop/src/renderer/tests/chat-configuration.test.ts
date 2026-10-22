@@ -3,6 +3,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import {
+  addToChat,
   chatMembersQueryKey,
   InviteHint,
   RoomConfigurationPanel,
@@ -68,8 +69,9 @@ describe('RoomConfigurationPanel for a group chat', () => {
     expect(html).toContain('Planning');
     expect(html).toContain('Helper');
     expect(html).toContain('1 agent · 2 people');
-    expect(html).toContain('Add agent');
-    expect(html).toContain('Add person');
+    expect(html).toContain('Add participant');
+    expect(html).not.toContain('Add agent');
+    expect(html).not.toContain('Add person');
     expect(html).not.toContain('From a template');
     expect(html).toContain('aria-label="Remove Helper"');
     expect(html).toContain('aria-label="Remove Bob"');
@@ -79,8 +81,7 @@ describe('RoomConfigurationPanel for a group chat', () => {
   it('shows the participants without controls to someone who cannot manage', () => {
     const html = render(false);
     expect(html).toContain('Bob');
-    expect(html).not.toContain('Add agent');
-    expect(html).not.toContain('Add person');
+    expect(html).not.toContain('Add participant');
     expect(html).not.toContain('aria-label="Remove');
   });
 });
@@ -125,5 +126,35 @@ describe('group chat people', () => {
     );
     expect(cannot).toContain('Ask a workspace admin to invite them.');
     expect(cannot).not.toContain('<button');
+  });
+});
+
+describe('addToChat', () => {
+  it('adds an agent to the chat and a person as a member', async () => {
+    const api = {
+      addAgent: vi.fn(async () => chat.current!),
+      addMember: vi.fn(async () => [{ userId: 'u2', name: 'Bob', isOwner: false }]),
+    };
+    const agentPick = {
+      kind: 'agent' as const,
+      id: 'a1',
+      name: 'helper',
+      iconUrl: null,
+      detail: 'Agent · Claude Code',
+    };
+    render(true);
+    expect((await addToChat(api, 's', 'r', agentPick)).kind).toBe('agent');
+    expect(api.addAgent).toHaveBeenCalledWith({ serverId: 's', roomId: 'r', agentId: 'a1' });
+    const added = await addToChat(api, 's', 'r', {
+      kind: 'person',
+      id: 'u2',
+      name: 'Bob',
+      detail: 'bob@example.com',
+    });
+    expect(added).toEqual({
+      kind: 'person',
+      members: [{ userId: 'u2', name: 'Bob', isOwner: false }],
+    });
+    expect(api.addMember).toHaveBeenCalledWith({ serverId: 's', roomId: 'r', userId: 'u2' });
   });
 });

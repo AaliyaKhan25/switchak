@@ -1,10 +1,10 @@
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
+import { ParticipantPicker } from '@renderer/lib/components/participant-picker';
+import type { Participant } from '@renderer/lib/components/participant-search';
 import type { RemoteBridge } from '@shared/core/switch-servers/switch-servers';
 import { MessagingAppSelector, messagingOptions, SWITCH_CONSOLE } from './messaging-app-selector';
-import { ParticipantPicker } from './participant-picker';
-import type { Participant } from './participant-search';
 
 vi.mock('@renderer/lib/stores/use-avatar-settings', () => ({
   useAvatarSettings: () => ({ thirdPartyAvatarsEnabled: false }),
@@ -83,6 +83,8 @@ describe('ParticipantPicker', () => {
         onChange: () => {},
         serverId: 's',
         loading: false,
+        inputId: 'participants',
+        autoFocus: false,
       })
     );
     expect(html).toContain('aria-label="Remove helper"');

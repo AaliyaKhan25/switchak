@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { type Participant, pickerKey, searchParticipants } from './participant-search';
+import {
+  agentParticipant,
+  type Participant,
+  personParticipant,
+  pickerKey,
+  searchParticipants,
+} from './participant-search';
 
 const helper: Participant = {
   kind: 'agent',
@@ -52,5 +58,19 @@ describe('pickerKey', () => {
   it('closes the list with Escape, and leaves Escape to the dialog once closed', () => {
     expect(pickerKey('Escape', state)).toEqual({ type: 'close' });
     expect(pickerKey('Escape', { ...state, open: false })).toBeNull();
+  });
+});
+
+describe('agentParticipant / personParticipant', () => {
+  it('shows an agent by its display name and provider, a person by their email', () => {
+    expect(
+      agentParticipant({ id: 'a1', name: 'helper', displayName: 'Helper', iconUrl: null }, 'Codex')
+    ).toEqual({ kind: 'agent', id: 'a1', name: 'Helper', iconUrl: null, detail: 'Agent · Codex' });
+    expect(personParticipant({ userId: 'u2', name: 'Bob', email: null })).toEqual({
+      kind: 'person',
+      id: 'u2',
+      name: 'Bob',
+      detail: '',
+    });
   });
 });
