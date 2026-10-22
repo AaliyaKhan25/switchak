@@ -411,6 +411,27 @@ async def test_kind_is_part_of_what_a_retry_must_repeat(chats: _Harness) -> None
     assert _code(other) == "REQUEST_REUSED"
 
 
+async def test_a_create_ignores_the_creator_and_repeats_in_who_it_adds(
+    chats: _Harness,
+) -> None:
+    agent = await chats.agent("helper", owner=chats.alice)
+    created = await chats.client.post(
+        "/chats",
+        json={
+            "agentIds": [agent.id, agent.id],
+            "memberUserIds": [chats.bob.id, chats.alice.id, chats.bob.id],
+            "kind": "group",
+            "requestId": "c1",
+        },
+        headers=chats.as_user(chats.alice),
+    )
+    assert created.status_code == 200, created.text
+    chat = created.json()["chat"]
+    assert [each["id"] for each in chat["agents"]] == [agent.id]
+    assert chat["memberUserIds"] == sorted([chats.alice.id, chats.bob.id])
+    assert chat["memberCount"] == 2
+
+
 async def test_a_group_does_not_open_with_a_greeting(chats: _Harness) -> None:
     agent = await chats.agent("helper", owner=chats.alice)
     created = await chats.client.post(
