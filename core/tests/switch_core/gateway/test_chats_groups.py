@@ -355,6 +355,10 @@ async def test_a_chat_with_no_agents_and_no_one_else(chats: _Harness) -> None:
     assert chat["agents"] == []
     assert chat["channelType"] == "channel_private"
     assert chat["roomId"] in await _listed(chats, chats.alice)
+    async with chats.factory() as session:
+        room = await session.get(Room, chat["roomId"])
+        assert room is not None
+        assert room.description == "Switch Console chat"
 
 
 async def test_one_agent_and_a_person_make_a_group(chats: _Harness) -> None:

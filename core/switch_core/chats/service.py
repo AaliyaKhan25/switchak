@@ -1162,14 +1162,18 @@ class ChatService:
                     )
                 ).scalar_one_or_none()
             if found is None:
+                names = ", ".join(
+                    [agent.name for agent in agents]
+                    + [member.name for member in members]
+                )
                 try:
                     created = await self._room_service.create_room(
                         RoomCreateConfig(
                             name=name or "New Chat",
-                            description="Switch Console chat with "
-                            + ", ".join(
-                                [agent.name for agent in agents]
-                                + [member.name for member in members]
+                            description=(
+                                f"Switch Console chat with {names}"
+                                if names
+                                else "Switch Console chat"
                             ),
                             agent_ids=[agent.id for agent in agents],
                             channel_type="direct" if direct else "channel_private",
