@@ -1829,6 +1829,13 @@ version of their own to them without also giving them a release of their own.
 
 ### [Unreleased]
 
+#### Fixed
+- **Setting up a server notices Docker once it starts.** "Set up a server on
+  this computer" checked for Docker only when the step opened, so installing or
+  starting Docker meanwhile left the setup skipping Mattermost until you went
+  back. It now checks again every few seconds, and when Console regains focus,
+  while Docker isn't answering.
+
 ### [0.40.1] - 2026-10-21
 
 #### Added
