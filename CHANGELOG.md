@@ -44,6 +44,17 @@ version of their own to them without also giving them a release of their own.
 
 ### [Unreleased]
 
+#### Changed
+- **Following the conversation is described the same way everywhere, and the
+  chart can turn it on.** The feature added in 0.31.0 is off unless
+  `follow_the_conversation` is among the enabled feature flags
+  (`FEATURE_FLAGS_ENABLED`, or `switchCore.featureFlags.enabled` in the Helm
+  chart). The Switch skill and the agent runtime's instructions no longer tell
+  agents that a message without their name can never reach them: a person's
+  follow-up can, while other agents' chatter still does not. The chart lists
+  the flag and, while it is on, sets `FOLLOW_THE_CONVERSATION_WINDOW_SECONDS`
+  from `switchCore.followTheConversation.windowSeconds` (default 300).
+
 #### Fixed
 - **The template guide agents read now covers a room's `roles:`,
   `references:` and `docs:`.** All three already worked in a room resource
