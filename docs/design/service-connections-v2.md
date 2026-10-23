@@ -437,7 +437,9 @@ settings:
   Atlassian matches the loopback port exactly, hence the five fixed ports.
 - Consenting to Jira's scopes alone fails after Accept unless the request also
   carries the identity scopes, `offline_access` and `prompt=consent`. Atlassian
-  enforces the result: a read-only sign-in hides the write tools.
+  reflects the result: a read-only sign-in still lists `executeWrite` and
+  `executeDestructive`, but `discover` returns no write operations and
+  `getAccessibleAtlassianResources` reports each product as read-only.
 - Access tokens live 8 hours; refresh tokens rotate.
 - The default server lists a few tools, `discover`, and `executeRead`,
   `executeWrite` and `executeDestructive`; those pass through unchanged.
