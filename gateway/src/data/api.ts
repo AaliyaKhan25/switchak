@@ -338,6 +338,7 @@ export interface ProvisionResult {
   room_id: string;
   room_name: string;
   attached_reference_ids: string[];
+  attached_package_ids: string[];
   created_reference_ids: string[];
   created_document_ids: string[];
   role_names: string[];

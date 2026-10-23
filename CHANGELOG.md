@@ -44,6 +44,15 @@ version of their own to them without also giving them a release of their own.
 
 ### [Unreleased]
 
+#### Added
+- **Templates carry packages.** A room in a template takes `packages:`, a list
+  of packages that already exist, by `id` or by `name`, attached when the room
+  is created. The person running the template must be able to attach each one
+  by hand; a package that is missing, ambiguous or not theirs stops the run
+  before the room exists. A template never creates or changes a package.
+  Capturing a room (`GET /rooms/{id}/yaml`) now lists its packages by `id`,
+  so a room built again from its capture gets them back (#910).
+
 #### Changed
 - **Following the conversation is described the same way everywhere, and the
   chart can turn it on.** The feature added in 0.31.0 is off unless
@@ -64,6 +73,13 @@ version of their own to them without also giving them a release of their own.
   answer, otherwise the agent's owner if they may answer, otherwise nobody.
   It never mentions more than one person, even when the policy lets anyone
   answer. Cards at the top of a channel mention whoever asked, as before.
+- **`!list-references` and `!list-documents` include what packages bring.**
+  They listed only what was attached to the room directly, so a room whose
+  references all came from a package answered "No references in this room."
+  while its agents were sent them. Items from attached packages now follow
+  the direct ones, each marked with the package it comes from (for example
+  `(github, via Payments service context)`); an item attached both ways is
+  listed once, as direct (#911).
 - **The template guide agents read now covers a room's `roles:`,
   `references:` and `docs:`.** All three already worked in a room resource
   and appear when a room is captured, but the guide stopped at `aliases:`, so
