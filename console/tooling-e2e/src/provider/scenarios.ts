@@ -1,7 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { sleep, type MattermostPost } from '../clients/mattermost-client.ts';
+import type { ScenarioHeader } from '../core/scenario.ts';
 import type { Harness } from './harness.ts';
-import { sleep, type MattermostPost } from './mattermost-client.ts';
 
 /**
  * The scenarios. Each one drives the full path
@@ -75,8 +76,32 @@ const RUNTIME_STATUS_MARKERS = [
   'interrupted my current turn',
 ];
 
+/**
+ * Where a turn has got to, as the session renderer heads its status card with
+ * it: one post per turn, edited in place from `Working…` to how the turn ended
+ * (`TURN_STATE` in core/switch_core/bridges/collaboration/session/renderers).
+ */
+export type TurnState = 'queued' | 'running' | 'completed' | 'interrupted' | 'error';
+
+const TURN_STATE_HEADINGS: readonly [TurnState, string][] = [
+  ['queued', 'Queued.'],
+  ['running', 'Working…'],
+  ['completed', 'Turn complete.'],
+  // A completed turn whose duration is known says how long it ran instead.
+  ['completed', 'Worked for '],
+  ['interrupted', 'Turn interrupted.'],
+  ['error', 'Turn ended with an error.'],
+];
+
+/** The state a turn status card reports, or null when the post is not one. */
+export function turnStateOf(post: MattermostPost): TurnState | null {
+  const heading = /^\*\*([^*]+)\*\*/.exec(post.message.trimStart())?.[1] ?? '';
+  return TURN_STATE_HEADINGS.find(([, text]) => heading.startsWith(text))?.[0] ?? null;
+}
+
 /** Whether a post is Switch narrating the session rather than the agent speaking. */
 export function isRuntimeStatusPost(post: MattermostPost): boolean {
+  if (turnStateOf(post) !== null) return true;
   const text = post.message.toLowerCase();
   return RUNTIME_STATUS_MARKERS.some((marker) => text.includes(marker));
 }
@@ -129,6 +154,42 @@ async function scenario(
       durationMs: Date.now() - started,
     };
   }
+}
+
+/**
+ * The handle a request card answers to: `A1` in "request `A1`". Switch renders
+ * every relayed question and permission prompt as such a card, and an answer
+ * is the handle followed by the option's number, typed as a plain message.
+ */
+export function requestHandle(text: string): string | null {
+  return /request `([A-Za-z]+\d+)`/.exec(text)?.[1] ?? null;
+}
+
+/** Answer a request card, and return the moment just before the answer was posted. */
+async function answerCard(harness: Harness, card: MattermostPost, option: number): Promise<number> {
+  const handle = requestHandle(card.message);
+  if (handle === null) throw new Error(`Post ${card.id} is not a request card: «${card.message}»`);
+  const sinceMs = Date.now() - 1;
+  await harness.mattermost.post({ channelId: harness.channel.id, message: `${handle} ${option}` });
+  return sinceMs;
+}
+
+/**
+ * The number a request card gives the option labelled `label`. The card numbers
+ * options in the order the agent supplied them, which need not be the order it
+ * was asked to list them in.
+ */
+export function optionNumber(card: string, label: string): number | null {
+  const match = new RegExp(`(?:^|\\s)(\\d+)\\.\\s+${label}\\b`, 'i').exec(card);
+  return match ? Number(match[1]) : null;
+}
+
+function chosenOption(card: MattermostPost): number {
+  const option = optionNumber(card.message, CHOSEN);
+  if (option === null) {
+    throw new Error(`Request card ${card.id} offers no option '${CHOSEN}': «${card.message}»`);
+  }
+  return option;
 }
 
 /** Post `@agent <text>` and return the moment just before it was posted. */
@@ -218,7 +279,7 @@ const CHOSEN = 'green';
  */
 export const question: Scenario = (harness) =>
   scenario('question', async (record) => {
-    const prose = harness.env.questionMode === 'prose';
+    const prose = harness.env.provider.questionMode === 'prose';
     const since = await ask(
       harness,
       prose
@@ -233,27 +294,31 @@ export const question: Scenario = (harness) =>
     const asked = await expectBotPost(harness, {
       since,
       record,
-      // The console relays a native question into the room as a numbered list;
-      // a plain-prose question also lists the three options, so the numbering is
+      // A native question is relayed as a request card numbering the options;
+      // a plain-prose question also lists the three options, so the card is
       // what proves the relay path was taken — and is exactly what cannot be
       // required of a provider that offers SDK sessions no such tool.
       predicate: (post) =>
         CHOICES.every((choice) => lower(post).includes(choice)) &&
-        (prose || /\b2\.\s/.test(post.message)),
+        (prose || (requestHandle(post.message) !== null && /\b2\.\s/.test(post.message))),
       describe: prose
         ? `a question listing the options ${CHOICES.join('/')}`
         : `a relayed question numbering the options ${CHOICES.join('/')}`,
     });
 
-    // By number where the relay is what reads the answer; by word where the
-    // agent itself is. The relay's acknowledgement names the choice too, so the
-    // agent's own reply must be told apart from it either way.
-    const answeredAt = await ask(harness, prose ? CHOSEN : '2');
+    // On the card where the relay is what reads the answer; by word where the
+    // agent itself is. The card and the relay's acknowledgement name the choice
+    // too, so the agent's own reply must be told apart from them either way.
+    const answeredAt = prose
+      ? await ask(harness, CHOSEN)
+      : await answerCard(harness, asked, chosenOption(asked));
     const answer = await expectBotPost(harness, {
       since: answeredAt,
       record,
       predicate: (post) =>
-        lower(post).includes(CHOSEN) && !post.message.trimStart().startsWith('✅'),
+        lower(post).includes(CHOSEN) &&
+        requestHandle(post.message) === null &&
+        !post.message.trimStart().startsWith('✅'),
       describe: `a reply naming my choice '${CHOSEN}'`,
     });
 
@@ -287,12 +352,12 @@ export const approval: Scenario = (harness) =>
       since,
       record,
       predicate: (post) =>
-        APPROVAL_HINTS.some((hint) => lower(post).includes(hint)) ||
-        /(^|\n)\s*1[.)]/.test(post.message),
-      describe: 'an approval prompt for the shell command',
+        requestHandle(post.message) !== null &&
+        APPROVAL_HINTS.some((hint) => lower(post).includes(hint)),
+      describe: 'an approval card for the shell command',
     });
 
-    const approvedAt = await ask(harness, '1');
+    const approvedAt = await answerCard(harness, prompt, 1);
     const done = await expectBotPost(harness, {
       since: approvedAt,
       record,
@@ -322,7 +387,7 @@ async function markerContents(file: string): Promise<string | null> {
 /** A real local command must start and then be cancelled before its final write. */
 export const interrupt: Scenario = (harness) =>
   scenario('interrupt', async (record) => {
-    const dir = harness.env.agentRepoDir;
+    const dir = harness.env.provider.agentRepoDir;
     if (!dir)
       throw new Error('The interrupt scenario requires SWITCH_E2E_AGENT_DIR on this machine.');
     const stem = `interrupt-${harness.runId}-${Date.now()}`;
@@ -333,13 +398,15 @@ export const interrupt: Scenario = (harness) =>
       harness,
       `Run this exact shell command for a bounded cancellation test: \`${command}\`. Wait for completion before replying. Do not create these files with another tool.`
     );
-    await expectBotPost(harness, {
+    const permission = await expectBotPost(harness, {
       since,
       record,
-      predicate: (post) => APPROVAL_HINTS.some((hint) => lower(post).includes(hint)),
-      describe: 'permission to run the cancellation command',
+      predicate: (post) =>
+        requestHandle(post.message) !== null &&
+        APPROVAL_HINTS.some((hint) => lower(post).includes(hint)),
+      describe: 'an approval card for the cancellation command',
     });
-    await ask(harness, '1');
+    await answerCard(harness, permission, 1);
     const deadline = Date.now() + 60_000;
     while (!isStartMarker((await markerContents(startedFile)) ?? '')) {
       if (Date.now() > deadline)
@@ -365,7 +432,47 @@ export const interrupt: Scenario = (harness) =>
     return 'command start confirmed; completion marker absent after 95s';
   });
 
-export const SCENARIOS: Scenario[] = [greet, question, approval, interrupt];
+/**
+ * A provider-lane scenario: its header, and the function that drives it. All of
+ * them share one agent and one channel, set up once per run.
+ */
+export interface ProviderScenario {
+  header: ScenarioHeader;
+  run: Scenario;
+}
+
+/** Writes to a room, so never prod. */
+const PROVIDER_ENVIRONMENTS: ScenarioHeader['environments'] = [
+  'ephemeral',
+  'local',
+  'dev',
+  'staging',
+];
+
+function providerHeader(
+  id: string,
+  covers: string[],
+  requires: ScenarioHeader['requires']
+): ScenarioHeader {
+  return {
+    id,
+    covers,
+    lane: 'provider',
+    environments: PROVIDER_ENVIRONMENTS,
+    owner: 'console',
+    requires: ['mattermost', ...requires],
+  };
+}
+
+export const SCENARIOS: readonly ProviderScenario[] = [
+  { header: providerHeader('greet', ['connect_to_room', 'post_message'], []), run: greet },
+  { header: providerHeader('question', ['connect_to_room', 'post_message'], []), run: question },
+  { header: providerHeader('approval', ['connect_to_room', 'post_message'], []), run: approval },
+  {
+    header: providerHeader('interrupt', ['connect_to_room', 'post_message'], ['agent-dir']),
+    run: interrupt,
+  },
+];
 
 /** Fixed-width summary of a run, printed at the end of the suite. */
 export function formatResultsTable(results: ScenarioResult[]): string {
