@@ -135,6 +135,20 @@ describe('scripts/sign-release.mjs', () => {
     }
   }
 
+  it('reads the same trusted keys under plain node as the controller is built with', () => {
+    const read = execFileSync(
+      process.execPath,
+      [
+        '--input-type=module',
+        '-e',
+        `const { TRUSTED_RELEASE_KEYS } = await import(${JSON.stringify(join(dirname(signScript), '..', 'src', 'release-keys.ts'))}); process.stdout.write(JSON.stringify(TRUSTED_RELEASE_KEYS));`,
+      ],
+      { encoding: 'utf8' }
+    );
+    expect(TRUSTED_RELEASE_KEYS.length).toBeGreaterThan(0);
+    expect(JSON.parse(read)).toEqual(TRUSTED_RELEASE_KEYS);
+  });
+
   it('fails loud with no signing key', () => {
     expect(sign({})).toMatch(/CONTROLLER_RELEASE_SIGNING_KEY is not set/);
   });

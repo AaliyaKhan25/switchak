@@ -195,7 +195,7 @@ class TestConnect:
 
 
 class TestUse:
-    async def test_a_grant_made_before_is_refused_at_issue_and_kept(
+    async def test_a_grant_made_before_is_left_out_and_refused_at_issue(
         self, service
     ) -> None:
         harness, _ = service
@@ -210,9 +210,9 @@ class TestUse:
                 f"/agents/{agent_id}/service-tokens/datadog", headers=bearer(key)
             )
 
-        # Listed, so the session asks and is told why, rather than losing it
-        # without a word.
-        assert [grant["service"] for grant in grants.json()["grants"]] == ["datadog"]
+        # Left out of what a session starts with, as a switched-off service is:
+        # it would be refused every token anyway.
+        assert grants.json()["grants"] == []
         assert token.status_code == 403, token.text
         assert token.json()["error"] == {
             "code": "forbidden",

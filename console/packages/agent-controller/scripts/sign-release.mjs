@@ -1,7 +1,6 @@
 import { createHash, createPrivateKey, createPublicKey, sign, verify } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { TRUSTED_RELEASE_KEYS } from '../src/release-keys.ts';
 
 /**
  * Signs a packaged controller release:
@@ -34,13 +33,7 @@ if (privateKey.asymmetricKeyType !== 'ed25519')
   throw new Error('CONTROLLER_RELEASE_SIGNING_KEY must be an Ed25519 private key (PKCS#8 PEM).');
 const spki = createPublicKey(privateKey).export({ type: 'spki', format: 'der' }).toString('base64');
 
-const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const trusted = [
-  ...readFileSync(join(root, 'src', 'release-keys.ts'), 'utf8').matchAll(
-    /\{\s*id:\s*'([^']+)',\s*publicKey:\s*'([^']+)'\s*\}/g
-  ),
-].map((match) => ({ id: match[1], publicKey: match[2] }));
-const key = trusted.find((candidate) => candidate.publicKey === spki);
+const key = TRUSTED_RELEASE_KEYS.find((candidate) => candidate.publicKey === spki);
 if (!key)
   throw new Error(
     `The signing key's public key (${spki}) is not in src/release-keys.ts, so no controller would install this release. Add it there (and to install.sh) first.`

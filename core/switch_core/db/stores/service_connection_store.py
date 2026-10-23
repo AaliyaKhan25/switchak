@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import delete, exists, func, select, text, update
+from sqlalchemy import and_, delete, exists, func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -496,16 +496,22 @@ class ServiceConnectionStore:
             )
 
     async def holds_tokens(self, session: AsyncSession) -> bool:
-        """Whether the bound tenant holds any token's ciphertext at all.
-
-        Every step of a revocation pass acts only on these rows, so a tenant
-        with none has nothing to clear, queue or revoke.
+        """Whether the bound tenant holds a token a revocation pass acts on:
+        one whose ciphertext is kept, or a live one passed through that is not
+        yet marked withdrawn. A tenant with neither has nothing to clear,
+        queue or revoke.
         """
         held = await session.scalar(
             select(ServiceTokenIssuance.id)
             .where(
                 ServiceTokenIssuance.tenant_id == require_tenant_id(),
-                ServiceTokenIssuance.encrypted_token.is_not(None),
+                or_(
+                    ServiceTokenIssuance.encrypted_token.is_not(None),
+                    and_(
+                        ServiceTokenIssuance.revoke_requested.is_(False),
+                        ServiceTokenIssuance.expires_at > func.now(),
+                    ),
+                ),
             )
             .limit(1)
         )

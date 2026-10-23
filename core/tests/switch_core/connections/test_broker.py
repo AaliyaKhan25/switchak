@@ -688,7 +688,10 @@ class TestRevocation:
         await _issue(broker, session_factory, world.agent.id)
         async with session_factory() as session:
             await session.execute(
-                ServiceTokenIssuance.__table__.update().values(encrypted_token=None)
+                ServiceTokenIssuance.__table__.update().values(
+                    encrypted_token=None,
+                    expires_at=datetime.now(UTC) - timedelta(minutes=5),
+                )
             )
             await session.commit()
 
@@ -1078,20 +1081,22 @@ class TestPassThrough:
         await _issue(broker, session_factory, world.agent.id)
         assert vendor.refreshes == 0
 
-    async def test_refuses_a_token_past_the_catalogs_lifetime_and_revokes_nothing(
+    async def test_holds_back_a_token_past_the_catalogs_lifetime_and_revokes_nothing(
         self, session_factory, tmp_path
     ) -> None:
+        """The owner's token runs down to the cap, so the refusal is retryable."""
         pt = await _pass_through(session_factory, tmp_path / "c", expires_in=2 * 3600)
         refused = await _refused(
             pt.broker, session_factory, pt.world.agent.id, service="example"
         )
         assert (refused.status_code, refused.code, refused.retryable) == (
-            500,
+            503,
             "internal",
-            False,
+            True,
         )
-        assert "does not expire within an hour" in refused.message
+        assert "lasts longer than an hour" in refused.message
         assert pt.vendor.revoked == []
+        assert await _issuances(session_factory) == []
 
     async def test_refuses_the_owners_token_handed_out_with_a_shorter_expiry(
         self, session_factory, tmp_path, monkeypatch
@@ -1265,6 +1270,44 @@ class TestPassThrough:
             }
         assert marked == {live_id: True, expired_id: False}
         assert warning is not None and warning.startswith("Example access already")
+
+    async def test_the_sweep_marks_a_pass_through_token_whose_owner_left(
+        self, session_factory, tmp_path
+    ) -> None:
+        """A workspace holding only pass-through tokens is still swept."""
+        pt = await _pass_through(session_factory, tmp_path / "c", expires_in=50 * 60)
+        await _issue(pt.broker, session_factory, pt.world.agent.id, service="example")
+        async with session_factory() as session:
+            await session.execute(
+                delete(TenantMember).where(TenantMember.user_id == pt.world.owner.id)
+            )
+            await session.commit()
+        await maintain_once(session_factory, pt.broker, prune=False)
+        async with session_factory() as session:
+            [record] = await session.scalars(select(ServiceTokenIssuance))
+        assert (record.revoke_requested, record.encrypted_token) == (True, None)
+        assert pt.vendor.revoked == []
+
+    async def test_disconnecting_another_service_names_only_what_it_withdrew(
+        self, session_factory, tmp_path
+    ) -> None:
+        pt = await _pass_through(session_factory, tmp_path / "c", expires_in=50 * 60)
+        await _issue(pt.broker, session_factory, pt.world.agent.id, service="example")
+        async with session_factory() as session:
+            await pt.broker.queue_revocation(
+                session, ServiceTokenIssuance.agent_id == pt.world.agent.id
+            )
+            await session.commit()
+            # A service this server has no adapter for: its sign-in cannot be
+            # revoked, so the secret is never read.
+            warning = await pt.broker.finish_disconnect(
+                session,
+                pt.world.owner.id,
+                [("unset", None)],  # type: ignore[list-item]
+            )
+        assert warning is not None
+        assert "unset is not set up on this server" in warning
+        assert "Example access" not in warning
 
 
 def _workspace_refusal(name: str) -> str:

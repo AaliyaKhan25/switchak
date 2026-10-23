@@ -29,7 +29,8 @@ auth:
     account_id: sub
     label: email
 # Google's access tokens lived 3,599 s when measured, so one handed out never
-# has more than an hour left; a longer one is refused rather than handed out.
+# has more than an hour left. A longer one is held back (retryable) until it
+# has run down to an hour.
 token: { kind: pass_through, max_lifetime: 3600 }
 cli:
   name: google-workspace

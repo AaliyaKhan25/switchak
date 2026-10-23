@@ -744,6 +744,21 @@ class ServiceBroker:
                 "so it was not handed out.",
                 retryable=False,
             )
+        if (
+            policy.kind == "pass_through"
+            and issued.expires_at > datetime.now(UTC) + max_lifetime + TOKEN_LEEWAY
+        ):
+            # The owner's token outlives the cap only until enough of it has
+            # run down, so asking again later succeeds. Nothing was handed out,
+            # so there is nothing to discard or record.
+            raise ServiceError(
+                503,
+                INTERNAL,
+                f"{definition.name}'s current token lasts longer than "
+                f"{_lifetime_words(policy.max_lifetime)}, so it is not handed "
+                "out until it has less than that left.",
+                retryable=True,
+            )
         try:
             now = datetime.now(UTC)
             if not (
@@ -1098,6 +1113,10 @@ class ServiceBroker:
             if grant.service in switched_off:
                 continue
             entry = self._catalog.get(grant.service)
+            # Nor is one whose credential never expires: every token request
+            # for it is refused, so the session gets none of its tools.
+            if entry is not None and not _issued_to_agents(entry):
+                continue
             skill = None if entry is None else entry.skill_files.get("SKILL.md")
             mcp = None if entry is None else entry.definition.mcp
             cli = None if entry is None else entry.definition.cli
@@ -1856,7 +1875,13 @@ class ServiceBroker:
                 )
         if removed:
             withdrawn = await self.revoke_withdrawn(
-                session, (ServiceTokenIssuance.owner_id == user_id,)
+                session,
+                (
+                    ServiceTokenIssuance.owner_id == user_id,
+                    ServiceTokenIssuance.service.in_(
+                        [service for service, _ in removed]
+                    ),
+                ),
             )
             if withdrawn is not None:
                 warnings.append(withdrawn)
