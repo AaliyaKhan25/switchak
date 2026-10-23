@@ -1317,7 +1317,7 @@ class AgentRecipient:
     async def _controller_unavailable_reply(
         self, session: AsyncSession, agent: Agent, meta: RoomMeta, asker_handle: str
     ) -> str | None:
-        """Why an agent run by an agents controller cannot answer here.
+        """Why an agent run by an agent controller cannot answer here.
 
         Never "open Switch Console": a managed agent
         is started by its controller, so the reply names what stands in the

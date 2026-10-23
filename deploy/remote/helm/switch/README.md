@@ -269,7 +269,7 @@ AGENT_MANAGEMENT_ENABLED- CONTROLLER_TOKEN_SECRET-`). Otherwise Helm merges its
 
 ### Controller updates
 
-`switchCore.controllerRelease` names the agents controller release switch-core
+`switchCore.controllerRelease` names the agent controller release switch-core
 tells every controller to run (cloud machines, and `switch-agent-controller`
 on SSH hosts and laptops; Switch Console's own controller updates with Console):
 

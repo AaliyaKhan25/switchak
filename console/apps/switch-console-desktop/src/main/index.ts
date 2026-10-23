@@ -279,12 +279,12 @@ void app.whenReady().then(async () => {
       log.error('Failed to initialise remote watchers at startup:', e);
     }
     // The managed agents this computer runs for a server, through the embedded
-    // agents controller. After the dependency probe, like the watchers above:
+    // agent controller. After the dependency probe, like the watchers above:
     // the controller resolves provider CLIs from the same environment.
     try {
       await embeddedControllerService.initialize();
     } catch (e) {
-      log.error('Failed to start the embedded agents controllers at startup:', e);
+      log.error('Failed to start the embedded agent controllers at startup:', e);
     }
     // After the controllers: moving an agent onto this computer's controller needs it running.
     startAutoMigration();
@@ -346,9 +346,9 @@ app.on('before-quit', (event) => {
       ]).catch((e) => {
         log.error('Failed to stop local SDK hosts:', e);
       }),
-      // The embedded agents controllers stop, and their agents and sessions with them.
+      // The embedded agent controllers stop, and their agents and sessions with them.
       embeddedControllerService.dispose().catch((e) => {
-        log.error('Failed to stop the embedded agents controllers:', e);
+        log.error('Failed to stop the embedded agent controllers:', e);
       }),
     ]);
     await locationManager.dispose().catch((e) => {

@@ -1864,6 +1864,14 @@ version of their own to them without also giving them a release of their own.
 
 ### [Unreleased]
 
+#### Changed
+- **One name for the controller.** Console, the Gateway and the docs say
+  "agent controller" everywhere, matching the `switch-agent-controller`
+  package, instead of a mix of "agent controller" and "agents controller".
+  The delete dialog on a server's page now calls it "this Switch server that
+  Console runs" rather than a "managed server", which read like "managed
+  agent"; it was the only place Console showed that name.
+
 #### Fixed
 - **Setting up a server notices Docker once it starts.** "Set up a server on
   this computer" checked for Docker only when the step opened, so installing or
