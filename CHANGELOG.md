@@ -140,6 +140,10 @@ version of their own to them without also giving them a release of their own.
   an agent writing a template did not know they existed or what shape they
   take. It now gives each one's fields, a sentence on what it does, and a
   short example.
+- **switch-buddy no longer says the Mattermost switch waits for a server
+  restart.** Turning it on starts Mattermost straight away on a running local
+  server, but switch-buddy's instructions still said it took effect at the next
+  start, which sent people to restart the server for nothing (#1021).
 - **The Teams command menu fits Teams' limit again.** Switch's own Teams app
   listed thirteen commands, one more than Teams allows, once `/remove-agent`
   joined it. Both Teams apps now offer the same twelve: `/remove-agent` is in,
@@ -1954,6 +1958,18 @@ version of their own to them without also giving them a release of their own.
   starting Docker meanwhile left the setup skipping Mattermost until you went
   back. It now checks again every few seconds, and when Console regains focus,
   while Docker isn't answering.
+- **Starting Docker with the server page open now enables the Mattermost
+  switch.** The server page checked for Docker only when it opened, so Docker
+  Desktop started afterwards left the switch greyed out until you left the
+  page and came back. It now checks again the way the setup step does. A
+  running server whose Mattermost was left out or failed to start, because
+  Docker was off, shows the switch off, so turning it on brings Mattermost up
+  without a restart (#1021).
+- **A local Mattermost shows up as soon as it is ready.** When the Mattermost
+  beside a local server finished setting up, pages already open kept showing no
+  Mattermost and asked you to link an account until the server was restarted.
+  They now refresh the messaging apps and linked accounts the moment it is up
+  (#1021).
 - **Agents say who can answer their questions and approvals.** The Switch
   skill said a request card needed the owner's linked identity and room
   membership. Its addressing policy decides, and agents now read theirs with
