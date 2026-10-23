@@ -18,6 +18,11 @@ import { connectParent, type ParentChannel } from './session-channel';
 import { parkAfterMs, RESET_HOLD_MS, runSharedHost, sessionBusy } from './shared-host';
 import { hostParked } from './shared-state';
 
+// Every step writes the session journal and flushes it to disk, which takes
+// Windows runners well over the default; a test waits up to 5 s for each, so it
+// gets longer than any one wait and fails on what it waited for, not the clock.
+vi.setConfig({ testTimeout: 30_000 });
+
 const roots: string[] = [];
 afterEach(async () => {
   vi.unstubAllGlobals();
