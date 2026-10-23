@@ -1941,6 +1941,14 @@ version of their own to them without also giving them a release of their own.
   agent"; it was the only place Console showed that name.
 
 #### Fixed
+- **The local Switch server starts on Intel Macs without Homebrew.**
+  cryptography publishes no wheel for Intel Macs, so the Intel build of
+  Console compiled its own against the build machine's Homebrew OpenSSL, and
+  on a Mac without Homebrew the server failed to start with `Library not
+  loaded: /usr/local/opt/openssl@3/lib/libssl.3.dylib`. The bundled
+  cryptography now carries its own OpenSSL, as cryptography's wheels for Apple
+  silicon do, and a macOS build fails if anything in the local server links a
+  library that is neither macOS's nor shipped with it.
 - **Setting up a server notices Docker once it starts.** "Set up a server on
   this computer" checked for Docker only when the step opened, so installing or
   starting Docker meanwhile left the setup skipping Mattermost until you went
