@@ -585,9 +585,7 @@ definition the session is launched as.
 For Codex, use `SWITCH_E2E_AGENT_TYPE=codex` and `SWITCH_E2E_QUESTION_MODE=prose`,
 with `provider_id` and `providerId` both `codex`. The normal Codex mode does
 not expose its native question tool; the prose scenario verifies the room
-round trip without claiming to test a native question card. Codex may request
-approval to read the Switch skill on first launch; answer it in Console or
-the room before the greeting proceeds.
+round trip without claiming to test a native question card.
 
 Setup finds the manifest, reuses what is in it rather than registering a second
 agent, and deletes it during teardown — so a manifest never outlives its room.
