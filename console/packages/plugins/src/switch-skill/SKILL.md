@@ -683,9 +683,21 @@ groups nest under a parent to form a tree.
 - **`get_room_group_detail`** — one group, the rooms directly in it
   (`member_rooms`), and its immediate `child_groups`.
 - **`create_room_group`** — provision a group. Required: `name`. Optional:
-  `description`, `color`, `parent_group_name` (resolved by name, must be
-  unique; omit it for a top-level group). Creating a group does not move any rooms into it — file rooms under
-  it later by passing `group_name` to `create_room`.
+  `description`, `color`, `parent_group_name` (omit it for a top-level
+  group). Creating a group does not move any rooms into it; file rooms under
+  it later by passing `group_name` to `create_room`. Missing parents are not
+  created for you: create each level first.
+
+Name a group by its **path**: the top-level group, then each child, separated
+by `/`, e.g. `Fraud/Incidents`. The `path` that `list_room_groups` returns
+(`Fraud / Incidents`) works as it is. A bare name is fine when only one group
+has it; when several do, the error lists each one's path, so retry with the
+one the user means (ask if it is not clear). A group id also works. This holds
+for `group_name` on `create_room` and `parent_group_name` on
+`create_room_group`. Names are unique among siblings, ignoring case, and
+cannot contain `/`: creating `Incidents` where one already exists under the
+same parent is refused, while `Payments/Incidents` and `Fraud/Incidents` can
+both exist.
 
 ### Per-room agent aliases
 
