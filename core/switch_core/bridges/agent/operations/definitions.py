@@ -47,7 +47,10 @@ from switch_core.bridges.agent.protocol.agent_core import (
     AgentExistsError,
     AgentRenameRefused,
 )
-from switch_core.bridges.agent.protocol.agent_detail import AgentProfileUpdate
+from switch_core.bridges.agent.protocol.agent_detail import (
+    AgentProfileUpdate,
+    agent_facing_detail,
+)
 from switch_core.bridges.agent.protocol.agent_management import ManagedAgentChanges
 from switch_core.bridges.agent.protocol.instructions import build_room_instructions
 from switch_core.bridges.agent.protocol.types import IntegrationProfile
@@ -2157,17 +2160,33 @@ async def get_agent_detail(agent_id: str) -> dict[str, Any]:
         connection_model, tool_count, model_count, owner_id, owner_name,
         oauth_client_id, created_at, parent_agent_id, known_agent_type,
         known_agent_options, agent_type, can_manage_agents,
-        integration_profile, tools, models, rooms, sessions, children}.
+        integration_profile, tools, models, rooms, sessions, children,
+        addressing}.
         `icon_url` is null when the agent has no icon set. `display_name` is
         null when the agent has no display name set; fall back to `name`.
         Address agents by `name`; `display_name` routes nothing.
         `can_manage_agents` is whether the agent's owner lets it list their
         machines and create agents on them, where agent management runs.
+        `addressing` is who may address the agent, and so who may answer
+        its questions and approvals in a room (outside one, only its owner):
+        {policy} for another agent, {policy, rules} when you look yourself
+        up. `policy` is "owner_only" (its owner alone),
+        "owner_and_owner_agents" (its owner and any agent they own),
+        "anyone" or "custom". `rules` are the policy's rules, empty for
+        "anyone"; a sender is let in when any rule matches. Each is {rooms,
+        room_groups, users, agents, owner, owner_agents, platform}: a
+        dimension is "*" (any) or a list of {id, name}, empty meaning none,
+        with `users` named by their chat username; `owner` admits the owner
+        (`owner_name`), `owner_agents` their agents, `platform` Switch itself.
     """
     caller_id = get_agent_id()
     protocol = get_protocol()
     detail = await protocol.get_agent_detail(caller_id, agent_id)
-    return detail.model_dump()
+    addressing = await protocol.get_agent_addressing(caller_id, agent_id)
+    return {
+        **agent_facing_detail(detail),
+        "addressing": addressing.model_dump(exclude_none=True),
+    }
 
 
 @operation
@@ -2369,7 +2388,12 @@ async def update_agent_detail(
                 "templates_mentioning_old_name": result.templates_mentioning_old_name,
             }
     detail = await protocol.update_agent_detail(caller_id, agent_id, profile)
-    response = {**detail.model_dump(), "managed": managed}
+    who_may_address = await protocol.get_agent_addressing(caller_id, agent_id)
+    response = {
+        **agent_facing_detail(detail),
+        "addressing": who_may_address.model_dump(exclude_none=True),
+        "managed": managed,
+    }
     if renamed is not None:
         response["renamed"] = renamed
     return response

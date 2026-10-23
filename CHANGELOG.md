@@ -52,6 +52,12 @@ version of their own to them without also giving them a release of their own.
   before the room exists. A template never creates or changes a package.
   Capturing a room (`GET /rooms/{id}/yaml`) now lists its packages by `id`,
   so a room built again from its capture gets them back (#910).
+- **An agent can read its own addressing policy.** `get_agent_detail` now
+  returns `addressing`: the kind of policy (`owner_only`,
+  `owner_and_owner_agents`, `anyone` or `custom`) and, when an agent looks
+  itself up, its rules with the people, agents and rooms they name. So an
+  agent can tell someone who may answer its questions and approvals instead
+  of guessing. Another agent sees only the kind.
 
 #### Changed
 - **Following the conversation is described the same way everywhere, and the
@@ -1892,6 +1898,10 @@ version of their own to them without also giving them a release of their own.
   starting Docker meanwhile left the setup skipping Mattermost until you went
   back. It now checks again every few seconds, and when Console regains focus,
   while Docker isn't answering.
+- **Agents say who can answer their questions and approvals.** The Switch
+  skill said a request card needed the owner's linked identity and room
+  membership. Its addressing policy decides, and agents now read theirs with
+  `get_agent_detail` and name the people who can answer.
 
 ### [0.40.1] - 2026-10-21
 
