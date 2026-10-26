@@ -190,3 +190,33 @@ class TemplateInstallStore:
             for agent_id, notice in rows.tuples()
             if agent_id is not None and notice is not None
         }
+
+    async def templates_of_agents(
+        self, session: AsyncSession, agent_ids: list[str]
+    ) -> dict[str, dict[str, Any]]:
+        """The template that created each of these agents, {id, key,
+        revision}, for those an install records."""
+        if not agent_ids:
+            return {}
+        rows = await session.execute(
+            select(
+                TemplateInstallResource.agent_id,
+                TemplateInstallResource.key,
+                TemplateInstall.template_id,
+                TemplateInstall.revision,
+            )
+            .join(
+                TemplateInstall,
+                (TemplateInstallResource.install_id == TemplateInstall.id)
+                & (TemplateInstallResource.tenant_id == TemplateInstall.tenant_id),
+            )
+            .where(
+                TemplateInstallResource.tenant_id == require_tenant_id(),
+                TemplateInstallResource.agent_id.in_(agent_ids),
+            )
+        )
+        return {
+            agent_id: {"id": template_id, "key": key, "revision": revision}
+            for agent_id, key, template_id, revision in rows.tuples()
+            if agent_id is not None
+        }

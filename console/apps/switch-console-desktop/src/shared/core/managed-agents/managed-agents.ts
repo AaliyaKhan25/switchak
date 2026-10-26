@@ -20,6 +20,12 @@ export type ManagedAgentView = {
   machine: ManagedMachine | null;
   desiredState: 'running' | 'stopped';
   revision: number;
+  /**
+   * The template that created it, as the server's record of that run has it:
+   * null for an agent no template run the server vouches for created, and
+   * undefined from a server too old to say.
+   */
+  template?: ManagedAgentTemplate | null;
   definition: {
     provider: string;
     model: string | null;
@@ -47,6 +53,9 @@ export type ManagedAgentView = {
     directory: string | null;
   } | null;
 };
+
+/** The template run that created an agent: the template's id, its key for the agent, and the revision it follows. */
+export type ManagedAgentTemplate = { id: string; key: string; revision: number };
 
 /** A machine a managed agent can be placed on. */
 export type ManagedMachine = {

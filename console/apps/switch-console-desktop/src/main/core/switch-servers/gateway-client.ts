@@ -13,6 +13,7 @@ import { type CloudMachine, cloudMachineSchema } from '@shared/core/cloud-agents
 import type { RemoteFeatureFlag } from '@shared/core/feature-flags/feature-flags';
 import type {
   AdvancedConfigField,
+  ManagedAgentTemplate,
   ManagedMachine,
 } from '@shared/core/managed-agents/managed-agents';
 import { ManagedServerStoppedError } from '@shared/core/managed-switch-server/managed-switch-server';
@@ -2487,6 +2488,12 @@ export async function runTemplateDocument(
     /** Existing agents standing in for slots that allow it, by resource key. */
     filled: Record<string, string>;
     templateName: string;
+    /**
+     * The template the document is, when it is one: the server records the run
+     * as that template's, to update its agents from, only when the document is
+     * exactly the template's.
+     */
+    templateId: string | null;
   }
 ): Promise<TemplateRunResult> {
   return postTemplateRun(server, '/rooms/from-template-document', {
@@ -2494,6 +2501,7 @@ export async function runTemplateDocument(
     inputs: body.inputs,
     filled: body.filled,
     template_name: body.templateName,
+    ...(body.templateId !== null ? { template_id: body.templateId } : {}),
   });
 }
 
@@ -3735,6 +3743,12 @@ export type ManagedAgent = {
   machine?: ManagedMachine | null;
   desiredState: 'running' | 'stopped';
   revision: number;
+  /**
+   * The template that created it, as the server's record of that run has it:
+   * null for an agent no template run the server vouches for created, and
+   * undefined from a server too old to say.
+   */
+  template?: ManagedAgentTemplate | null;
   provider: string;
   model: string | null;
   /** The provider's advanced configuration, keyed by its field keys; unset fields are absent. */
@@ -3786,6 +3800,8 @@ type ManagedAgentJson = {
   desired_state: 'running' | 'stopped';
   description?: string;
   revision?: number;
+  /** Absent from servers older than template installs. */
+  template?: { id: string; key: string; revision: number } | null;
   definition: {
     provider?: unknown;
     model?: unknown;
@@ -3999,6 +4015,7 @@ function toManagedAgent(json: ManagedAgentJson): ManagedAgent {
     machine: machineOf(json),
     desiredState: json.desired_state,
     revision: json.revision ?? 0,
+    ...(json.template !== undefined ? { template: json.template } : {}),
     provider: typeof json.definition?.provider === 'string' ? json.definition.provider : 'unknown',
     model: typeof json.definition?.model === 'string' ? json.definition.model : null,
     advancedConfig: advancedConfigOf(json.agent_id, json.definition?.advanced_config),

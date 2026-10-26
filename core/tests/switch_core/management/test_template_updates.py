@@ -397,3 +397,40 @@ async def _as(agent_id: str, fn: Any, **kwargs: Any) -> Any:
         return await fn(**kwargs)
     finally:
         reset_call_context(token)
+
+
+async def test_a_managed_agent_says_which_template_made_it(
+    harness: Harness, client: httpx.AsyncClient
+) -> None:
+    owner = await add_member(harness.session_factory, "ada")
+    agent_id = await _create_buddy(harness, client, owner, "switch-buddy-ada")
+    await _create_buddy(harness, client, owner, "my-helper")
+    await _forget_install(
+        harness,
+        next(
+            a["agent_id"]
+            for a in await _managed(harness, owner)
+            if a["name"] == "my-helper"
+        ),
+    )
+
+    listed = {a["name"]: a for a in await _managed(harness, owner)}
+
+    assert listed["switch-buddy-ada"]["template"] == {
+        "id": BUDDY_ID,
+        "key": "buddy",
+        "revision": _buddy().version,
+    }
+    assert listed["my-helper"]["template"] is None
+    async with harness.session_factory() as session:
+        one = await harness.management.service.get_managed_agent(
+            session, TENANT_ZERO_ID, owner.id, agent_id
+        )
+    assert one["template"] == listed["switch-buddy-ada"]["template"]
+
+
+async def _managed(harness: Harness, owner: User) -> list[dict[str, Any]]:
+    async with harness.session_factory() as session:
+        return await harness.management.service.list_managed_agents(
+            session, TENANT_ZERO_ID, owner.id
+        )
