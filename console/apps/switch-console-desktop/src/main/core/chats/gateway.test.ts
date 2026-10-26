@@ -228,6 +228,32 @@ describe('sendChatMessage', () => {
       },
     });
   });
+
+  it('also sends a single agent as mentionAgentId, for a server that predates the list', async () => {
+    const server = { id: 'server-1' } as SwitchServer;
+    vi.mocked(gatewayFetch).mockResolvedValueOnce(
+      new Response(JSON.stringify({ messages: [] }), { status: 200 })
+    );
+    await sendChatMessage(server, 'room-1', {
+      requestId: 'req-1',
+      body: '@agent-1 hi',
+      threadRootId: null,
+      uploadIds: [],
+      mentionAgentIds: ['agent-1'],
+    });
+    expect(gatewayFetch).toHaveBeenCalledWith(server, '/chats/room-1/messages', {
+      authenticated: true,
+      method: 'POST',
+      body: {
+        requestId: 'req-1',
+        body: '@agent-1 hi',
+        threadRootId: null,
+        uploadIds: [],
+        mentionAgentIds: ['agent-1'],
+        mentionAgentId: 'agent-1',
+      },
+    });
+  });
 });
 
 describe('fetchThreadMessages', () => {

@@ -238,7 +238,12 @@ export async function sendChatMessage(
   return (
     await json(server, `${room(roomId)}/messages`, chatSentSchema, {
       method: 'POST',
-      body: input,
+      // One agent also goes as `mentionAgentId`, which a server from before
+      // `mentionAgentIds` reads, so a rolling deploy still addresses it.
+      body:
+        input.mentionAgentIds?.length === 1
+          ? { ...input, mentionAgentId: input.mentionAgentIds[0] }
+          : input,
     })
   ).messages;
 }
