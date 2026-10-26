@@ -12,7 +12,7 @@ from typing import Any
 
 import httpx
 import pytest
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from switch_core.bridges.agent.operations import context as op_context
@@ -434,3 +434,60 @@ async def _managed(harness: Harness, owner: User) -> list[dict[str, Any]]:
         return await harness.management.service.list_managed_agents(
             session, TENANT_ZERO_ID, owner.id
         )
+
+
+async def _set_install_revision(harness: Harness, agent_id: str, revision: int) -> None:
+    install, _ = await _install(harness, agent_id)
+    async with harness.session_factory() as session:
+        await session.execute(
+            update(TemplateInstall)
+            .where(TemplateInstall.id == install.id)
+            .values(revision=revision)
+        )
+        await session.commit()
+
+
+async def test_a_tenant_another_server_is_updating_is_skipped(
+    harness: Harness, client: httpx.AsyncClient
+) -> None:
+    owner = await add_member(harness.session_factory, "ada")
+    agent_id = await _create_buddy(harness, client, owner, "switch-buddy-ada")
+    await _set_install_revision(harness, agent_id, 1)
+    key = func.hashtext(f"template-updates:{TENANT_ZERO_ID}")
+
+    async with harness.session_factory() as other_server:
+        assert (
+            await other_server.execute(select(func.pg_try_advisory_lock(key)))
+        ).scalar()
+        await _updates(harness).run([TENANT_ZERO_ID])
+        install, _ = await _install(harness, agent_id)
+        assert install.revision == 1
+        await other_server.execute(select(func.pg_advisory_unlock(key)))
+
+    await _updates(harness).run([TENANT_ZERO_ID])
+    install, _ = await _install(harness, agent_id)
+    assert install.revision == _buddy().version
+
+    # Released after the pass: the next server takes it.
+    async with harness.session_factory() as next_server:
+        assert (
+            await next_server.execute(select(func.pg_try_advisory_lock(key)))
+        ).scalar()
+        await next_server.execute(select(func.pg_advisory_unlock(key)))
+
+
+async def test_only_installs_behind_the_revision_are_read(
+    harness: Harness, client: httpx.AsyncClient
+) -> None:
+    owner = await add_member(harness.session_factory, "ada")
+    behind_id = await _create_buddy(harness, client, owner, "switch-buddy-ada")
+    current_id = await _create_buddy(harness, client, owner, "switch-buddy-ada-2")
+    await _set_install_revision(harness, behind_id, 1)
+
+    async with harness.session_factory() as session:
+        behind = await TemplateInstallStore().behind(
+            session, BUDDY_ID, _buddy().version
+        )
+
+    assert [i.id for i in behind] == [(await _install(harness, behind_id))[0].id]
+    assert (await _install(harness, current_id))[0].id not in [i.id for i in behind]

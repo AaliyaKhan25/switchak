@@ -73,6 +73,22 @@ class TemplateInstallStore:
         )
         return list(result.scalars())
 
+    async def behind(
+        self, session: AsyncSession, template_id: str, revision: int
+    ) -> list[TemplateInstall]:
+        """The installs of a template still at a revision before `revision`,
+        oldest first: the ones an update has anything to do for."""
+        result = await session.execute(
+            select(TemplateInstall)
+            .where(
+                TemplateInstall.tenant_id == require_tenant_id(),
+                TemplateInstall.template_id == template_id,
+                TemplateInstall.revision < revision,
+            )
+            .order_by(TemplateInstall.created_at, TemplateInstall.id)
+        )
+        return list(result.scalars())
+
     async def resources(
         self, session: AsyncSession, install_id: str
     ) -> list[TemplateInstallResource]:

@@ -15,9 +15,9 @@ When anything was left as it is, the agent is left a notice (see
 ``template_status``): it is told, before the next message it receives, to
 read how it differs from its template and tell its owner, who decides.
 
-Every write is conditional on what was read, so servers starting together
-each update an agent once at most: the one that loses a race leaves the
-agent to the one that won, and the install's revision moves only once.
+One server at a time works through a tenant, under a lock the others skip
+it for. Every write is also conditional on what was read, so even without
+the lock an agent is updated once at most and an install moves once.
 
 The agents switch-buddy created before installs were recorded are recorded
 first (``record_existing_buddies``), matched against the fingerprints of
@@ -28,12 +28,13 @@ from __future__ import annotations
 
 import logging
 import re
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
+from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from switch_core.db.models import (
     Agent,
@@ -133,20 +134,62 @@ class TemplateUpdates:
 
     async def run(self, tenant_ids: Sequence[str]) -> None:
         """Record old buddies and update every install, tenant by tenant. One
-        tenant's failure is logged and the next is still updated."""
+        tenant's failure is logged and the next is still updated.
+
+        One server at a time works through a tenant: each takes the tenant's
+        lock first, and one that finds it held skips the tenant, which the
+        server holding it is already updating. The conditional writes would
+        keep two servers from updating anything twice anyway; the lock saves
+        them doing the same reads and renders, and keeps two servers from
+        each updating part of one install and neither moving it on."""
         for tenant_id in tenant_ids:
             try:
-                await self.record_existing_buddies(tenant_id)
-                for template in official_templates(
-                    self._agent_management, self._switch_buddy
-                ):
-                    await self.update_installs(tenant_id, template)
+                async with self._tenant_lock(tenant_id) as held:
+                    if not held:
+                        logger.info(
+                            "Another server is updating the agents of official "
+                            "templates in tenant %s",
+                            tenant_id,
+                        )
+                        continue
+                    await self.record_existing_buddies(tenant_id)
+                    for template in official_templates(
+                        self._agent_management, self._switch_buddy
+                    ):
+                        await self.update_installs(tenant_id, template)
             except Exception:
                 logger.error(
                     "Could not update the agents of official templates in tenant %s",
                     tenant_id,
                     exc_info=True,
                 )
+
+    @asynccontextmanager
+    async def _tenant_lock(self, tenant_id: str) -> AsyncIterator[bool]:
+        """A session-level advisory lock on the tenant's template updates,
+        held on one connection of its own for the pass and released after it
+        (or with the connection, if the process dies). Yields whether it was
+        taken.
+
+        The connection is in autocommit, so holding the lock does not hold a
+        transaction open for the length of the pass; and it is one connection
+        throughout, since a session-level lock is released only on the
+        connection that took it."""
+        key = func.hashtext(f"template-updates:{tenant_id}")
+        async with self._session_factory() as session:
+            engine = session.bind
+        if not isinstance(engine, AsyncEngine):
+            raise RuntimeError("template updates need sessions bound to an engine")
+        async with engine.connect() as connection:
+            locking = await connection.execution_options(isolation_level="AUTOCOMMIT")
+            held = bool(
+                (await locking.execute(select(func.pg_try_advisory_lock(key)))).scalar()
+            )
+            try:
+                yield held
+            finally:
+                if held:
+                    await locking.execute(select(func.pg_advisory_unlock(key)))
 
     # ── Buddies created before installs were recorded ───────────────────────
 
@@ -253,11 +296,7 @@ class TemplateUpdates:
 
     async def update_installs(self, tenant_id: str, template: OfficialTemplate) -> None:
         async with tenant_session(self._session_factory, tenant_id) as session:
-            installs = [
-                install
-                for install in await self._store.of_template(session, template.id)
-                if install.revision < template.version
-            ]
+            installs = await self._store.behind(session, template.id, template.version)
         for install in installs:
             try:
                 await self.update_install(tenant_id, template, install)
