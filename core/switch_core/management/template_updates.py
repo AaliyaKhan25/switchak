@@ -119,12 +119,14 @@ class TemplateUpdates:
     def __init__(
         self,
         *,
+        engine: AsyncEngine,
         session_factory: async_sessionmaker[AsyncSession],
         management: ManagementService,
         protocol: AgentCore,
         agent_management: bool,
         switch_buddy: bool,
     ) -> None:
+        self._engine = engine
         self._session_factory = session_factory
         self._management = management
         self._protocol = protocol
@@ -176,11 +178,7 @@ class TemplateUpdates:
         throughout, since a session-level lock is released only on the
         connection that took it."""
         key = func.hashtext(f"template-updates:{tenant_id}")
-        async with self._session_factory() as session:
-            engine = session.bind
-        if not isinstance(engine, AsyncEngine):
-            raise RuntimeError("template updates need sessions bound to an engine")
-        async with engine.connect() as connection:
+        async with self._engine.connect() as connection:
             locking = await connection.execution_options(isolation_level="AUTOCOMMIT")
             held = bool(
                 (await locking.execute(select(func.pg_try_advisory_lock(key)))).scalar()

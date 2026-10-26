@@ -105,6 +105,7 @@ def _next_revision(
 
 def _updates(harness: Harness) -> TemplateUpdates:
     return TemplateUpdates(
+        engine=harness.session_factory.kw["bind"],
         session_factory=harness.session_factory,
         management=harness.management.service,
         protocol=harness.protocol,

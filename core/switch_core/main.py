@@ -1424,6 +1424,7 @@ async def run(config: SwitchConfig, process_id: str) -> None:
             template_updates_task = (
                 asyncio.create_task(
                     TemplateUpdates(
+                        engine=engine,
                         session_factory=session_factory,
                         management=management.service,
                         protocol=protocol,

@@ -1376,7 +1376,10 @@ class TemplateInstall(TenantScoped, Base):
     )
 
     id: Mapped[str] = mapped_column(Text, primary_key=True, default=_uuid)
-    owner_id: Mapped[str] = mapped_column(Text, ForeignKey("users.id"), nullable=False)
+    # Goes with its owner, whose agents it created go too.
+    owner_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
     source: Mapped[str] = mapped_column(Text, nullable=False)
     template_id: Mapped[str] = mapped_column(Text, nullable=False)
     template_name: Mapped[str] = mapped_column(Text, nullable=False)

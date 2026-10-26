@@ -74,7 +74,7 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(
             ["tenant_id"], ["tenants.id"], name="fk_template_installs_tenant"
         ),
-        sa.ForeignKeyConstraint(["owner_id"], ["users.id"]),
+        sa.ForeignKeyConstraint(["owner_id"], ["users.id"], ondelete="CASCADE"),
         sa.CheckConstraint(
             "source IN ('official', 'saved')", name="ck_template_installs_source"
         ),
