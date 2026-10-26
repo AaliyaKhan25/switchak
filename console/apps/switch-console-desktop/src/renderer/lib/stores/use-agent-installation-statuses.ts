@@ -136,6 +136,7 @@ export function useAgentInstallationStatuses(connectionId?: string) {
       rpc.providers.uninstall(id, connectionId, method) as Promise<unknown>,
     onSuccess: (result, vars) => {
       invalidate();
+      if (!connectionId) void recheckThisComputer(queryClient);
       const name = nameOf(vars.id);
       if ((result as { success: boolean }).success) {
         toast({ title: `${name} successfully uninstalled` });

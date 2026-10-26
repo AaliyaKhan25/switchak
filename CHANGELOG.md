@@ -1975,6 +1975,10 @@ version of their own to them without also giving them a release of their own.
   agent"; it was the only place Console showed that name.
 
 #### Fixed
+- **Settings → Agent providers keeps this computer's report current.** It
+  prefers the report from the server Console is on, rereads it while open and
+  after the controller reports again, and the install section says so when
+  Console's own check disagrees with the controller's.
 - **The local Switch server starts on Intel Macs without Homebrew.**
   cryptography publishes no wheel for Intel Macs, so the Intel build of
   Console compiled its own against the build machine's Homebrew OpenSSL, and
@@ -3990,9 +3994,10 @@ tags; see RELEASING.md.
   signed in.** `claude auth status` only says a login or key is present, so a
   key left by an old install read as signed in while every session failed.
   When setting up, on a recheck, and whenever a login was not yet known to
-  work, the controller now sends Claude Code one short test prompt and reports
-  what it said if it fails. A Claude Code too old to have `auth status` is
-  reported as such instead of as a check that never finished.
+  work, the controller now sends Claude Code one short test prompt, with the
+  person's hooks off and stdin closed, and reports what it said if it fails,
+  from its result, its `errors` or its stderr. A Claude Code too old to have
+  `auth status` is reported as such instead of as a check that never finished.
 - **A controller updates to the release Switch names while sessions sit idle.**
   It waited until no session existed on the machine, and a session connected to
   a room counted even with nothing to do, so a machine with long-lived sessions
