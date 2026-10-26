@@ -181,7 +181,7 @@ export class ChatTimeline {
       const fetched = [...page.messages];
       const newest = page.messages.length
         ? Math.max(...page.messages.map((message) => message.seq))
-        : held;
+        : (held ?? 0);
       // Page back to the history already complete, so a gap since the last load is not skipped.
       let oldest = Math.min(...page.messages.map((message) => message.seq));
       while (held !== null && page.hasMore && page.messages.length && oldest > held) {
@@ -191,7 +191,8 @@ export class ChatTimeline {
       }
       runInAction(() => {
         for (const message of fetched) this.apply(message);
-        if (!this.loaded) this.hasMore = page.hasMore;
+        // A catch-up that stopped short of what was held left earlier messages to load.
+        if (!this.loaded || (held !== null && oldest > held)) this.hasMore = page.hasMore;
         this.completeThrough = newest;
         this.loaded = true;
         this.notMember = false;

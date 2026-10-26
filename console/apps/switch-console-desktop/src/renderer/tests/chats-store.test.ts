@@ -283,6 +283,31 @@ describe('ChatsStore', () => {
     await vi.waitFor(() => expect(timeline.messages.map((m) => m.seq)).toEqual([1, 2]));
   });
 
+  it('holds all of an empty room once it is listed again with 130 messages', async () => {
+    let head = 0;
+    const messages = vi.fn(async (_room: string, before: number | null, limit: number) => {
+      const top = Math.min(before ?? head + 1, head + 1);
+      const from = Math.max(1, top - limit);
+      const seqs = Array.from({ length: Math.max(0, top - from) }, (_, i) => from + i);
+      return { messages: seqs.map((seq) => message('r1', seq)), headSeq: head, hasMore: from > 1 };
+    });
+    const { store } = setup(async () => [summary('r1', 0)], { messages });
+    await store.connect('s1');
+    const timeline = store.timelines.get('s1', 'r1');
+    await timeline.load();
+    expect(timeline.messages).toHaveLength(0);
+    store.remove('r1', 'unlisted');
+
+    head = 130;
+    store.upsert(summary('r1', 130));
+    await vi.waitFor(() =>
+      expect(timeline.messages.map((m) => m.seq)).toEqual(
+        Array.from({ length: 130 }, (_, i) => i + 1)
+      )
+    );
+    expect(timeline.hasMore).toBe(false);
+  });
+
   it('revokes a chat unlisted earlier once access is lost', async () => {
     const { store } = setup(async () => [summary('r1', 1)]);
     await store.connect('s1');
