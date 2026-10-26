@@ -21,6 +21,7 @@ costs that stream one re-read.
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING, Any
 
 from switch_core.signals import payload_chunks
@@ -47,17 +48,27 @@ class ChatSignals:
         # (`gateway/chats.py`), which is all a missed signal can cost it.
         service.use_signals(self)
 
-    def memberships_changed(self, tenant_id: str, user_ids: list[str]) -> None:
-        """The users' chats changed and the change has committed: every other
-        process wakes the streams it holds for them. This one has already
-        woken its own."""
-        for chunk in payload_chunks(user_ids, _SIGNAL_ENVELOPE_BYTES):
+    def memberships_changed(
+        self, tenant_id: str, user_ids: list[str], room_ids: list[str]
+    ) -> None:
+        """The users' part in chats `room_ids` changed and the change has
+        committed: every other process wakes the streams it holds for them.
+        This one has already woken its own."""
+        for chunk in payload_chunks(
+            user_ids, _SIGNAL_ENVELOPE_BYTES + len(json.dumps(room_ids))
+        ):
             self._bus.publish(
-                MEMBERSHIPS_CHANGED_SIGNAL, tenant_id=tenant_id, user_ids=chunk
+                MEMBERSHIPS_CHANGED_SIGNAL,
+                tenant_id=tenant_id,
+                user_ids=chunk,
+                room_ids=room_ids,
             )
 
     def _on_changed(self, signal: dict[str, Any]) -> None:
-        self._service.wake_membership_watchers(signal["tenant_id"], signal["user_ids"])
+        # A process on the release before room ids names none: any room.
+        self._service.wake_membership_watchers(
+            signal["tenant_id"], signal["user_ids"], signal.get("room_ids")
+        )
 
     async def _wake_all(self) -> None:
         self._service.wake_all_membership_watchers()

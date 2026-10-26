@@ -1161,10 +1161,10 @@ async def test_a_change_concerning_more_people_than_one_signal_holds_reaches_the
     woken: list[str] = []
     for user_id in user_ids:
         there.service.watch_memberships(
-            TENANT, user_id, lambda user_id=user_id: woken.append(user_id)
+            TENANT, user_id, lambda _rooms, user_id=user_id: woken.append(user_id)
         )
 
-    here.signals.memberships_changed(TENANT, user_ids)
+    here.signals.memberships_changed(TENANT, user_ids, [])
 
     await _eventually(lambda: len(woken) == len(user_ids))
     assert sorted(woken) == sorted(user_ids)

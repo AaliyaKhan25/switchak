@@ -109,6 +109,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Told the rooms whose part in a person's chats changed, or None for any.
+MembershipWatcher = Callable[[list[str] | None], None]
+
 # Fixed so the ids derived from it are stable across processes and releases.
 _CHATS_NAMESPACE = uuid.UUID("6f1d3c2e-8a4b-4f5e-9c7d-2b1a0e9f8d7c")
 
@@ -193,7 +196,7 @@ class ChatService:
         self._locks: weakref.WeakValueDictionary[tuple[str, ...], asyncio.Lock] = (
             weakref.WeakValueDictionary()
         )
-        self._membership_watchers: dict[tuple[str, str], set[Callable[[], None]]] = {}
+        self._membership_watchers: dict[tuple[str, str], set[MembershipWatcher]] = {}
         # Where a change to people's chats made here is announced to the
         # other processes, once wired (`use_signals`).
         self._signals: ChatSignals | None = None
@@ -215,14 +218,15 @@ class ChatService:
         self._signals = signals
 
     def watch_memberships(
-        self, tenant_id: str, user_id: str, callback: Callable[[], None]
+        self, tenant_id: str, user_id: str, callback: MembershipWatcher
     ) -> None:
         """Call `callback` whenever the user's chats change: at once when this
-        process changed them, and once told when another process did."""
+        process changed them, and once told when another process did. It is
+        given the rooms that changed, or None when any may have."""
         self._membership_watchers.setdefault((tenant_id, user_id), set()).add(callback)
 
     def unwatch_memberships(
-        self, tenant_id: str, user_id: str, callback: Callable[[], None]
+        self, tenant_id: str, user_id: str, callback: MembershipWatcher
     ) -> None:
         watchers = self._membership_watchers.get((tenant_id, user_id))
         if watchers is None:
@@ -231,27 +235,35 @@ class ChatService:
         if not watchers:
             del self._membership_watchers[(tenant_id, user_id)]
 
-    def wake_membership_watchers(self, tenant_id: str, user_ids: list[str]) -> None:
-        """Call every callback watching these users' chats in this process."""
+    def wake_membership_watchers(
+        self, tenant_id: str, user_ids: list[str], room_ids: list[str] | None
+    ) -> None:
+        """Call every callback watching these users' chats in this process,
+        with the rooms that changed (None: any)."""
         for user_id in user_ids:
             for callback in list(
                 self._membership_watchers.get((tenant_id, user_id), ())
             ):
-                callback()
+                callback(room_ids)
 
     def wake_all_membership_watchers(self) -> None:
-        """Call every callback watching anyone's chats in this process, once."""
+        """Call every callback watching anyone's chats in this process, once,
+        with any room in question."""
         for watchers in list(self._membership_watchers.values()):
             for callback in list(watchers):
-                callback()
+                callback(None)
 
-    def _memberships_changed(self, tenant_id: str, user_ids: list[str]) -> None:
-        """The users' chats changed through this process, and the change has
+    def _memberships_changed(
+        self, tenant_id: str, user_ids: list[str], room_ids: list[str]
+    ) -> None:
+        """The users' part in chats `room_ids` changed through this process
+        (joined, left, or what their summaries show), and the change has
         committed: the streams here are woken at once, and the other
-        processes are told to wake theirs."""
-        self.wake_membership_watchers(tenant_id, user_ids)
+        processes are told to wake theirs. A stream re-reads which chats its
+        person has on every wake, and re-summarises only these."""
+        self.wake_membership_watchers(tenant_id, user_ids, room_ids)
         if self._signals is not None:
-            self._signals.memberships_changed(tenant_id, user_ids)
+            self._signals.memberships_changed(tenant_id, user_ids, room_ids)
 
     def _lock(self, *key: str) -> asyncio.Lock:
         lock = self._locks.get(key)
@@ -480,7 +492,9 @@ class ChatService:
                 len(to_join),
                 len(to_drop),
             )
-        self._memberships_changed(tenant_id, [user_id])
+        self._memberships_changed(
+            tenant_id, [user_id], [room.id for room in [*to_join, *to_drop]]
+        )
 
     async def sync_room(self, tenant_id: str, room_id: str) -> None:
         """`sync_owned_rooms` for everyone a change to this room's agents may
@@ -530,7 +544,9 @@ class ChatService:
         ):
             await self.sync_owned_rooms(tenant_id, user_id)
         self._memberships_changed(
-            tenant_id, sorted(user_id for user_id in members if user_id is not None)
+            tenant_id,
+            sorted(user_id for user_id in members if user_id is not None),
+            [room_id],
         )
 
     async def agent_changed(self, tenant_id: str, agent_id: str) -> None:
@@ -553,7 +569,16 @@ class ChatService:
                 )
             ).scalars()
             user_ids = sorted(user_id for user_id in members if user_id is not None)
-        self._memberships_changed(tenant_id, user_ids)
+            room_ids = list(
+                (
+                    await session.execute(
+                        select(room_agents.c.room_id).where(
+                            room_agents.c.agent_id == agent_id
+                        )
+                    )
+                ).scalars()
+            )
+        self._memberships_changed(tenant_id, user_ids, room_ids)
 
     async def _make_lasting(self, tenant_id: str, user_id: str, room_id: str) -> None:
         async with tenant_session(self.session_factory, tenant_id) as session:
@@ -849,7 +874,7 @@ class ChatService:
         await self._make_lasting(tenant_id, target_user_id, room.id)
         async with tenant_session(self.session_factory, tenant_id) as session:
             member_ids = [member.id for member, _ in await self.members(session, room)]
-        self._memberships_changed(tenant_id, member_ids)
+        self._memberships_changed(tenant_id, member_ids, [room.id])
         return room
 
     async def remove_member(
@@ -890,7 +915,7 @@ class ChatService:
         await self._make_lasting(tenant_id, target_user_id, room.id)
         async with tenant_session(self.session_factory, tenant_id) as session:
             member_ids = [member.id for member, _ in await self.members(session, room)]
-        self._memberships_changed(tenant_id, [target_user_id, *member_ids])
+        self._memberships_changed(tenant_id, [target_user_id, *member_ids], [room.id])
 
     async def add_agent(
         self, tenant_id: str, actor: User, room_id: str, agent_id: str
@@ -957,7 +982,7 @@ class ChatService:
             await self._require_manager(session, tenant_id, user, room)
             member_ids = [member.id for member, _ in await self.members(session, room)]
         await self._room_service.set_room_archived(room.id, True)
-        self._memberships_changed(tenant_id, member_ids)
+        self._memberships_changed(tenant_id, member_ids, [room.id])
 
     async def _start_reading(
         self, session: AsyncSession, room_id: str, user_ids: list[str]
@@ -1012,7 +1037,7 @@ class ChatService:
                 )
             await self._read_through(session, room.id, [user.id], seq)
             await session.commit()
-        self._memberships_changed(tenant_id, [user.id])
+        self._memberships_changed(tenant_id, [user.id], [room.id])
 
     async def set_hidden(
         self, tenant_id: str, user: User, room_id: str, hidden: bool
@@ -1313,7 +1338,7 @@ class ChatService:
                     .values(state="done", room_id=room.id, result={"roomId": room.id})
                 )
                 await session.commit()
-        self._memberships_changed(tenant_id, [user.id, *member_user_ids])
+        self._memberships_changed(tenant_id, [user.id, *member_user_ids], [room.id])
         if len(agents) == 1:
             self._start_session(agents[0].id, room.id)
         return room

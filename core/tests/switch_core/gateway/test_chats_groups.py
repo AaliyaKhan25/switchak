@@ -19,6 +19,7 @@ from switch_core.bridges.agent.registration_bootstrap import (
 )
 from switch_core.chats.service import ChatService
 from switch_core.db.models import Agent, Client, Message, Room, User, room_agents
+from switch_core.gateway import chats as chats_module
 from tests.switch_core.gateway.conftest import (
     _chat_service,
     _FakeActivityListener,
@@ -1013,3 +1014,43 @@ async def test_a_reconnect_cursor_still_decides_where_a_chat_resumes(
     name, data = await events.next()
     assert (name, data["body"]) == ("message", "new")
     await events.stream.aclose()  # type: ignore[attr-defined]
+
+
+async def test_a_change_to_one_chat_re_summarises_only_that_chat(
+    chats: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    agent = await chats.agent("helper", owner=chats.alice)
+    room_ids = []
+    for index in range(20):
+        created = await chats.client.post(
+            "/chats",
+            json={
+                "agentIds": [],
+                "memberUserIds": [chats.bob.id, chats.admin.id],
+                "requestId": f"c{index}",
+            },
+            headers=chats.as_user(chats.alice),
+        )
+        room_ids.append(created.json()["chat"]["roomId"])
+    streams = [
+        _stream(chats, user, {}, recheck=60.0) for user in (chats.bob, chats.admin)
+    ]
+    for events in streams:
+        assert await events.until("ready") == {}
+
+    summaries: list[str] = []
+    summarise = chats_module.chat_summary
+
+    async def counted(session: AsyncSession, room: Room, **kwargs: Any) -> Any:
+        summaries.append(room.id)
+        return await summarise(session, room, **kwargs)
+
+    monkeypatch.setattr(chats_module, "chat_summary", counted)
+    added = await _add_agent(chats, chats.alice.id, room_ids[0], agent)
+    assert added.status_code == 200
+    for events in streams:
+        name, summary = await events.next()
+        assert (name, summary["roomId"]) == ("chat", room_ids[0])
+        await events.stream.aclose()  # type: ignore[attr-defined]
+    # The add answers with one summary; each of the two streams sends one.
+    assert summaries == [room_ids[0]] * 3

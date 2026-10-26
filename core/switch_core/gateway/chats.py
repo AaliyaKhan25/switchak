@@ -620,6 +620,7 @@ class _ChatStream:
         self.announced: set[str] = set()
         self.sent: dict[str, dict[str, Any]] = {}
         self.resummarize = False
+        self.resummarize_rooms: set[str] = set()
         self.dirty: set[str] = set()
         self.wake = asyncio.Event()
 
@@ -627,8 +628,11 @@ class _ChatStream:
         self.dirty.add(room_id)
         self.wake.set()
 
-    def on_memberships(self) -> None:
-        self.resummarize = True
+    def on_memberships(self, room_ids: list[str] | None) -> None:
+        if room_ids is None:
+            self.resummarize = True
+        else:
+            self.resummarize_rooms.update(room_ids)
         self.wake.set()
 
     def close(self) -> None:
@@ -653,6 +657,7 @@ class _ChatStream:
         frames: list[bytes] = []
         service = self.service
         resummarize, self.resummarize = self.resummarize, False
+        resummarize_rooms, self.resummarize_rooms = self.resummarize_rooms, set()
         if read is None:
             await service.sync_owned_rooms(self.tenant_id, self.user.id)
         async with tenant_session(service.session_factory, self.tenant_id) as session:
@@ -707,7 +712,11 @@ class _ChatStream:
                     )
                 service.listener.subscribe(room_id, self.on_room)
             for room_id, room in listed.items():
-                if room_id not in self.announced or resummarize:
+                if (
+                    room_id not in self.announced
+                    or resummarize
+                    or room_id in resummarize_rooms
+                ):
                     frames.extend(await self._announce(session, room))
                     self.announced.add(room_id)
             for room_id in list(self.cursors) if read is None else read:
