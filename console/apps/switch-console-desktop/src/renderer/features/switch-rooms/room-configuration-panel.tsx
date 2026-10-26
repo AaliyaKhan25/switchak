@@ -3,6 +3,7 @@ import { ExternalLink, FileText, Loader2, Plus, RefreshCw, Search, X } from 'luc
 import { observer } from 'mobx-react-lite';
 import { useState } from 'react';
 import { chatMembersQueryKey, workspaceRosterQuery } from '@renderer/features/chats/chat-people';
+import { confirmLeaveChat } from '@renderer/features/chats/components/chat-actions';
 import { opensAsConsoleChat } from '@renderer/features/chats/console-chat-redirect';
 import { chatFailure } from '@renderer/features/chats/stores/chat-errors';
 import { chatsStore } from '@renderer/features/chats/stores/chats';
@@ -103,6 +104,24 @@ const ChatConfiguration = observer(function ChatConfiguration({
           </p>
         )}
         <ChatParticipantsSection serverId={serverId} workspaceId={workspaceId} chat={chat} />
+        <section className="border-t border-border pt-6">
+          <div className="flex items-center justify-between gap-3">
+            <div className="space-y-0.5">
+              <h3 className="text-sm font-medium text-foreground">Leave room</h3>
+              <p className="text-xs text-foreground-muted">
+                You stop seeing its messages; someone who manages it can add you back.
+              </p>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              className="shrink-0"
+              onClick={() => confirmLeaveChat(serverId, chat)}
+            >
+              Leave room…
+            </Button>
+          </div>
+        </section>
       </div>
     </div>
   );

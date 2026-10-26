@@ -91,6 +91,7 @@ function setup(
     archive: vi.fn(async () => {}),
     delete: vi.fn(async () => {}),
     markRead: vi.fn(async () => {}),
+    removeMember: vi.fn(async () => {}),
   };
   const store = new ChatsStore(api, events);
   return {
@@ -276,6 +277,7 @@ async function viewer() {
   let onSummary: Parameters<ChatsEvents['onSummary']>[0] = () => {};
   let onMessage: Parameters<ChatsEvents['onMessage']>[0] = () => {};
   const markRead = vi.fn(async () => {});
+  const removeMember = vi.fn(async (_serverId: string, _roomId: string, _userId: string) => {});
   const events: ChatsEvents = {
     onMessage: (cb) => {
       onMessage = cb;
@@ -300,6 +302,7 @@ async function viewer() {
       archive: async () => {},
       delete: async () => {},
       markRead,
+      removeMember,
     },
     events
   );
@@ -309,6 +312,7 @@ async function viewer() {
     push: (chat: ChatSummary) => onSummary({ serverId: 's1', chat }),
     emit: (m: ChatMessage) => onMessage({ serverId: 's1', message: m }),
     markRead,
+    removeMember,
     group,
   };
 }
@@ -366,5 +370,23 @@ describe('ChatsStore unread counts', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('ChatsStore leave', () => {
+  it('removes the viewer and drops the chat from the list', async () => {
+    const { store, removeMember } = await viewer();
+    await store.leave('s1', 'g');
+    expect(removeMember).toHaveBeenCalledWith('s1', 'g', 'u');
+    expect(store.chat('g')).toBeUndefined();
+    expect(store.removed.has('g')).toBe(true);
+  });
+
+  it('keeps the chat as it was when the server refuses', async () => {
+    const { store, removeMember } = await viewer();
+    removeMember.mockRejectedValueOnce(new Error('You own an agent in this chat.'));
+    await expect(store.leave('s1', 'g')).rejects.toThrow('You own an agent in this chat.');
+    expect(store.chat('g')).toBeDefined();
+    expect(store.removed.has('g')).toBe(false);
   });
 });

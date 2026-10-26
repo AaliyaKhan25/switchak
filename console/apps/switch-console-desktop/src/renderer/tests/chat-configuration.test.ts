@@ -97,6 +97,8 @@ describe('RoomConfigurationPanel for a group chat', () => {
     expect(html).toContain('Bob');
     expect(html).not.toContain('Add participants');
     expect(html).not.toContain('id="chat-add-participant"');
+    // Leaving needs no manager rights.
+    expect(html).toContain('Leave room…');
     expect(html).not.toContain('aria-label="Remove');
   });
 });

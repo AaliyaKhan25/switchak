@@ -36,6 +36,7 @@ export type ChatsApi = {
   archive: (serverId: string, roomId: string) => Promise<void>;
   delete: (serverId: string, roomId: string) => Promise<void>;
   markRead: (serverId: string, roomId: string, seq: number) => Promise<void>;
+  removeMember: (serverId: string, roomId: string, userId: string) => Promise<void>;
 };
 
 /** How long reading settles before the read position is sent. */
@@ -178,6 +179,14 @@ export class ChatsStore {
   /** Deleted with its messages for everyone; throws, leaving the chat listed, if the server refuses. */
   async delete(serverId: string, roomId: string): Promise<void> {
     await this.api.delete(serverId, roomId);
+    this.remove(roomId, 'access');
+    await switchRoomsStore.refreshRoomState();
+  }
+
+  /** Leaves the chat; throws, leaving it listed and open, if the server refuses. */
+  async leave(serverId: string, roomId: string): Promise<void> {
+    if (this.userId === null) throw new Error('Not signed in to this chat’s server yet.');
+    await this.api.removeMember(serverId, roomId, this.userId);
     this.remove(roomId, 'access');
     await switchRoomsStore.refreshRoomState();
   }
