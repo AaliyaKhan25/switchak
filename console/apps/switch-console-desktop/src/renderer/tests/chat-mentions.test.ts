@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   agentTargets,
+  composeMentions,
+  shiftMentions,
   filterMentionAgents,
   filterMentionPeople,
   mentionUserIds,
@@ -125,5 +127,43 @@ describe('people mentions', () => {
   it('suggests people whose name contains the query, those it starts first', () => {
     expect(filterMentionPeople(people, 'm').map((p) => p.userId)).toEqual(['u1']);
     expect(filterMentionPeople(people, '').map((p) => p.userId)).toEqual(['u1', 'u2']);
+  });
+});
+
+describe('picked mentions', () => {
+  const sharer = [{ id: 'a9', name: 'Bob Member', alias: null }];
+  const bob = [{ userId: 'u1', name: 'Bob Member' }];
+  const targets = [...agentTargets(sharer), ...personTargets(bob)];
+
+  it('keeps who a picked mention names across a saved and restored draft', () => {
+    const text = 'hi @Bob Member';
+    const saved = { text, mentions: [{ kind: 'person' as const, id: 'u1', start: 3, end: 14 }] };
+    const restored = composeMentions(saved.text, saved.mentions, targets);
+    expect(restored).toEqual([{ kind: 'person', id: 'u1', start: 3, end: 14 }]);
+    // Unpicked, the same text reads as the agent.
+    expect(composeMentions(text, [], targets)[0]!.kind).toBe('agent');
+  });
+
+  it('addresses the agent and the person of one name, one each', () => {
+    const text = '@Bob Member and @Bob Member';
+    const tokens = composeMentions(
+      text,
+      [
+        { kind: 'agent', id: 'a9', start: 0, end: 11 },
+        { kind: 'person', id: 'u1', start: 16, end: 27 },
+      ],
+      targets
+    );
+    expect(mentionAgentIds(tokens)).toEqual(['a9']);
+    expect(mentionUserIds(tokens)).toEqual(['u1']);
+  });
+
+  it('moves picked mentions with an edit before them and drops one an edit lands in', () => {
+    const mention = { kind: 'person' as const, id: 'u1', start: 3, end: 14 };
+    expect(shiftMentions('hi @Bob Member', 'oh hi @Bob Member', [mention])).toEqual([
+      { ...mention, start: 6, end: 17 },
+    ]);
+    expect(shiftMentions('hi @Bob Member', 'hi @Bob XMember', [mention])).toEqual([]);
+    expect(composeMentions('hi @Bob', [mention], targets)).toEqual([]);
   });
 });

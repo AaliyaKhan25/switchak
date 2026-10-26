@@ -130,3 +130,57 @@ export function mentionSegments(
 /** A mention's badge; a ring rather than padding, so it never moves the text it sits behind. */
 export const MENTION_BADGE =
   'rounded-sm bg-background-tertiary-1 ring-2 ring-background-tertiary-1';
+
+/**
+ * Picked mentions carried across an edit from `before` to `after`: those wholly
+ * before or after the changed run keep their place (shifted), and one the edit
+ * touches is dropped.
+ */
+export function shiftMentions(
+  before: string,
+  after: string,
+  mentions: MentionToken[]
+): MentionToken[] {
+  let start = 0;
+  while (start < before.length && start < after.length && before[start] === after[start]) start++;
+  let tail = 0;
+  while (
+    tail < before.length - start &&
+    tail < after.length - start &&
+    before[before.length - 1 - tail] === after[after.length - 1 - tail]
+  )
+    tail++;
+  const endBefore = before.length - tail;
+  const delta = after.length - before.length;
+  return mentions.flatMap((mention) => {
+    if (mention.end <= start) return [mention];
+    if (mention.start >= endBefore)
+      return [{ ...mention, start: mention.start + delta, end: mention.end + delta }];
+    return [];
+  });
+}
+
+/**
+ * The mentions in `text`: the picked ones, each still reading as `@` one of
+ * its target's names, and around them whatever the targets' names match on
+ * their own.
+ */
+export function composeMentions(
+  text: string,
+  picked: MentionToken[],
+  targets: MentionTarget[]
+): MentionToken[] {
+  const kept = picked.filter((mention) => {
+    const target = targets.find((each) => each.kind === mention.kind && each.id === mention.id);
+    const said = text.slice(mention.start + 1, mention.end).toLowerCase();
+    return (
+      text[mention.start] === '@' &&
+      target !== undefined &&
+      target.names.some((name) => name.toLowerCase() === said)
+    );
+  });
+  const found = mentionTokens(text, targets).filter(
+    (token) => !kept.some((mention) => token.start < mention.end && mention.start < token.end)
+  );
+  return [...kept, ...found].sort((a, b) => a.start - b.start);
+}

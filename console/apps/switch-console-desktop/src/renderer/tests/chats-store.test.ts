@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { readThroughSeq } from '@renderer/features/chats/read-progress';
 import type { TimelineApi } from '@renderer/features/chats/stores/chat-timeline-store';
 import {
   ChatsStore,
@@ -388,5 +389,50 @@ describe('ChatsStore leave', () => {
     await expect(store.leave('s1', 'g')).rejects.toThrow('You own an agent in this chat.');
     expect(store.chat('g')).toBeDefined();
     expect(store.removed.has('g')).toBe(false);
+  });
+});
+
+describe('ChatsStore read progress', () => {
+  const from = (roomId: string, seq: number) => ({
+    ...message(roomId, seq),
+    sender: { ...message(roomId, seq).sender, userId: 'bob' },
+  });
+
+  it('counts arrivals while scrolled up, and reads them once back at the bottom', async () => {
+    vi.useFakeTimers();
+    try {
+      const { store, emit, markRead } = await viewer();
+      store.setViewing(null);
+      emit(from('g', 2));
+      expect(store.unread('g')).toBe(1);
+      const seq = readThroughSeq({ shown: true, atBottom: false, lastSeq: 2 });
+      expect(seq).toBeNull();
+      store.setViewing('g');
+      store.read('g', readThroughSeq({ shown: true, atBottom: true, lastSeq: 2 })!);
+      expect(store.unread('g')).toBe(0);
+      vi.advanceTimersByTime(READ_DEBOUNCE_MS);
+      expect(markRead).toHaveBeenCalledWith('s1', 'g', 2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('tries a failed read again the next time the same messages are shown', async () => {
+    vi.useFakeTimers();
+    try {
+      const { store, markRead } = await viewer();
+      markRead.mockRejectedValueOnce(new Error('offline'));
+      store.read('g', 5);
+      await vi.advanceTimersByTimeAsync(READ_DEBOUNCE_MS);
+      expect(markRead).toHaveBeenCalledTimes(1);
+      store.read('g', 5);
+      await vi.advanceTimersByTimeAsync(READ_DEBOUNCE_MS);
+      expect(markRead).toHaveBeenCalledTimes(2);
+      store.read('g', 5);
+      await vi.advanceTimersByTimeAsync(READ_DEBOUNCE_MS);
+      expect(markRead).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

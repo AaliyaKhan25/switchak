@@ -5,6 +5,7 @@ import { Button } from '@renderer/lib/ui/button';
 import { SERVER_TOO_OLD_FOR_ACTIVITY } from '@shared/core/chats/activity';
 import type { ChatMessage, ChatSummary } from '@shared/core/chats/chats';
 import { useChatPeople } from '../chat-people';
+import { readThroughSeq } from '../read-progress';
 import { agentActivities } from '../stores/activities';
 import type { AgentActivity } from '../stores/chat-activity-store';
 import type { ChatTimeline } from '../stores/chat-timeline-store';
@@ -85,7 +86,7 @@ export const ChatPanel = observer(function ChatPanel({
     if (!timeline.loaded && !lost && !timeline.notMember) void timeline.load();
   }, [timeline, lost, timeline.notMember]);
   const panel = useRef<HTMLDivElement>(null);
-  useReadWhileShown(roomId, timeline, panel, lost || timeline.notMember);
+  const shown = useShown(panel, lost || timeline.notMember);
 
   // Reasoning lives only on a local or SSH host and is read while a turn runs,
   // and whenever the joined turns change.
@@ -162,7 +163,7 @@ export const ChatPanel = observer(function ChatPanel({
                 serverId={serverId}
                 timeline={timeline}
                 agents={chat?.agents ?? []}
-                people={people}
+                people={people.known}
                 activities={activities}
                 onReply={setReplyTo}
               />
@@ -180,13 +181,15 @@ export const ChatPanel = observer(function ChatPanel({
         />
         <MessageScrollerButton className="absolute bottom-3 left-1/2 -translate-x-1/2" />
         <FollowOwnSends timeline={timeline} />
+        <ReadWhileFollowing roomId={roomId} timeline={timeline} shown={shown} />
       </MessageScroller>
       <ActivityUnavailable serverId={serverId} activities={activities} />
       <ChatComposer
         serverId={serverId}
         timeline={timeline}
         agents={chat?.agents ?? []}
-        people={people}
+        // Everyone but the viewer can be mentioned from here.
+        people={people.members.filter((person) => person.userId !== chatsStore.userId)}
         groupName={chat && chat.channelType !== 'direct' ? chat.name : null}
         activity={activities[0] ?? null}
         replyTo={replyTo}
@@ -201,19 +204,9 @@ export const ChatPanel = observer(function ChatPanel({
   );
 });
 
-/**
- * While the conversation is on screen in a focused window it is the chat being
- * read: its new messages do not count as unread, and it is marked read through
- * the last message shown. A hidden tab or a background window reads nothing.
- */
-function useReadWhileShown(
-  roomId: string,
-  timeline: ChatTimeline,
-  panel: React.RefObject<HTMLDivElement | null>,
-  hidden: boolean
-): void {
+/** Whether the conversation is on screen in a focused window; a hidden tab or a background window is not. */
+function useShown(panel: React.RefObject<HTMLDivElement | null>, hidden: boolean): boolean {
   const [shown, setShown] = useState(false);
-  const lastSeq = timeline.loaded ? (timeline.messages.at(-1)?.seq ?? null) : null;
   useEffect(() => {
     const update = () =>
       setShown(
@@ -232,17 +225,43 @@ function useReadWhileShown(
       window.removeEventListener('blur', update);
     };
   }, [panel, hidden]);
+  return shown;
+}
+
+/**
+ * While the conversation is on screen and followed at the bottom, it is the
+ * chat being read: its new messages do not count as unread, and it is marked
+ * read through the last one. Scrolled up, arrivals count until the reader
+ * comes back down.
+ */
+const ReadWhileFollowing = observer(function ReadWhileFollowing({
+  roomId,
+  timeline,
+  shown,
+}: {
+  roomId: string;
+  timeline: ChatTimeline;
+  shown: boolean;
+}) {
+  const { isAtBottom } = useMessageScroller();
+  const reading = shown && isAtBottom;
+  const seq = readThroughSeq({
+    shown,
+    atBottom: isAtBottom,
+    lastSeq: timeline.loaded ? (timeline.messages.at(-1)?.seq ?? null) : null,
+  });
   useEffect(() => {
-    if (!shown) return;
+    if (!reading) return;
     chatsStore.setViewing(roomId);
     return () => {
       if (chatsStore.viewing === roomId) chatsStore.setViewing(null);
     };
-  }, [shown, roomId]);
+  }, [reading, roomId]);
   useEffect(() => {
-    if (shown && lastSeq !== null) chatsStore.read(roomId, lastSeq);
-  }, [shown, roomId, lastSeq]);
-}
+    if (seq !== null) chatsStore.read(roomId, seq);
+  }, [roomId, seq]);
+  return null;
+});
 
 /**
  * Sending from here jumps to the end and resumes following, wherever the

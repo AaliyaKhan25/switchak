@@ -68,8 +68,10 @@ export class ChatsStore {
   listError: string | null = null;
   /** The room whose chat is on screen and being read: its messages do not count as unread. */
   viewing: string | null = null;
-  /** The furthest message marked read here, by room; a read never moves back. */
+  /** The furthest message the server has taken as read, by room; a read never moves back. */
   private readonly readThrough = new Map<string, number>();
+  /** A read position on its way to the server, by room; dropped if it fails, so the next read retries. */
+  private readonly readPending = new Map<string, number>();
   private readonly readTimers = new Map<string, ReturnType<typeof setTimeout>>();
   readonly timelines: ChatTimelines;
 
@@ -78,10 +80,11 @@ export class ChatsStore {
     events: ChatsEvents
   ) {
     this.timelines = new ChatTimelines(api.timeline);
-    makeAutoObservable<ChatsStore, 'api' | 'readThrough' | 'readTimers'>(this, {
+    makeAutoObservable<ChatsStore, 'api' | 'readThrough' | 'readPending' | 'readTimers'>(this, {
       api: false,
       timelines: false,
       readThrough: false,
+      readPending: false,
       readTimers: false,
     });
     events.onSummary(({ serverId, chat }) => {
@@ -285,14 +288,23 @@ export class ChatsStore {
     if (!serverId) return;
     const chat = this.chats.get(roomId);
     if (chat && chat.unreadCount !== 0) this.chats.set(roomId, { ...chat, unreadCount: 0 });
-    if ((this.readThrough.get(roomId) ?? 0) >= seq) return;
-    this.readThrough.set(roomId, seq);
+    const furthest = Math.max(this.readThrough.get(roomId) ?? 0, this.readPending.get(roomId) ?? 0);
+    if (furthest >= seq) return;
+    this.readPending.set(roomId, seq);
     clearTimeout(this.readTimers.get(roomId));
     this.readTimers.set(
       roomId,
       setTimeout(() => {
         this.readTimers.delete(roomId);
-        void this.api.markRead(serverId, roomId, seq);
+        this.api.markRead(serverId, roomId, seq).then(
+          () => {
+            this.readThrough.set(roomId, Math.max(this.readThrough.get(roomId) ?? 0, seq));
+            if (this.readPending.get(roomId) === seq) this.readPending.delete(roomId);
+          },
+          () => {
+            if (this.readPending.get(roomId) === seq) this.readPending.delete(roomId);
+          }
+        );
       }, READ_DEBOUNCE_MS)
     );
   }

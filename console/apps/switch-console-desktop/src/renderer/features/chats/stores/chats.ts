@@ -35,13 +35,14 @@ export const chatsStore = new ChatsStore(
       rpc.chats.removeMember({ serverId, roomId, userId }),
     markRead: (serverId, roomId, seq) =>
       rpc.chats.markRead({ serverId, roomId, seq }).catch((error: unknown) => {
-        // The count stays at 0 here; the server's comes back with the next summary.
+        // The store tries again on the next read; the server's count returns with the next summary.
         log.warn('Could not save how far a chat has been read', {
           serverId,
           roomId,
           seq,
           error: String(error),
         });
+        throw error;
       }),
   },
   chatsEventsFrom(events)

@@ -13,15 +13,17 @@ import { type ChatAgent, type ChatMessage, chatAgentLabel } from '@shared/core/c
 import { snippetOf } from '../chat-threads';
 import {
   agentTargets,
+  composeMentions,
   filterMentionAgents,
   filterMentionPeople,
   mentionAgentIds,
   type MentionPerson,
   mentionQuery,
   mentionSegments,
-  mentionTokens,
+  type MentionToken,
   mentionUserIds,
   personTargets,
+  shiftMentions,
   tokenToRemove,
 } from '../mentions';
 import { isInterruptAck } from '../stop-rows';
@@ -54,7 +56,7 @@ type Suggestion =
   | { kind: 'person'; id: string; person: MentionPerson & { email: string | null } };
 
 /** Drafts by chat, so a draft outlives navigating away. */
-const drafts = new Map<string, string>();
+const drafts = new Map<string, { text: string; mentions: MentionToken[] }>();
 
 /** Chats just created here, whose composer takes focus when it first shows. */
 const focusOnOpen = new Set<string>();
@@ -176,10 +178,20 @@ export const ChatComposer = observer(function ChatComposer({
   disabled: string | null;
 }) {
   const draftKey = `${serverId}\u0000${timeline.roomId}`;
-  const [draft, setDraft] = useState(() => drafts.get(draftKey) ?? '');
+  const [draft, setDraft] = useState(() => drafts.get(draftKey)?.text ?? '');
+  /** The mentions picked from the list, each with who it names, kept with the draft. */
+  const [picked, setPicked] = useState<MentionToken[]>(() => drafts.get(draftKey)?.mentions ?? []);
   useEffect(() => {
-    drafts.set(draftKey, draft);
-  }, [draftKey, draft]);
+    drafts.set(draftKey, { text: draft, mentions: picked });
+  }, [draftKey, draft, picked]);
+  /** A pick the next edit inserts, placed once that edit has moved the others. */
+  const pendingPick = useRef<MentionToken | null>(null);
+  const edit = (next: string) => {
+    const pick = pendingPick.current;
+    pendingPick.current = null;
+    setPicked((current) => [...shiftMentions(draft, next, current), ...(pick ? [pick] : [])]);
+    setDraft(next);
+  };
   const [files, setFiles] = useState<{ id: string; file: File }[]>([]);
   const [confirmReset, setConfirmReset] = useState(false);
   const [contextOpen, setContextOpen] = useState(false);
@@ -190,14 +202,9 @@ export const ChatComposer = observer(function ChatComposer({
   const [mentionIndex, setMentionIndex] = useState(0);
   /** Where the `@` of a suggestion list Esc closed sits, so it stays closed for that `@`. */
   const [dismissedAt, setDismissedAt] = useState<number | null>(null);
-  /** People picked from the list; one sharing an agent's name is read as the person. */
-  const [pickedPeople, setPickedPeople] = useState<ReadonlySet<string>>(new Set());
-  const targets = [
-    ...personTargets(people.filter((person) => pickedPeople.has(person.userId))),
-    ...agentTargets(agents),
-    ...personTargets(people.filter((person) => !pickedPeople.has(person.userId))),
-  ];
-  const tokens = mentionTokens(draft, targets);
+  // Text typed rather than picked reads as an agent first where a person shares its name.
+  const targets = [...agentTargets(agents), ...personTargets(people)];
+  const tokens = composeMentions(draft, picked, targets);
   const mentionable = agents.length > 0 || people.length > 0;
   const query = mentionable ? mentionQuery(draft, caret) : null;
   const suggestions: Suggestion[] = query
@@ -251,18 +258,21 @@ export const ChatComposer = observer(function ChatComposer({
     input.current?.focus();
   };
 
-  const pick = (picked: Suggestion) => {
+  const pick = (choice: Suggestion) => {
     const textarea = input.current;
     if (!textarea || !query) return;
-    const name = picked.kind === 'agent' ? picked.agent.name : picked.person.name;
-    if (picked.kind === 'person')
-      setPickedPeople((current) => new Set(current).add(picked.person.userId));
+    const name = choice.kind === 'agent' ? choice.agent.name : choice.person.name;
+    pendingPick.current = {
+      kind: choice.kind,
+      id: choice.kind === 'agent' ? choice.agent.id : choice.person.userId,
+      start: query.start,
+      end: query.start + 1 + name.length,
+    };
     textarea.focus();
     textarea.setSelectionRange(query.start, caret);
     // insertText keeps the native undo stack; a controlled-value write would wipe it.
     if (!document.execCommand('insertText', false, `@${name} `)) {
-      const next = `${draft.slice(0, query.start)}@${name} ${draft.slice(caret)}`;
-      setDraft(next);
+      edit(`${draft.slice(0, query.start)}@${name} ${draft.slice(caret)}`);
       setCaret(query.start + name.length + 2);
     }
     setMentionIndex(0);
@@ -310,17 +320,18 @@ export const ChatComposer = observer(function ChatComposer({
       timeline.messages.filter((message) => message.sender.kind === 'human').length +
         timeline.pending.length
     );
+    const sent = composeMentions(body, shiftMentions(draft, body, picked), targets);
     timeline.send({
       body,
       threadRootId: replyTo?.messageId ?? null,
-      mentionAgentIds: mentionAgentIds(mentionTokens(body, targets)),
-      mentionUserIds: mentionUserIds(mentionTokens(body, targets)),
+      mentionAgentIds: mentionAgentIds(sent),
+      mentionUserIds: mentionUserIds(sent),
       files: files.map(({ file }) => chatFile(file)),
     });
     void chatTitler.sent(serverId, timeline.roomId, body);
     setDraft('');
+    setPicked([]);
     setFiles([]);
-    setPickedPeople(new Set());
     onClearReply();
   };
 
@@ -496,7 +507,7 @@ export const ChatComposer = observer(function ChatComposer({
                 }
                 onKeyDown={onKeyDown}
                 onChange={(event) => {
-                  setDraft(event.target.value);
+                  edit(event.target.value);
                   setCaret(event.target.selectionStart);
                   setMentionIndex(0);
                   if (!mentionQuery(event.target.value, event.target.selectionStart))

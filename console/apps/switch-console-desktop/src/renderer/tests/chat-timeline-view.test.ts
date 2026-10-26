@@ -128,3 +128,25 @@ describe('ChatTimelineView mentions', () => {
     expect(render([], ['a3'])).toContain('data-mention="agent"');
   });
 });
+
+describe('ChatTimelineView mentions of people no longer in the chat', () => {
+  it('still badges a person the message names, from the wider list of known people', () => {
+    const timeline = new ChatTimeline('room-1', api);
+    timeline.apply({
+      ...message(1, 'me', 'Alice'),
+      body: 'thanks @Carol Gone',
+      namedUserIds: ['u9'],
+    });
+    const html = renderToStaticMarkup(
+      createElement(ChatTimelineView, {
+        serverId: 's',
+        timeline,
+        agents: [],
+        people: [{ userId: 'u9', name: 'Carol Gone' }],
+        activities: [],
+        onReply: () => {},
+      })
+    );
+    expect(html).toContain('data-mention="person"');
+  });
+});
