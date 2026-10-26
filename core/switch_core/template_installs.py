@@ -16,12 +16,30 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Any
+import logging
+from collections.abc import Sequence
+from dataclasses import dataclass
+from typing import Any, Literal
+
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from switch_core.agent_templates import plan_template
+from switch_core.db.models import Template
+from switch_core.db.session_scope import tenant_session
+from switch_core.db.stores.template_install_store import (
+    NewInstallResource,
+    TemplateInstallStore,
+)
+from switch_core.official_templates import (
+    OfficialTemplate,
+    is_official,
+    official_templates,
+)
 from switch_core.providers.registry import provider_ids
 from switch_core.template_runs import NewAgentPlan
 from switch_core.template_v2 import compile_v2, is_v2_text
+
+logger = logging.getLogger(__name__)
 
 AGENT_FIELDS: tuple[str, ...] = (
     "instructions",
@@ -91,3 +109,102 @@ def render_agents(
     plan = plan_template(text, {}, inputs, builtins=builtins, machines=machines)
     keys = resource_keys(text, inputs, builtins)
     return {key_of(agent, keys): agent_fields(agent) for agent in plan.new_agents}
+
+
+@dataclass(frozen=True)
+class InstallSource:
+    """Where a run's document came from, as the server knows it: never
+    taken from what a caller says, only from a template it loaded itself."""
+
+    source: Literal["official", "saved"]
+    template_id: str
+    template_name: str
+    revision: int
+
+
+def source_of(template: OfficialTemplate | Template) -> InstallSource:
+    return InstallSource(
+        source="official" if is_official(template.id) else "saved",
+        template_id=template.id,
+        template_name=template.name,
+        revision=template.version,
+    )
+
+
+def vouched_source(
+    document: str,
+    loaded: OfficialTemplate | Template | None,
+    *,
+    agent_management: bool,
+    switch_buddy: bool,
+) -> InstallSource | None:
+    """The source of a document a caller sent to run: the template it says
+    the document is (`loaded`, read by the server with the caller's own
+    access), when the document is exactly that template's; else an official
+    template whose document it is word for word, which is how a run from a
+    Switch Console too old to say is still recognised. None when it is
+    neither: a document the caller wrote or changed has no source to update
+    it from."""
+    if loaded is not None:
+        return source_of(loaded) if loaded.content == document else None
+    for official in official_templates(agent_management, switch_buddy):
+        if official.content == document:
+            return source_of(official)
+    return None
+
+
+async def record_install(
+    session_factory: async_sessionmaker[AsyncSession],
+    tenant_id: str,
+    *,
+    owner_id: str,
+    source: InstallSource,
+    document: str,
+    inputs: dict[str, Any],
+    builtins: dict[str, str],
+    plans: Sequence[NewAgentPlan],
+    created: Sequence[dict[str, Any]],
+) -> None:
+    """Record that a run of `source` created these agents, with what it set
+    on each. A run that created no agent records nothing.
+
+    The agents exist whatever happens here, so a failure to record is not
+    the run's failure: it is logged as an error, and those agents simply get
+    no updates.
+    """
+    agent_ids = {str(agent["name"]): str(agent["agent_id"]) for agent in created}
+    made = [plan for plan in plans if plan.name in agent_ids]
+    if not made:
+        return
+    try:
+        keys = resource_keys(document, inputs, builtins)
+        async with tenant_session(session_factory, tenant_id) as session:
+            await TemplateInstallStore().create(
+                session,
+                owner_id=owner_id,
+                source=source.source,
+                template_id=source.template_id,
+                template_name=source.template_name,
+                revision=source.revision,
+                inputs=inputs,
+                builtins=builtins,
+                resources=[
+                    NewInstallResource(
+                        key=key_of(plan, keys),
+                        agent_id=agent_ids[plan.name],
+                        room_id=None,
+                        fingerprints=fingerprints(agent_fields(plan)),
+                    )
+                    for plan in made
+                ],
+            )
+            await session.commit()
+    except Exception:
+        logger.error(
+            "Could not record that %s (revision %s) created agents %s: they "
+            "will not be updated from it",
+            source.template_id,
+            source.revision,
+            sorted(agent_ids.values()),
+            exc_info=True,
+        )
