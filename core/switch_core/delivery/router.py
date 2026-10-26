@@ -294,6 +294,7 @@ class RoomReads:
                 follow_ups_enabled=follow_ups_enabled_in(room.metadata_),
                 main_agent_id=main_agent_in(room.metadata_),
                 agent_greeting=(room.metadata_ or {}).get("agent_greeting"),
+                console_chat="chat_operation_id" in (room.metadata_ or {}),
             ),
             group_id=room.group_id,
             members=sorted(members, key=lambda member: member.agent.id),
