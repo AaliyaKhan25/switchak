@@ -111,6 +111,14 @@ version of their own to them without also giving them a release of their own.
   compares it only when someone signs in.
 
 #### Changed
+- **A cloud machine can move to another instance type and keep its disk.**
+  The hosted controller now launches every new instance of a machine as the
+  instance type in its `gateway.json`, at the same moment it already moves the
+  machine onto the configured image, and `upgrade --gateway-config` moves a
+  stopped machine onto both. `allowed_instance_types` is no longer bound to the
+  controller's state database, so it can change while machines exist; a
+  database bound before this release is accepted and rebound on first start,
+  as long as `allowed_instance_types` has not changed in the same deploy.
 - **Following the conversation is described the same way everywhere, and the
   chart can turn it on.** The feature added in 0.31.0 is off unless
   `follow_the_conversation` is among the enabled feature flags

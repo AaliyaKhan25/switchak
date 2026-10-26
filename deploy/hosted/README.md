@@ -74,9 +74,10 @@ means the server cannot run them. Keep it no higher than the hosted controller's
 
 Mount a secret with `gateway.json` for the hosted controller, holding `origin`,
 the matching `token` and `instance_type`, and set the chart's
-`gatewaySecretName` to it. `instance_type` is used for every new machine and
-must be one of `allowed_instance_types` in both Terraform and the controller
-configuration; `c7i.2xlarge` is recommended. The token authorizes only the
+`gatewaySecretName` to it. `instance_type` is used for every new machine, and
+an existing machine moves onto it the next time it launches an instance (see
+"Operator commands"). It must be one of `allowed_instance_types` in both
+Terraform and the controller configuration; `c7i.2xlarge` is recommended. The token authorizes only the
 hosted controller routes, for every machine on the server: their lifecycle
 and the controllers they run, never a workspace's agents, rooms or logins. It
 is not a user or agent API key.
@@ -141,13 +142,18 @@ switch-hosted-controller --config /etc/switch-hosted/controller.json status <mac
 switch-hosted-controller --config /etc/switch-hosted/controller.json stop <machine-id>
 switch-hosted-controller --config /etc/switch-hosted/controller.json start <machine-id>
 switch-hosted-controller --config /etc/switch-hosted/controller.json delete <machine-id> --confirm-machine-id <machine-id> --retain-volume
-switch-hosted-controller --config /etc/switch-hosted/controller.json upgrade <machine-id> --confirm-instance-id i-0123456789abcdef0
+switch-hosted-controller --config /etc/switch-hosted/controller.json --gateway-config /etc/switch-hosted-gateway/gateway.json upgrade <machine-id> --confirm-instance-id i-0123456789abcdef0
 ```
 
-Every new instance of a machine launches from the configured image: a
-relaunch for new user data, a recovery, or a retained machine starting again
-moves it onto a new `image_id`, keeping its disk. `upgrade` does it for a
-stopped machine whose instance is terminated. A queued command is not confirmation that
+Every new instance of a machine launches from the configured image, as
+`gateway.json`'s `instance_type`: a relaunch for new user data, a recovery, or
+a retained machine starting again moves it onto a new `image_id` and instance
+type, keeping its disk. `upgrade` does it for a stopped machine whose instance
+is terminated; without `--gateway-config` it keeps the machine's instance type.
+`allowed_instance_types` may change while machines exist: add the new type,
+move the machines, then drop the old one. The other placement settings
+(installation, region, zone, subnet, security groups, root device and volume
+sizes) are bound to the state database and cannot change. A queued command is not confirmation that
 AWS has done it. Deletion needs `--confirm-machine-id` and exactly one of
 `--retain-volume` or `--delete-volume`. Deleting a machine does not remove
 snapshots, roles, the NAT gateway or the controller's database.
