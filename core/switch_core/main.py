@@ -1157,6 +1157,7 @@ async def run(config: SwitchConfig, process_id: str) -> None:
         id_server_name=config.id_server_name,
         media_max_bytes=config.agent_media_max_bytes,
         agent_chats_enabled=config.agent_chats_enabled,
+        group_chats_enabled=config.group_chats_enabled,
         connections=connections,
     )
     # Changes to people's chats made in another process wake the Console

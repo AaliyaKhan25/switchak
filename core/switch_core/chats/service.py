@@ -173,11 +173,13 @@ class ChatService:
         id_server_name: str,
         media_max_bytes: int,
         agent_chats_enabled: bool,
+        group_chats_enabled: bool,
         connections: AgentConnectionRegistry,
     ) -> None:
         self.session_factory = session_factory
         self._connections = connections
         self.agent_chats_enabled = agent_chats_enabled
+        self.group_chats_enabled = group_chats_enabled
         self.listener = listener
         self.activity_listener = activity_listener
         self._activity_store = AgentSessionActivityStore()
@@ -264,6 +266,14 @@ class ChatService:
         self.wake_membership_watchers(tenant_id, user_ids, room_ids)
         if self._signals is not None:
             self._signals.memberships_changed(tenant_id, user_ids, room_ids)
+
+    def _require_group_chats(self) -> None:
+        """Refuse a group-only request while `group_chats` is off, so a fleet
+        that turned it off (or never on) says so rather than half-serving it."""
+        if not self.group_chats_enabled:
+            raise ChatError(
+                409, "GROUP_CHATS_OFF", "Group chats are not turned on for this server."
+            )
 
     def _lock(self, *key: str) -> asyncio.Lock:
         lock = self._locks.get(key)
@@ -922,6 +932,7 @@ class ChatService:
     ) -> Room:
         """Manager only, and only an agent the manager may use in this room.
         Already in is success. A second agent makes a direct chat a group."""
+        self._require_group_chats()
         async with tenant_session(self.session_factory, tenant_id) as session:
             room = await self._room(session, tenant_id, room_id)
             await self._require_manager(session, tenant_id, actor, room)
@@ -969,6 +980,7 @@ class ChatService:
     ) -> None:
         """Manager only, with no check on using the agent, so an unwanted
         agent can always be taken out. Already gone is success."""
+        self._require_group_chats()
         async with tenant_session(self.session_factory, tenant_id) as session:
             room = await self._room(session, tenant_id, room_id)
             await self._require_manager(session, tenant_id, actor, room)
@@ -1152,6 +1164,7 @@ class ChatService:
         """The ids of the agents the user could add: to a new chat when
         `room_id` is None, else to that room, which they must manage, less
         the agents already in it. The rule `_require_may_use_agent` applies."""
+        self._require_group_chats()
         target_room_id, group_id, present = "", None, set[str]()
         if room_id is not None:
             room = await self._room(session, tenant_id, room_id)
@@ -1204,6 +1217,8 @@ class ChatService:
         """
         member_user_ids = sorted(set(member_user_ids) - {user.id})
         direct = kind != "group" and len(agent_ids) == 1 and not member_user_ids
+        if member_user_ids or kind == "group" or not agent_ids:
+            self._require_group_chats()
         if greeting is not None:
             if len(agent_ids) != 1 or kind == "group":
                 raise ChatError(
@@ -1452,6 +1467,8 @@ class ChatService:
         """
         mentions = sorted(set(mention_agent_ids))
         people = sorted(set(mention_user_ids))
+        if people:
+            self._require_group_chats()
         request: dict[str, object] = {
             "roomId": room_id,
             "body": body,

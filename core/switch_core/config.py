@@ -18,6 +18,7 @@ from switch_core.feature_flags import (
     AGENT_CHATS,
     AGENT_MANAGEMENT,
     FOLLOW_THE_CONVERSATION,
+    GROUP_CHATS,
     HOSTED_AGENTS,
     KNOWN_FEATURE_FLAGS,
     SERVICE_CONNECTIONS,
@@ -1307,6 +1308,10 @@ class SwitchConfig(BaseSettings):
     @property
     def agent_chats_enabled(self) -> bool:
         return self.feature_flags[AGENT_CHATS]
+
+    @property
+    def group_chats_enabled(self) -> bool:
+        return self.feature_flags[GROUP_CHATS]
 
     @model_validator(mode="after")
     def _validate_outbound_allowed_private_hosts(self) -> "SwitchConfig":

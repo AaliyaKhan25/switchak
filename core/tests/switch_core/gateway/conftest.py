@@ -258,6 +258,7 @@ def _chat_service(
         id_server_name="switch.test",
         media_max_bytes=1024,
         agent_chats_enabled=True,
+        group_chats_enabled=True,
         connections=connections,
     )
     room_service.on_room_agents_changed(service.sync_room)
