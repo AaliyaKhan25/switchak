@@ -1097,3 +1097,87 @@ async def test_group_only_requests_are_refused_while_group_chats_is_off(
 
     chats.service.group_chats_enabled = True
     assert (await _add_agent(chats, chats.alice.id, room_id, other)).status_code == 200
+
+
+def _utf16(text: str) -> bytes:
+    return text.encode("utf-16-le")
+
+
+def _at(body: str, span: dict[str, Any]) -> str:
+    units = _utf16(body)
+    return units[span["offset"] * 2 : (span["offset"] + span["length"]) * 2].decode(
+        "utf-16-le"
+    )
+
+
+async def test_mention_spans_place_people_and_agents_in_the_body(
+    chats: _Harness,
+) -> None:
+    namesake = await chats.agent("bob", owner=chats.alice)
+    helper = await chats.agent("helper", owner=chats.alice)
+    created = await chats.client.post(
+        "/chats",
+        json={
+            "agentIds": [namesake.id, helper.id],
+            "memberUserIds": [chats.bob.id],
+            "requestId": "c1",
+        },
+        headers=chats.as_user(chats.alice),
+    )
+    room_id = created.json()["chat"]["roomId"]
+
+    # An emoji (two UTF-16 units) before a person's mention of the agent's name.
+    person = {"kind": "user", "id": chats.bob.id, "offset": 3, "length": 4}
+    sent = await chats.send(
+        chats.alice, room_id, "s1", "😀 @bob look", mentionSpans=[person]
+    )
+    assert sent.status_code == 200, sent.text
+    [message] = sent.json()["messages"]
+    assert message["mentions"] == [person]
+    assert message["namedUserIds"] == [chats.bob.id]
+    assert _at(message["body"], message["mentions"][0]) == "@bob"
+    assert (room_id, message["seq"]) not in await _events_of(chats, namesake)
+
+    # An agent the body does not name is put first; the spans move with it.
+    prefixed = await chats.send(
+        chats.alice,
+        room_id,
+        "s2",
+        "@bob see",
+        mentionAgentIds=[helper.id],
+        mentionSpans=[{"kind": "user", "id": chats.bob.id, "offset": 0, "length": 4}],
+    )
+    [message] = prefixed.json()["messages"]
+    assert message["body"] == "@helper @bob see"
+    assert [_at(message["body"], span) for span in message["mentions"]] == ["@bob"]
+    assert (room_id, message["seq"]) in await _events_of(chats, helper)
+    assert (room_id, message["seq"]) not in await _events_of(chats, namesake)
+
+    agent_span = {"kind": "agent", "id": namesake.id, "offset": 0, "length": 4}
+    for_agent = await chats.send(
+        chats.alice, room_id, "s3", "@bob go", mentionSpans=[agent_span]
+    )
+    [message] = for_agent.json()["messages"]
+    assert (room_id, message["seq"]) in await _events_of(chats, namesake)
+
+    for index, (body, spans) in enumerate(
+        [
+            ("😀 @bob", [{**person, "offset": 1, "length": 3}]),
+            ("@bob", [{**person, "offset": 0, "length": 9}]),
+            ("hey bob", [{**person, "offset": 4, "length": 3}]),
+            ("@bob", [person | {"offset": 0}, agent_span]),
+        ]
+    ):
+        refused = await chats.send(
+            chats.alice, room_id, f"bad{index}", body, mentionSpans=spans
+        )
+        assert refused.status_code == 422, body
+        assert _code(refused) == "INVALID_MENTION"
+    stranger = await chats.send(
+        chats.alice,
+        room_id,
+        "bad-member",
+        "@admin",
+        mentionSpans=[{"kind": "user", "id": chats.admin.id, "offset": 0, "length": 6}],
+    )
+    assert _code(stranger) == "USER_NOT_IN_CHAT"

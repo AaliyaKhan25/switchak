@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 from pydantic.alias_generators import to_camel
@@ -134,9 +135,20 @@ class ChatMessage(CamelModel):
     named_agent_ids: list[str]
     # The people the sender named (`mentionUserIds`); they address no agent.
     named_user_ids: list[str]
+    mentions: list[ChatMention]
     # Of a thread's root; 0 and None on a reply and on a message with none.
     thread_reply_count: int
     thread_last_reply_seq: int | None
+
+
+class ChatMention(CamelModel):
+    """Where a message names an agent or a person: `offset` and `length` in
+    UTF-16 code units of its body, as JavaScript strings count."""
+
+    kind: Literal["agent", "user"]
+    id: str
+    offset: int
+    length: int
 
 
 class ChatMember(CamelModel):
@@ -366,6 +378,7 @@ async def chat_messages(
                     addressable_text(message.body or "", message.content),
                 ),
                 named_user_ids=_named_user_ids(message),
+                mentions=_mentions(message),
                 thread_reply_count=thread[0] if thread is not None else 0,
                 thread_last_reply_seq=thread[1] if thread is not None else None,
             )
@@ -378,3 +391,10 @@ def _named_user_ids(message: Message) -> list[str]:
     if not isinstance(mentions, dict):
         return []
     return [each for each in mentions.get("user_ids") or [] if isinstance(each, str)]
+
+
+def _mentions(message: Message) -> list[ChatMention]:
+    mentions = message.content.get(MENTIONS_KEY)
+    if not isinstance(mentions, dict):
+        return []
+    return [ChatMention.model_validate(span) for span in mentions.get("spans") or []]

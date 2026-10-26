@@ -42,6 +42,7 @@ from switch_core.chats.service import (
 from switch_core.chats.views import (
     CamelModel,
     ChatMember,
+    ChatMention,
     ChatMessage,
     ChatSummary,
     chat_messages,
@@ -133,6 +134,7 @@ class SendRequest(CamelModel):
     mention_agent_id: str | None = None
     mention_agent_ids: list[str] = []
     mention_user_ids: list[str] = []
+    mention_spans: list[ChatMention] = []
 
 
 class ControlRequest(CamelModel):
@@ -441,6 +443,7 @@ async def send_message(
         mention_agent_id=req.mention_agent_id,
         mention_agent_ids=req.mention_agent_ids,
         mention_user_ids=req.mention_user_ids,
+        mention_spans=req.mention_spans,
     )
     async with tenant_session(service.session_factory, tenant_id) as session:
         return SentMessages(messages=await chat_messages(session, room, posted))

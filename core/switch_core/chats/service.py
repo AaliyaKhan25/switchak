@@ -54,6 +54,7 @@ from switch_core.chats.views import (
     COMMAND_EVENT_TYPE,
     MESSAGE_EVENT_TYPE,
     SHOWN_EVENT_TYPES,
+    ChatMention,
 )
 from switch_core.clients.mentions import mention_regex, strip_emphasis
 from switch_core.db.models import (
@@ -1453,6 +1454,7 @@ class ChatService:
         mention_agent_id: str | None,
         mention_agent_ids: list[str],
         mention_user_ids: list[str],
+        mention_spans: list[ChatMention],
     ) -> tuple[Room, list[Message]]:
         """Post the user's message, every part of it in one transaction.
 
@@ -1464,11 +1466,15 @@ class ChatService:
         The agents the message is for are `mention_agent_ids` together with
         `mention_agent_id`, the one earlier clients send, as a set. The people
         it names, `mention_user_ids`, address no agent (`MENTIONS_KEY`).
+        `mention_spans` say where in `body` each mention is written (UTF-16
+        offsets, as the Console's strings count); an agent's span is for it as
+        `mention_agent_ids` is, a person's addresses no agent.
         """
         mentions = sorted(set(mention_agent_ids))
         people = sorted(set(mention_user_ids))
-        if people:
+        if people or mention_spans:
             self._require_group_chats()
+        typed = _span_texts(body, mention_spans)
         request: dict[str, object] = {
             "roomId": room_id,
             "body": body,
@@ -1480,9 +1486,17 @@ class ChatService:
             request["mentionAgentIds"] = mentions
         if people:
             request["mentionUserIds"] = people
+        if mention_spans:
+            request["mentionSpans"] = [span.model_dump() for span in mention_spans]
         payload_hash = _hash(request)
         if mention_agent_id is not None:
             mentions = sorted({*mentions, mention_agent_id})
+        mentions = sorted(
+            {*mentions, *(span.id for span in mention_spans if span.kind == "agent")}
+        )
+        people = sorted(
+            {*people, *(span.id for span in mention_spans if span.kind == "user")}
+        )
         async with tenant_session(self.session_factory, tenant_id) as session:
             room, client = await self.require_member(session, tenant_id, user, room_id)
             operation = await self._operation(session, user.id, request_id)
@@ -1497,9 +1511,27 @@ class ChatService:
                 for upload_id in upload_ids
             ]
             root = await self._thread_root(session, room, thread_root_id)
+            shift = 0
             if mentions:
+                written = body
                 body = await self._with_mentions(session, room, mentions, body)
-            named_people = await self._named_people(session, room, people, mentions)
+                if body != written:
+                    shift = _utf16_len(body) - _utf16_len(written)
+            named_people = await self._named_people(
+                session,
+                room,
+                people,
+                mentions,
+                [
+                    text[1:]
+                    for text, span in zip(typed, mention_spans, strict=True)
+                    if span.kind == "user"
+                ],
+                [
+                    {**span.model_dump(), "offset": span.offset + shift}
+                    for span in mention_spans
+                ],
+            )
 
             if not await self._claim(
                 session,
@@ -1761,11 +1793,15 @@ class ChatService:
         room: Room,
         user_ids: list[str],
         agent_ids: list[str],
-    ) -> dict[str, list[str]] | None:
-        """What a send records of the people it names (`MENTIONS_KEY`): their
-        ids, and the names whose `@` spans address no agent. A name an agent
-        named in the same send also answers to stays the agent's."""
-        if not user_ids:
+        typed_names: list[str],
+        spans: list[dict[str, object]],
+    ) -> dict[str, object] | None:
+        """What a send records of the mentions it makes (`MENTIONS_KEY`): the
+        people's ids, the names whose `@` spans address no agent (the people's
+        names and what their spans say), and where each mention is written.
+        A name an agent named in the same send also answers to stays the
+        agent's."""
+        if not user_ids and not spans:
             return None
         names: dict[str, str] = {
             user_id: name
@@ -1795,8 +1831,13 @@ class ChatService:
         return {
             "user_ids": user_ids,
             "person_names": sorted(
-                {name for name in names.values() if name.lower() not in spoken}
+                {
+                    name
+                    for name in [*names.values(), *typed_names]
+                    if name and name.lower() not in spoken
+                }
             ),
+            "spans": spans,
         }
 
     async def _with_mentions(
@@ -1834,6 +1875,39 @@ def _may_use(agent: Agent, user: User, *, room_id: str, group_id: str | None) ->
         external_user_ids=[],
         owner_user_id=agent.owner_id,
     )
+
+
+def _utf16_len(text: str) -> int:
+    return len(text.encode("utf-16-le")) // 2
+
+
+def _span_texts(body: str, spans: list[ChatMention]) -> list[str]:
+    """What each span covers in `body`, in the spans' order, or a refusal for
+    a span out of bounds, splitting a character, overlapping another, or not
+    starting with `@`. Offsets and lengths count UTF-16 code units."""
+    units = body.encode("utf-16-le")
+    refusal = ChatError(422, "INVALID_MENTION", "A mention does not match the message.")
+    end = 0
+    for span in sorted(spans, key=lambda each: each.offset):
+        if (
+            span.offset < end
+            or span.length < 1
+            or span.offset + span.length > len(units) // 2
+        ):
+            raise refusal
+        end = span.offset + span.length
+    texts = []
+    for span in spans:
+        try:
+            text = units[span.offset * 2 : (span.offset + span.length) * 2].decode(
+                "utf-16-le"
+            )
+        except UnicodeDecodeError as exc:
+            raise refusal from exc
+        if not text.startswith("@"):
+            raise refusal
+        texts.append(text)
+    return texts
 
 
 def _owns_agent_in_room(user_id: str) -> ColumnElement[bool]:
