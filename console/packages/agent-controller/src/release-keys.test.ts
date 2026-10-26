@@ -3,16 +3,18 @@ import { createHash } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { TRUSTED_RELEASE_KEYS } from './release-keys';
 import { publicKeyOf } from './release-signing';
 import { signRelease, testSigningKey } from './testing/release-signing';
 
+// A Windows checkout can turn install.sh's line endings into CRLF; what is
+// compared here is its text, so read it with LF either way.
 const installSh = readFileSync(
   join(dirname(fileURLToPath(import.meta.url)), '..', 'install.sh'),
   'utf8'
-);
+).replace(/\r\n/g, '\n');
 
 /** The text between `# BEGIN <name>` and `# END <name>` in install.sh, inside its single quotes. */
 function installShBlock(name: string): string {
@@ -141,7 +143,7 @@ describe('scripts/sign-release.mjs', () => {
       [
         '--input-type=module',
         '-e',
-        `const { TRUSTED_RELEASE_KEYS } = await import(${JSON.stringify(join(dirname(signScript), '..', 'src', 'release-keys.ts'))}); process.stdout.write(JSON.stringify(TRUSTED_RELEASE_KEYS));`,
+        `const { TRUSTED_RELEASE_KEYS } = await import(${JSON.stringify(pathToFileURL(join(dirname(signScript), '..', 'src', 'release-keys.ts')).href)}); process.stdout.write(JSON.stringify(TRUSTED_RELEASE_KEYS));`,
       ],
       { encoding: 'utf8' }
     );
