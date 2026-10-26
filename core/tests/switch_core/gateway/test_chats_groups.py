@@ -17,7 +17,7 @@ from switch_core.bridges.agent.protocol.agent_connections import AgentConnection
 from switch_core.bridges.agent.registration_bootstrap import (
     BOOTSTRAP_OWNER_MARKER_META_KEY,
 )
-from switch_core.chats.service import ChatService
+from switch_core.chats.service import ChatError, ChatService
 from switch_core.db.models import Agent, Client, Message, Room, User, room_agents
 from switch_core.gateway import chats as chats_module
 from tests.switch_core.gateway.conftest import (
@@ -1181,3 +1181,53 @@ async def test_mention_spans_place_people_and_agents_in_the_body(
         mentionSpans=[{"kind": "user", "id": chats.admin.id, "offset": 0, "length": 6}],
     )
     assert _code(stranger) == "USER_NOT_IN_CHAT"
+
+
+async def test_one_request_id_with_two_payloads_on_two_processes_is_one_request(
+    chats: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    agent = await chats.agent("helper", owner=chats.alice)
+    other = _second_process(chats)
+    both_read = asyncio.Barrier(2)
+    for service in (chats.service, other):
+        read = service._operation
+
+        async def read_then_wait(
+            session: AsyncSession, user_id: str, request_id: str, read: Any = read
+        ) -> Any:
+            found = await read(session, user_id, request_id)
+            # Both read "no operation" before either claims it.
+            if found is None:
+                await both_read.wait()
+            return found
+
+        monkeypatch.setattr(service, "_operation", read_then_wait)
+
+    async def create(service: ChatService, member: User) -> Any:
+        try:
+            return await service.create_chat(
+                "00000000-0000-0000-0000-000000000000",
+                chats.alice,
+                agent_ids=[agent.id],
+                member_user_ids=[member.id],
+                kind=None,
+                name=None,
+                request_id="c1",
+                greeting=None,
+            )
+        except ChatError as refused:
+            return refused
+
+    outcomes = await asyncio.gather(
+        create(chats.service, chats.bob), create(other, chats.admin)
+    )
+    rooms = [each for each in outcomes if isinstance(each, Room)]
+    refusals = [each for each in outcomes if isinstance(each, ChatError)]
+    assert len(rooms) == 1 and len(refusals) == 1
+    assert refusals[0].code == "REQUEST_REUSED"
+    async with chats.factory() as session:
+        assert await session.scalar(select(func.count()).select_from(Room)) == 1
+    members = await chats.client.get(
+        f"/chats/{rooms[0].id}/members", headers=chats.as_user(chats.alice)
+    )
+    assert len({m["userId"] for m in members.json()["members"]}) == 2

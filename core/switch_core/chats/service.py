@@ -1275,7 +1275,7 @@ class ChatService:
                         "Only the agent's owner can give it a greeting.",
                     )
                 if operation is None:
-                    await self._claim(
+                    claimed = await self._claim(
                         session,
                         tenant_id=tenant_id,
                         user_id=user.id,
@@ -1286,6 +1286,17 @@ class ChatService:
                         room_id=None,
                     )
                     await session.commit()
+                    if not claimed:
+                        # The same request id, claimed first elsewhere: it has to
+                        # be the same request before anything is done for it.
+                        operation = await self._operation(session, user.id, request_id)
+                        assert operation is not None
+                        self._require_same(operation, "create_chat", payload_hash)
+                        if operation.state == "done" and operation.room_id is not None:
+                            room, _ = await self.require_member(
+                                session, tenant_id, user, operation.room_id
+                            )
+                            return room
                 operation_id = self._operation_id(tenant_id, user.id, request_id)
                 found = await self._room_of_operation(session, operation_id)
             if found is None:
