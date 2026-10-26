@@ -84,11 +84,11 @@ def key_of(plan: NewAgentPlan, keys: dict[str, str]) -> str:
     return keys.get(plan.name, plan.name)
 
 
-def render_agents(
+def render_plans(
     text: str, inputs: dict[str, Any], builtins: dict[str, str]
-) -> dict[str, dict[str, str | None]]:
-    """The values `text` sets on each agent it creates, by key, rendered with
-    the inputs and builtins a run used.
+) -> dict[str, NewAgentPlan]:
+    """Each agent `text` creates, by key, rendered with the inputs and
+    builtins a run used.
 
     Where an agent runs does not change what it is told, so the run's machine
     stands in as the only one, ready for every provider: a machine since
@@ -108,7 +108,18 @@ def render_agents(
     ]
     plan = plan_template(text, {}, inputs, builtins=builtins, machines=machines)
     keys = resource_keys(text, inputs, builtins)
-    return {key_of(agent, keys): agent_fields(agent) for agent in plan.new_agents}
+    return {key_of(agent, keys): agent for agent in plan.new_agents}
+
+
+def render_agents(
+    text: str, inputs: dict[str, Any], builtins: dict[str, str]
+) -> dict[str, dict[str, str | None]]:
+    """The values `text` sets on each agent it creates, by key (see
+    `render_plans`)."""
+    return {
+        key: agent_fields(plan)
+        for key, plan in render_plans(text, inputs, builtins).items()
+    }
 
 
 @dataclass(frozen=True)

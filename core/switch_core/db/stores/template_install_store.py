@@ -156,3 +156,28 @@ class TemplateInstallStore:
             .values(revision=to)
         )
         return bool(result.rowcount)  # type: ignore[attr-defined]
+
+    async def set_notice(
+        self, session: AsyncSession, resource_id: str, notice: str | None
+    ) -> None:
+        await session.execute(
+            update(TemplateInstallResource)
+            .where(
+                TemplateInstallResource.tenant_id == require_tenant_id(),
+                TemplateInstallResource.id == resource_id,
+            )
+            .values(notice=notice)
+        )
+
+    async def notice_for_agent(
+        self, session: AsyncSession, agent_id: str
+    ) -> str | None:
+        """What Switch has to tell an agent about its template, if anything."""
+        return (
+            await session.execute(
+                select(TemplateInstallResource.notice).where(
+                    TemplateInstallResource.tenant_id == require_tenant_id(),
+                    TemplateInstallResource.agent_id == agent_id,
+                )
+            )
+        ).scalar_one_or_none()

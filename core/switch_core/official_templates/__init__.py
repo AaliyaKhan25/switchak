@@ -21,7 +21,7 @@ Each also has ``revisions.json``: every revision of it released, numbered
 from 1, with a fingerprint of what each one served and set on its agents.
 The last is the revision this release serves (its ``version``), and agents
 created from an older one are brought up to it when the server starts
-(``template_updates``). Changing a template means adding a revision, which
+(``management/template_updates.py``). Changing a template means adding a revision, which
 ``python -m switch_core.official_templates.revisions record <slug>`` does; a
 test fails while the files and the last revision disagree.
 """

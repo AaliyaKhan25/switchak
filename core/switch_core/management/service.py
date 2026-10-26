@@ -962,6 +962,7 @@ class ManagementService:
                     controller_id=target,
                     desired_state=row.desired_state,
                     definition=row.definition,
+                    expected_revision=None,
                 )
             )
         return moved
@@ -1364,7 +1365,14 @@ class ManagementService:
         agent = await self._owned_agent(session, owner_id, agent_id)
         existing = await self.definitions.get_for_agent(session, tenant_id, agent_id)
         return await self._apply(
-            session, tenant_id, owner_id, agent, existing, target, protocol
+            session,
+            tenant_id,
+            owner_id,
+            agent,
+            existing,
+            target,
+            protocol,
+            expected_revision=None,
         )
 
     async def patch_managed_agent(
@@ -1379,6 +1387,7 @@ class ManagementService:
         controller_id: str | None,
         controller_id_given: bool,
         protocol: AgentCore,
+        expected_revision: int | None,
     ) -> dict[str, Any]:
         existing, agent = await self._owned_definition(
             session, tenant_id, owner_id, agent_id
@@ -1395,7 +1404,14 @@ class ManagementService:
             ),
         )
         return await self._apply(
-            session, tenant_id, owner_id, agent, existing, target, protocol
+            session,
+            tenant_id,
+            owner_id,
+            agent,
+            existing,
+            target,
+            protocol,
+            expected_revision=expected_revision,
         )
 
     async def _apply(
@@ -1407,7 +1423,11 @@ class ManagementService:
         existing: AgentDefinitionRow | None,
         target: _Placement,
         protocol: AgentCore,
+        expected_revision: int | None,
     ) -> dict[str, Any]:
+        """Write `target` over `existing`. With `expected_revision`, only
+        while the definition is still at that revision (`DefinitionChanged`
+        otherwise), for a change worked out from what it was."""
         definition = DefinitionV1.model_validate(target.definition)
         moved = existing is None or existing.controller_id != target.controller_id
         to_running = target.desired_state == "running" and (
@@ -1482,6 +1502,7 @@ class ManagementService:
                 controller_id=target.controller_id,
                 desired_state=target.desired_state,
                 definition=target.definition,
+                expected_revision=expected_revision,
             )
             affected = {previous_controller_id, target.controller_id}
             if previous_controller_id is not None and moved:
@@ -1550,6 +1571,7 @@ class ManagementService:
             controller_id=row.controller_id,
             desired_state=row.desired_state,
             definition=definition,
+            expected_revision=None,
         )
         revisions = await self._bump_and_collect(
             session, tenant_id, {row.controller_id}

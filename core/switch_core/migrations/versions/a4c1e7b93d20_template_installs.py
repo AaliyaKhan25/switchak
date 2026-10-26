@@ -95,6 +95,7 @@ def upgrade() -> None:
         sa.Column("agent_id", sa.Text(), nullable=True),
         sa.Column("room_id", sa.Text(), nullable=True),
         sa.Column("fingerprints", JSONB(), nullable=False),
+        sa.Column("notice", sa.Text(), nullable=True),
         sa.ForeignKeyConstraint(
             ["tenant_id"], ["tenants.id"], name="fk_template_install_resources_tenant"
         ),

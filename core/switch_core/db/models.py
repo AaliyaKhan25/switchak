@@ -1451,6 +1451,10 @@ class TemplateInstallResource(TenantScoped, Base):
     agent_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     room_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     fingerprints: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    # What Switch has to tell the agent about its template, until it reads
+    # how it differs from it (``get_template_status``): a newer revision it
+    # was not brought fully up to. Null when there is nothing to tell.
+    notice: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 # ── Packages ──────────────────────────────────────────────────────────────────
