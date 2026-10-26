@@ -3231,6 +3231,34 @@ class ChatHidden(TenantScoped, Base):
     )
 
 
+class ChatRead(TenantScoped, Base):
+    """How far one person has read a chat: the last room position they were
+    shown. Only moves forward; set to the room's head as they join, so what
+    was said before they arrived is not unread."""
+
+    __tablename__ = "chat_reads"
+    __table_args__ = (
+        PrimaryKeyConstraint("tenant_id", "user_id", "room_id"),
+        ForeignKeyConstraint(
+            ["tenant_id", "room_id"],
+            ["rooms.tenant_id", "rooms.id"],
+            name="fk_chat_reads_room",
+            ondelete="CASCADE",
+        ),
+    )
+
+    user_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("users.id", ondelete="CASCADE", name="fk_chat_reads_user"),
+        nullable=False,
+    )
+    room_id: Mapped[str] = mapped_column(Text, nullable=False)
+    read_through_seq: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
 class ChatOwnerGrant(TenantScoped, Base):
     """A membership held only because the person owns an agent in the room.
 
