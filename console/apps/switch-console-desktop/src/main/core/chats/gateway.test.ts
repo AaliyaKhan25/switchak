@@ -33,6 +33,7 @@ function row(roomId: string, channelType: string) {
     ownsAgent: false,
     memberUserIds: [],
     memberCount: 0,
+    unreadCount: 0,
     lastMessage: null,
   };
 }

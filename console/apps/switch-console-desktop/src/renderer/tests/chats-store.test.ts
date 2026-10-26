@@ -4,6 +4,7 @@ import {
   ChatsStore,
   type ChatsApi,
   type ChatsEvents,
+  READ_DEBOUNCE_MS,
 } from '@renderer/features/chats/stores/chats-store';
 import type { ChatMessage, ChatSummary } from '@shared/core/chats/chats';
 
@@ -36,6 +37,7 @@ function summary(roomId: string, seq: number): ChatSummary {
     ownsAgent: false,
     memberUserIds: [],
     memberCount: 0,
+    unreadCount: 0,
     lastMessage: { seq, sentAt: '2026-01-01T00:00:00Z', preview: 'hi', senderName: 'Ada' },
   };
 }
@@ -88,6 +90,7 @@ function setup(
     timeline: () => timeline as TimelineApi,
     archive: vi.fn(async () => {}),
     delete: vi.fn(async () => {}),
+    markRead: vi.fn(async () => {}),
   };
   const store = new ChatsStore(api, events);
   return {
@@ -271,8 +274,13 @@ describe('ChatsStore', () => {
 /** A viewer's store whose feed the test drives, already connected to `s1`. */
 async function viewer() {
   let onSummary: Parameters<ChatsEvents['onSummary']>[0] = () => {};
+  let onMessage: Parameters<ChatsEvents['onMessage']>[0] = () => {};
+  const markRead = vi.fn(async () => {});
   const events: ChatsEvents = {
-    onMessage: () => () => {},
+    onMessage: (cb) => {
+      onMessage = cb;
+      return () => {};
+    },
     onSummary: (cb) => {
       onSummary = cb;
       return () => {};
@@ -291,11 +299,18 @@ async function viewer() {
       timeline: () => ({}) as TimelineApi,
       archive: async () => {},
       delete: async () => {},
+      markRead,
     },
     events
   );
   await store.connect('s1');
-  return { store, push: (chat: ChatSummary) => onSummary({ serverId: 's1', chat }), group };
+  return {
+    store,
+    push: (chat: ChatSummary) => onSummary({ serverId: 's1', chat }),
+    emit: (m: ChatMessage) => onMessage({ serverId: 's1', message: m }),
+    markRead,
+    group,
+  };
 }
 
 describe('ChatsStore membership', () => {
@@ -308,5 +323,48 @@ describe('ChatsStore membership', () => {
     store.dropAgent('g', 'a2');
     expect(store.chat('g')?.agents.map((agent) => agent.id)).toEqual(['a3']);
     expect(store.chat('g')?.name).toBe('renamed');
+  });
+});
+
+describe('ChatsStore unread counts', () => {
+  const from = (roomId: string, seq: number, userId: string) => ({
+    ...message(roomId, seq),
+    sender: { ...message(roomId, seq).sender, userId },
+  });
+
+  it('counts others’ new messages in rooms not being read, and takes the server’s count', async () => {
+    const { store, emit, push, group } = await viewer();
+    emit(from('g', 2, 'bob'));
+    emit(from('g', 3, 'bob'));
+    emit(from('g', 3, 'bob'));
+    expect(store.unread('g')).toBe(2);
+    emit(from('g', 4, 'u'));
+    expect(store.unread('g')).toBe(2);
+    store.setViewing('g');
+    emit(from('g', 5, 'bob'));
+    expect(store.unread('g')).toBe(0);
+    store.setViewing(null);
+    expect(store.unread('g')).toBe(2);
+    push({ ...group, unreadCount: 7 });
+    expect(store.unread('g')).toBe(7);
+  });
+
+  it('marks read at once here and sends the furthest position once, never backwards', async () => {
+    vi.useFakeTimers();
+    try {
+      const { store, push, group, markRead } = await viewer();
+      push({ ...group, unreadCount: 3 });
+      store.read('g', 5);
+      store.read('g', 9);
+      expect(store.unread('g')).toBe(0);
+      vi.advanceTimersByTime(READ_DEBOUNCE_MS);
+      expect(markRead).toHaveBeenCalledTimes(1);
+      expect(markRead).toHaveBeenCalledWith('s1', 'g', 9);
+      store.read('g', 4);
+      vi.advanceTimersByTime(READ_DEBOUNCE_MS);
+      expect(markRead).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

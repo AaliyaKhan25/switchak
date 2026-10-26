@@ -218,6 +218,11 @@ export async function listAgentCandidates(
   return (await json(server, `/chats/agent-candidates${query}`, agentCandidatesSchema)).agentIds;
 }
 
+/** The viewer has been shown the chat through `seq`; the server never moves it back. */
+export async function markChatRead(server: SwitchServer, roomId: string, seq: number) {
+  await call(server, `${room(roomId)}/read`, { method: 'PUT', body: { seq } });
+}
+
 export async function sendChatMessage(
   server: SwitchServer,
   roomId: string,

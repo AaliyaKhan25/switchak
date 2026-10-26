@@ -84,6 +84,8 @@ export const ChatPanel = observer(function ChatPanel({
   useEffect(() => {
     if (!timeline.loaded && !lost && !timeline.notMember) void timeline.load();
   }, [timeline, lost, timeline.notMember]);
+  const panel = useRef<HTMLDivElement>(null);
+  useReadWhileShown(roomId, timeline, panel, lost || timeline.notMember);
 
   // Reasoning lives only on a local or SSH host and is read while a turn runs,
   // and whenever the joined turns change.
@@ -134,7 +136,11 @@ export const ChatPanel = observer(function ChatPanel({
     );
 
   return (
-    <div data-chat-panel className="flex h-full min-h-0 flex-col bg-background text-foreground">
+    <div
+      ref={panel}
+      data-chat-panel
+      className="flex h-full min-h-0 flex-col bg-background text-foreground"
+    >
       {timeline.loadError && (
         <div
           role="alert"
@@ -194,6 +200,49 @@ export const ChatPanel = observer(function ChatPanel({
     </div>
   );
 });
+
+/**
+ * While the conversation is on screen in a focused window it is the chat being
+ * read: its new messages do not count as unread, and it is marked read through
+ * the last message shown. A hidden tab or a background window reads nothing.
+ */
+function useReadWhileShown(
+  roomId: string,
+  timeline: ChatTimeline,
+  panel: React.RefObject<HTMLDivElement | null>,
+  hidden: boolean
+): void {
+  const [shown, setShown] = useState(false);
+  const lastSeq = timeline.loaded ? (timeline.messages.at(-1)?.seq ?? null) : null;
+  useEffect(() => {
+    const update = () =>
+      setShown(
+        !hidden &&
+          document.visibilityState === 'visible' &&
+          document.hasFocus() &&
+          (panel.current?.checkVisibility() ?? false)
+      );
+    update();
+    document.addEventListener('visibilitychange', update);
+    window.addEventListener('focus', update);
+    window.addEventListener('blur', update);
+    return () => {
+      document.removeEventListener('visibilitychange', update);
+      window.removeEventListener('focus', update);
+      window.removeEventListener('blur', update);
+    };
+  }, [panel, hidden]);
+  useEffect(() => {
+    if (!shown) return;
+    chatsStore.setViewing(roomId);
+    return () => {
+      if (chatsStore.viewing === roomId) chatsStore.setViewing(null);
+    };
+  }, [shown, roomId]);
+  useEffect(() => {
+    if (shown && lastSeq !== null) chatsStore.read(roomId, lastSeq);
+  }, [shown, roomId, lastSeq]);
+}
 
 /**
  * Sending from here jumps to the end and resumes following, wherever the

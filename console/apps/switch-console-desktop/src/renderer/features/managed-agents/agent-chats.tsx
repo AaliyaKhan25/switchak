@@ -191,6 +191,7 @@ export const AgentChats = observer(function AgentChats({ agent }: { agent: Manag
           {rooms.map((room) => (
             <RoomListRow
               key={room.roomId}
+              roomId={room.roomId}
               room={{
                 name: switchRoomsStore.roomNameById(room.roomId) ?? room.roomName,
                 bridgeType: switchRoomsStore.roomBridgeTypeById(room.roomId),

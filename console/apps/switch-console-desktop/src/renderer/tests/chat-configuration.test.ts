@@ -50,6 +50,7 @@ function render(canManage: boolean): string {
     ownsAgent: false,
     memberUserIds: ['u1', 'u2'],
     memberCount: 2,
+    unreadCount: 0,
     lastMessage: null,
   };
   const client = new QueryClient();
@@ -109,6 +110,7 @@ describe('chatMembersQueryKey', () => {
         ...base,
         memberUserIds,
         memberCount: memberUserIds.length,
+        unreadCount: 0,
         ...extra,
       });
     const now = key(['u1', 'u2']);

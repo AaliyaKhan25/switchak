@@ -2,6 +2,7 @@ import { ChevronDown, DoorOpen, MessagesSquare, Plus } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
 import { useEffect, useState } from 'react';
 import type { GuardResult, ViewDefinition } from '@renderer/app/view-registry';
+import { UnreadBadge } from '@renderer/features/chats/components/unread-badge';
 import { agentsStore } from '@renderer/features/locations/stores/agents-store';
 import { refreshSidebarRoomState } from '@renderer/features/sidebar/sidebar-tree-data';
 import { openRoom } from '@renderer/features/switch-rooms/open-room';
@@ -230,7 +231,10 @@ const RoomRow = observer(function RoomRow({
       className="group/room flex w-full cursor-pointer items-center gap-3 bg-background px-4 py-3 text-left transition-colors hover:bg-[var(--fill)]"
     >
       <div className="flex min-w-0 flex-1 flex-col">
-        <span className="truncate text-sm font-medium text-foreground">{roomTitle(room)}</span>
+        <span className="flex items-center gap-2">
+          <span className="truncate text-sm font-medium text-foreground">{roomTitle(room)}</span>
+          <UnreadBadge roomId={room.id} />
+        </span>
         {/* An empty room is a state, not a quantity. "0 agents" reads as a
           measurement of something that is working; a room nobody is in is a
           room that cannot answer, and it should say so in words. */}

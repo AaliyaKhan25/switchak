@@ -25,6 +25,7 @@ function summary(roomId: string, channelType: ChatSummary['channelType'] = 'dire
     ownsAgent: false,
     memberUserIds: [],
     memberCount: 0,
+    unreadCount: 0,
     lastMessage: null,
   };
 }

@@ -28,6 +28,7 @@ const summary = (overrides: Partial<ChatSummary>): ChatSummary => ({
   ownsAgent: false,
   memberUserIds: [],
   memberCount: 0,
+  unreadCount: 0,
   lastMessage: null,
   ...overrides,
 });

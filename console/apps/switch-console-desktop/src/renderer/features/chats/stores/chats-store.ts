@@ -35,7 +35,11 @@ export type ChatsApi = {
   timeline: (serverId: string) => TimelineApi;
   archive: (serverId: string, roomId: string) => Promise<void>;
   delete: (serverId: string, roomId: string) => Promise<void>;
+  markRead: (serverId: string, roomId: string, seq: number) => Promise<void>;
 };
+
+/** How long reading settles before the read position is sent. */
+export const READ_DEBOUNCE_MS = 400;
 
 export type ChatsEvents = {
   onMessage: (cb: (data: { serverId: string; message: ChatMessage }) => void) => () => void;
@@ -61,6 +65,11 @@ export class ChatsStore {
   streamState: ChatStreamState = 'offline';
   streamDetail: string | null = null;
   listError: string | null = null;
+  /** The room whose chat is on screen and being read: its messages do not count as unread. */
+  viewing: string | null = null;
+  /** The furthest message marked read here, by room; a read never moves back. */
+  private readonly readThrough = new Map<string, number>();
+  private readonly readTimers = new Map<string, ReturnType<typeof setTimeout>>();
   readonly timelines: ChatTimelines;
 
   constructor(
@@ -68,7 +77,12 @@ export class ChatsStore {
     events: ChatsEvents
   ) {
     this.timelines = new ChatTimelines(api.timeline);
-    makeAutoObservable<ChatsStore, 'api'>(this, { api: false, timelines: false });
+    makeAutoObservable<ChatsStore, 'api' | 'readThrough' | 'readTimers'>(this, {
+      api: false,
+      timelines: false,
+      readThrough: false,
+      readTimers: false,
+    });
     events.onSummary(({ serverId, chat }) => {
       if (serverId === this.serverId) this.upsert(chat);
     });
@@ -178,6 +192,11 @@ export class ChatsStore {
     if (chat && (chat.lastMessage === null || chat.lastMessage.seq < message.seq))
       this.chats.set(message.roomId, {
         ...chat,
+        // Counted here until the server's next summary says otherwise.
+        unreadCount:
+          message.sender.userId !== this.userId && this.viewing !== message.roomId
+            ? chat.unreadCount + 1
+            : chat.unreadCount,
         lastMessage: {
           seq: message.seq,
           sentAt: message.sentAt,
@@ -241,6 +260,37 @@ export class ChatsStore {
         ...chat,
         agents: chat.agents.filter((agent) => agent.id !== agentId),
       });
+  }
+
+  /** Which room's chat is on screen and being read; null when none is. */
+  setViewing(roomId: string | null): void {
+    this.viewing = roomId;
+  }
+
+  /**
+   * The chat was shown through message `seq`: its count goes to 0 here at once,
+   * and the position reaches the server once reading settles. Never backwards.
+   */
+  read(roomId: string, seq: number): void {
+    const serverId = this.serverId;
+    if (!serverId) return;
+    const chat = this.chats.get(roomId);
+    if (chat && chat.unreadCount !== 0) this.chats.set(roomId, { ...chat, unreadCount: 0 });
+    if ((this.readThrough.get(roomId) ?? 0) >= seq) return;
+    this.readThrough.set(roomId, seq);
+    clearTimeout(this.readTimers.get(roomId));
+    this.readTimers.set(
+      roomId,
+      setTimeout(() => {
+        this.readTimers.delete(roomId);
+        void this.api.markRead(serverId, roomId, seq);
+      }, READ_DEBOUNCE_MS)
+    );
+  }
+
+  /** How many messages in a room wait to be read: none for the one being read. */
+  unread(roomId: string): number {
+    return this.viewing === roomId ? 0 : (this.chats.get(roomId)?.unreadCount ?? 0);
   }
 
   /** The chats an agent is in, newest activity first. */

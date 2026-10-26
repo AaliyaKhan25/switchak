@@ -17,6 +17,7 @@ function summary(roomId: string, seq: number | null): ChatSummary {
     ownsAgent: false,
     memberUserIds: [],
     memberCount: 0,
+    unreadCount: 0,
     lastMessage:
       seq === null ? null : { seq, sentAt: '2026-01-01T00:00:00Z', preview: '', senderName: '' },
   };

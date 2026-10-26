@@ -50,6 +50,7 @@ import {
   listAgentCandidates,
   removeChatAgent,
   removeChatMember,
+  markChatRead,
   renameChat,
   sendChatControl,
   sendChatMessage,
@@ -194,6 +195,8 @@ export const chatsController = createRPCController({
   /** The agents the viewer may add to a new chat (`roomId` null) or to that chat. */
   agentCandidates: (params: { serverId: string; roomId: string | null }): Promise<string[]> =>
     onServer(params.serverId, (server) => listAgentCandidates(server, params.roomId)),
+  markRead: (params: { serverId: string; roomId: string; seq: number }): Promise<void> =>
+    onServer(params.serverId, (server) => markChatRead(server, params.roomId, params.seq)),
   messages: (params: {
     serverId: string;
     roomId: string;

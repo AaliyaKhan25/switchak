@@ -155,6 +155,7 @@ export function RoomRow({
   bridgeType = null,
   nameKnown = true,
   nameBlockedBySignIn = false,
+  badge = null,
 }: {
   label: string;
   /** Whether there is anything under this room to unfold. */
@@ -184,6 +185,8 @@ export function RoomRow({
   depth?: number;
   /** Bridge platform type (`slack`, `mattermost`, …) when the room is bridged. */
   bridgeType?: string | null;
+  /** Beside the name, such as how many messages wait to be read. */
+  badge?: React.ReactNode;
 }) {
   // Offered wherever the room has a channel to open, whether or not its
   // platform has a logo: the link is what makes the action work, not the icon.
@@ -229,6 +232,7 @@ export function RoomRow({
           </TooltipContent>
         </Tooltip>
       )}
+      {badge}
       {hasRoomActions && (
         <DropdownMenu>
           <DropdownMenuTrigger

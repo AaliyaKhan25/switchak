@@ -32,6 +32,8 @@ export const chatSummarySchema = z.object({
   /** The people in the chat, by user id, sorted. */
   memberUserIds: z.array(z.string()),
   memberCount: z.number().int(),
+  /** Messages since the viewer last read the chat; 0 from a server older than read positions. */
+  unreadCount: z.number().int().default(0),
   lastMessage: z
     .object({
       seq: z.number().int(),
