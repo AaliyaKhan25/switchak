@@ -2045,6 +2045,18 @@ version of their own to them without also giving them a release of their own.
   skill said a request card needed the owner's linked identity and room
   membership. Its addressing policy decides, and agents now read theirs with
   `get_agent_detail` and name the people who can answer.
+- **A Codex session explains why a keyring login is not available to it.**
+  Each session runs in its own Codex home, which receives the machine's
+  `auth.json` but not a login stored in the OS keyring, so a machine signed in
+  with keyring storage (`cli_auth_credentials_store = "keyring"` or `"auto"`)
+  failed with only "Sign in on the execution machine with codex login" while
+  `codex login status` said it was signed in. The error now says that sessions
+  cannot use a keyring login, and gives the workaround for a machine whose
+  organization does not enforce the keyring: switch Codex to file storage,
+  which keeps the login in plaintext, sign in again and start a new session.
+  Giving this computer's Codex login to a machine says the same instead of
+  "This computer is not signed in to codex". Keyring logins are still not
+  supported in Switch sessions (#1048).
 
 ### [0.40.1] - 2026-10-21
 

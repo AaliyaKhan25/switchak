@@ -69,6 +69,20 @@ const CLIENT_NAME = 'switch-console';
 const CLIENT_VERSION = '0.1.0';
 
 /**
+ * Codex keys a keyring login by its CODEX_HOME path, and a session runs in its
+ * own CODEX_HOME that receives only the execution machine's auth.json, so a
+ * keyring login reads as signed out here even though `codex login status`
+ * reports it.
+ */
+export const CODEX_SIGN_IN_REQUIRED =
+  'Sign in on the execution machine with codex login. If Codex says you are already signed in, ' +
+  'your login is likely in the OS keyring (cli_auth_credentials_store = "keyring" or "auto"), ' +
+  'which Switch sessions cannot use: they get the login only from auth.json. Unless your ' +
+  'organization enforces the keyring, set cli_auth_credentials_store = "file" in the Codex ' +
+  'config.toml on the execution machine, which keeps the login in plaintext, then run codex ' +
+  'login again and start a new session.';
+
+/**
  * `multi_agent_v2` ships stable but off, and it is what puts `spawn_agent` in
  * the model's tool set — without it a delegation request is answered inline and
  * no subagent item ever reaches the transcript.
@@ -395,8 +409,7 @@ export class CodexAdapter implements ProviderAdapter {
       const account = z
         .object({ account: z.unknown().nullable(), requiresOpenaiAuth: z.boolean() })
         .parse(await client.request('account/read', { refreshToken: false }));
-      if (!account.account && account.requiresOpenaiAuth)
-        throw new Error('Sign in on the execution machine with codex login.');
+      if (!account.account && account.requiresOpenaiAuth) throw new Error(CODEX_SIGN_IN_REQUIRED);
 
       const configured = await configuredSandbox(input.env.CODEX_HOME);
       const sandbox = sandboxFor(input.runtimeMode, configured);
