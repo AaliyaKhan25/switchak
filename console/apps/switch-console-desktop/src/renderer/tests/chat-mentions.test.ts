@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   agentTargets,
   composeMentions,
+  editMentions,
   shiftMentions,
   filterMentionAgents,
   filterMentionPeople,
@@ -165,5 +166,23 @@ describe('picked mentions', () => {
     ]);
     expect(shiftMentions('hi @Bob Member', 'hi @Bob XMember', [mention])).toEqual([]);
     expect(composeMentions('hi @Bob', [mention], targets)).toEqual([]);
+  });
+});
+
+describe('undoing the removal of a picked mention', () => {
+  const sharer = [{ id: 'a9', name: 'Bob Member', alias: null }];
+  const bob = [{ userId: 'u1', name: 'Bob Member' }];
+  const targets = [...agentTargets(sharer), ...personTargets(bob)];
+  const person = { kind: 'person' as const, id: 'u1', start: 3, end: 14 };
+
+  it('brings the mention back as the person on undo, and not on a plain retype', () => {
+    const removed = editMentions('hi @Bob Member', 'hi ', [person], [], false);
+    expect(removed.mentions).toEqual([]);
+    const retyped = editMentions('hi ', 'hi @Bob Member', [], removed.remembered, false);
+    expect(retyped.mentions).toEqual([]);
+    const undone = editMentions('hi ', 'hi @Bob Member', [], removed.remembered, true);
+    expect(undone.mentions).toEqual([person]);
+    expect(undone.remembered).toEqual([]);
+    expect(composeMentions('hi @Bob Member', undone.mentions, targets)[0]!.kind).toBe('person');
   });
 });

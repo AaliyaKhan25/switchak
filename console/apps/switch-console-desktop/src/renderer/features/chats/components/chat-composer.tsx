@@ -14,6 +14,7 @@ import { snippetOf } from '../chat-threads';
 import {
   agentTargets,
   composeMentions,
+  editMentions,
   filterMentionAgents,
   filterMentionPeople,
   mentionAgentIds,
@@ -22,6 +23,7 @@ import {
   mentionSegments,
   type MentionToken,
   mentionUserIds,
+  type RememberedMention,
   personTargets,
   shiftMentions,
   tokenToRemove,
@@ -186,10 +188,20 @@ export const ChatComposer = observer(function ChatComposer({
   }, [draftKey, draft, picked]);
   /** A pick the next edit inserts, placed once that edit has moved the others. */
   const pendingPick = useRef<MentionToken | null>(null);
-  const edit = (next: string) => {
+  /** Picked mentions an edit removed, so undo and redo can bring them back with who they named. */
+  const removed = useRef<RememberedMention[]>([]);
+  const edit = (next: string, inputType: string | null) => {
     const pick = pendingPick.current;
     pendingPick.current = null;
-    setPicked((current) => [...shiftMentions(draft, next, current), ...(pick ? [pick] : [])]);
+    const result = editMentions(
+      draft,
+      next,
+      picked,
+      removed.current,
+      inputType === 'historyUndo' || inputType === 'historyRedo'
+    );
+    removed.current = result.remembered;
+    setPicked([...result.mentions, ...(pick ? [pick] : [])]);
     setDraft(next);
   };
   const [files, setFiles] = useState<{ id: string; file: File }[]>([]);
@@ -272,7 +284,7 @@ export const ChatComposer = observer(function ChatComposer({
     textarea.setSelectionRange(query.start, caret);
     // insertText keeps the native undo stack; a controlled-value write would wipe it.
     if (!document.execCommand('insertText', false, `@${name} `)) {
-      edit(`${draft.slice(0, query.start)}@${name} ${draft.slice(caret)}`);
+      edit(`${draft.slice(0, query.start)}@${name} ${draft.slice(caret)}`, null);
       setCaret(query.start + name.length + 2);
     }
     setMentionIndex(0);
@@ -507,7 +519,7 @@ export const ChatComposer = observer(function ChatComposer({
                 }
                 onKeyDown={onKeyDown}
                 onChange={(event) => {
-                  edit(event.target.value);
+                  edit(event.target.value, (event.nativeEvent as InputEvent).inputType ?? null);
                   setCaret(event.target.selectionStart);
                   setMentionIndex(0);
                   if (!mentionQuery(event.target.value, event.target.selectionStart))

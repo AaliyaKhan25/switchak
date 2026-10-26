@@ -131,16 +131,25 @@ export function mentionSegments(
 export const MENTION_BADGE =
   'rounded-sm bg-background-tertiary-1 ring-2 ring-background-tertiary-1';
 
+/** A picked mention an edit removed, with the text it read, for undo to bring back. */
+export type RememberedMention = MentionToken & { text: string };
+
+/** How many removed mentions undo can bring back. */
+const REMEMBERED_MENTIONS = 20;
+
 /**
  * Picked mentions carried across an edit from `before` to `after`: those wholly
  * before or after the changed run keep their place (shifted), and one the edit
- * touches is dropped.
+ * touches is dropped but remembered. An undo or redo (`history`) brings back a
+ * remembered mention whose exact text reappears where it was.
  */
-export function shiftMentions(
+export function editMentions(
   before: string,
   after: string,
-  mentions: MentionToken[]
-): MentionToken[] {
+  mentions: MentionToken[],
+  remembered: RememberedMention[],
+  history: boolean
+): { mentions: MentionToken[]; remembered: RememberedMention[] } {
   let start = 0;
   while (start < before.length && start < after.length && before[start] === after[start]) start++;
   let tail = 0;
@@ -152,12 +161,37 @@ export function shiftMentions(
     tail++;
   const endBefore = before.length - tail;
   const delta = after.length - before.length;
-  return mentions.flatMap((mention) => {
-    if (mention.end <= start) return [mention];
-    if (mention.start >= endBefore)
-      return [{ ...mention, start: mention.start + delta, end: mention.end + delta }];
-    return [];
-  });
+  const kept: MentionToken[] = [];
+  const dropped: RememberedMention[] = [];
+  for (const mention of mentions) {
+    if (mention.end <= start) kept.push(mention);
+    else if (mention.start >= endBefore)
+      kept.push({ ...mention, start: mention.start + delta, end: mention.end + delta });
+    else dropped.push({ ...mention, text: before.slice(mention.start, mention.end) });
+  }
+  let memory = [...remembered, ...dropped].slice(-REMEMBERED_MENTIONS);
+  if (!history) return { mentions: kept, remembered: memory };
+  const back = memory.filter(
+    (entry) =>
+      after.slice(entry.start, entry.end) === entry.text &&
+      !kept.some((mention) => entry.start < mention.end && mention.start < entry.end)
+  );
+  memory = memory.filter((entry) => !back.includes(entry));
+  return {
+    mentions: [...kept, ...back.map(({ text: _text, ...mention }) => mention)].sort(
+      (a, b) => a.start - b.start
+    ),
+    remembered: memory,
+  };
+}
+
+/** {@link editMentions} without the memory: the picked mentions that survive an edit. */
+export function shiftMentions(
+  before: string,
+  after: string,
+  mentions: MentionToken[]
+): MentionToken[] {
+  return editMentions(before, after, mentions, [], false).mentions;
 }
 
 /**

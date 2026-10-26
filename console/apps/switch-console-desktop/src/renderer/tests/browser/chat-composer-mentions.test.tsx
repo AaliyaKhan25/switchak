@@ -104,3 +104,51 @@ describe('PromptInputTextarea', () => {
     expect(onSubmit).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('ChatComposer picked mentions', () => {
+  it('keeps a picked person as the person through delete and undo, beside a same-name agent', async () => {
+    const sharer = { ...agent, id: 'a9', name: 'Bob Member' };
+    const textarea = await render(
+      <ChatComposer
+        serverId="s"
+        timeline={new ChatTimeline('room-undo', {} as TimelineApi)}
+        agents={[sharer]}
+        people={[{ userId: 'u1', name: 'Bob Member', email: 'bob@example.com' }]}
+        groupName="Ship review"
+        activity={null}
+        replyTo={null}
+        onClearReply={() => {}}
+        disabled={null}
+      />
+    );
+    const kinds = () =>
+      [...container!.querySelectorAll('mark[data-mention]')].map(
+        (mark) => (mark as HTMLElement).dataset.mention
+      );
+    await act(async () => {
+      textarea.focus();
+      document.execCommand('insertText', false, '@bo');
+    });
+    // The agent comes first in the list; the person is next.
+    await act(async () => {
+      textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    });
+    await act(async () => {
+      textarea.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+      );
+    });
+    expect(textarea.value).toBe('@Bob Member ');
+    expect(kinds()).toEqual(['person']);
+    await act(async () => {
+      textarea.setSelectionRange(0, textarea.value.length);
+      document.execCommand('delete');
+    });
+    expect(kinds()).toEqual([]);
+    await act(async () => {
+      document.execCommand('undo');
+    });
+    expect(textarea.value).toBe('@Bob Member ');
+    expect(kinds()).toEqual(['person']);
+  });
+});
