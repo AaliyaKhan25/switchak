@@ -115,8 +115,11 @@ version of their own to them without also giving them a release of their own.
   The hosted controller now launches every new instance of a machine as the
   instance type in its `gateway.json`, at the same moment it already moves the
   machine onto the configured image, and `upgrade --gateway-config` moves a
-  stopped machine onto both. `allowed_instance_types` is no longer bound to the
-  controller's state database, so it can change while machines exist; a
+  stopped machine onto both. Changing `instance_type` therefore resizes
+  existing machines as well as new ones; a machine that only stops and starts
+  keeps its instance and type. `allowed_instance_types` is no longer bound to
+  the controller's state database, so it can change while machines exist, and
+  `status` and `list` report `instance_type_allowed` for each machine. A
   database bound before this release is accepted and rebound on first start,
   as long as `allowed_instance_types` has not changed in the same deploy.
 - **Following the conversation is described the same way everywhere, and the

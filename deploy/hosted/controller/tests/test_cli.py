@@ -49,6 +49,7 @@ def test_create_status_and_delete_are_keyed_by_machine_id(capsys, config_path):
     assert set(created) == {
         "machine_id",
         "instance_type",
+        "instance_type_allowed",
         "desired_state",
         "desired_revision",
         "observed_state",
@@ -230,6 +231,22 @@ def test_a_database_bound_to_the_superseded_fingerprint_still_opens(capsys, conf
 
     assert code == 0
     assert status["machine_id"] == machine_id
+
+
+def test_status_flags_a_machine_on_a_type_no_longer_allowed(capsys, config_path):
+    _, created = run(capsys, config_path, "create", "--instance-type", "m6i.large")
+    assert created["instance_type_allowed"] is True
+    raw = json.loads(config_path.read_text())
+    raw["allowed_instance_types"] = ["r7i.2xlarge"]
+    config_path.write_text(json.dumps(raw))
+
+    code, status = run(capsys, config_path, "status", created["machine_id"])
+
+    assert code == 0
+    assert status["instance_type"] == "m6i.large"
+    assert status["instance_type_allowed"] is False
+    _, listed = run(capsys, config_path, "list")
+    assert [m["instance_type_allowed"] for m in listed] == [False]
 
 
 class OneIteration:

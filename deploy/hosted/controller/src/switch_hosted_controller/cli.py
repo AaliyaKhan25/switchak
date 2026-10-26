@@ -89,11 +89,13 @@ def _state_command(config: ControllerConfig, args: argparse.Namespace) -> int:
                 image_id=config.image_id,
                 max_machines=config.max_machines,
             )
-            _print_machine(machine)
+            _print_machine(machine, config)
             return 0
         if args.command == "list":
             print(
-                json.dumps([_machine_output(machine) for machine in store.list()], sort_keys=True)
+                json.dumps(
+                    [_machine_output(machine, config) for machine in store.list()], sort_keys=True
+                )
             )
             return 0
         try:
@@ -102,19 +104,23 @@ def _state_command(config: ControllerConfig, args: argparse.Namespace) -> int:
             raise ConfigError("machine_id must be a machine's UUID") from None
         machine = store.get(machine_id)
         if args.command == "status":
-            _print_machine(machine)
+            _print_machine(machine, config)
             return 0
         if args.command == "start":
-            _print_machine(store.set_desired(machine.machine_id, DesiredState.RUNNING, None))
+            _print_machine(
+                store.set_desired(machine.machine_id, DesiredState.RUNNING, None), config
+            )
             return 0
         if args.command == "stop":
-            _print_machine(store.set_desired(machine.machine_id, DesiredState.STOPPED, None))
+            _print_machine(
+                store.set_desired(machine.machine_id, DesiredState.STOPPED, None), config
+            )
             return 0
         if args.command == "delete":
             if args.confirm_machine_id != machine.machine_id:
                 raise StoreError("--confirm-machine-id must exactly match machine_id")
             desired = DesiredState.DELETED if args.delete_volume else DesiredState.RETAINED
-            _print_machine(store.set_desired(machine.machine_id, desired, None))
+            _print_machine(store.set_desired(machine.machine_id, desired, None), config)
             return 0
         if args.command == "upgrade":
             if (
@@ -147,7 +153,7 @@ def _state_command(config: ControllerConfig, args: argparse.Namespace) -> int:
                 raise ConfigError("instance type is not in allowed_instance_types")
             cloud.validate_image(replace(machine, image_id=config.image_id))
             claim = store.mark_instance_terminal_observed(machine.machine_id, machine.instance_id)
-            _print_machine(store.upgrade_terminated(claim, config.image_id, instance_type))
+            _print_machine(store.upgrade_terminated(claim, config.image_id, instance_type), config)
             return 0
         raise AssertionError(f"unhandled command {args.command}")
     finally:
@@ -229,14 +235,17 @@ def _health(max_age: float) -> int:
         raise ConfigError(str(error)) from error
 
 
-def _print_machine(machine: Machine) -> None:
-    print(json.dumps(_machine_output(machine), sort_keys=True))
+def _print_machine(machine: Machine, config: ControllerConfig) -> None:
+    print(json.dumps(_machine_output(machine, config), sort_keys=True))
 
 
-def _machine_output(machine: Machine) -> dict[str, Any]:
+def _machine_output(machine: Machine, config: ControllerConfig) -> dict[str, Any]:
     return {
         "machine_id": machine.machine_id,
         "instance_type": machine.instance_type,
+        # False while the machine still runs a type dropped from the list: its
+        # instance keeps it through stops and starts until it is replaced.
+        "instance_type_allowed": machine.instance_type in config.allowed_instance_types,
         "desired_state": machine.desired_state.value,
         "desired_revision": machine.desired_revision,
         "observed_state": machine.observed_state.value,
