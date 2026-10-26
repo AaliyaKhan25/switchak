@@ -1,4 +1,4 @@
-import type { ChatAgent } from '@shared/core/chats/chats';
+import type { ChatAgent, ChatMentionSpan } from '@shared/core/chats/chats';
 
 /** Characters a name may hold; matches the server's `NAME_CHAR`, so a badge is what the server reads as a mention. */
 const NAME_CHAR = /[A-Za-z0-9._-]/;
@@ -217,4 +217,29 @@ export function composeMentions(
     (token) => !kept.some((mention) => token.start < mention.end && mention.start < token.end)
   );
   return [...kept, ...found].sort((a, b) => a.start - b.start);
+}
+
+/** The mentions as the server takes them: each stretch of the body (UTF-16 offsets) and whom it names. */
+export function mentionSpans(tokens: MentionToken[]): ChatMentionSpan[] {
+  return tokens.map((token) => ({
+    kind: token.kind === 'person' ? 'user' : 'agent',
+    id: token.id,
+    offset: token.start,
+    length: token.end - token.start,
+  }));
+}
+
+/** A message's mentions from the stretches the server returned, those that lie within the body. */
+export function tokensFromSpans(body: string, spans: ChatMentionSpan[]): MentionToken[] {
+  return spans
+    .filter((span) => span.offset >= 0 && span.offset + span.length <= body.length)
+    .map(
+      (span): MentionToken => ({
+        kind: span.kind === 'user' ? 'person' : 'agent',
+        id: span.id,
+        start: span.offset,
+        end: span.offset + span.length,
+      })
+    )
+    .sort((a, b) => a.start - b.start);
 }

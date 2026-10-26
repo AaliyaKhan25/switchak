@@ -31,6 +31,7 @@ function message(seq: number, userId: string, name: string): ChatMessage {
     clientTxn: null,
     namedAgentIds: [],
     namedUserIds: [],
+    mentions: [],
     threadReplyCount: 0,
     threadLastReplySeq: null,
   };
@@ -148,5 +149,45 @@ describe('ChatTimelineView mentions of people no longer in the chat', () => {
       })
     );
     expect(html).toContain('data-mention="person"');
+  });
+});
+
+describe('ChatTimelineView mentions from the server’s spans', () => {
+  it('badges a same-name agent and person each as itself, after an emoji', () => {
+    const body = '🎉 @Bob Member and @Bob Member';
+    const timeline = new ChatTimeline('room-1', api);
+    timeline.apply({
+      ...message(1, 'me', 'Alice'),
+      body,
+      mentions: [
+        { kind: 'agent', id: 'a9', offset: body.indexOf('@'), length: 11 },
+        { kind: 'user', id: 'u1', offset: body.lastIndexOf('@'), length: 11 },
+      ],
+    });
+    const html = renderToStaticMarkup(
+      createElement(ChatTimelineView, {
+        serverId: 's',
+        timeline,
+        agents: [
+          {
+            id: 'a9',
+            name: 'Bob Member',
+            displayName: null,
+            iconUrl: null,
+            provider: null,
+            alias: null,
+            ownerName: null,
+            ownedByViewer: false,
+          },
+        ],
+        people: [{ userId: 'u1', name: 'Bob Member' }],
+        activities: [],
+        onReply: () => {},
+      })
+    );
+    expect([...html.matchAll(/data-mention="(\w+)"[^>]*>@Bob Member</g)].map((m) => m[1])).toEqual([
+      'agent',
+      'person',
+    ]);
   });
 });

@@ -21,6 +21,7 @@ import {
   type MentionPerson,
   mentionQuery,
   mentionSegments,
+  mentionSpans,
   type MentionToken,
   mentionUserIds,
   type RememberedMention,
@@ -338,6 +339,7 @@ export const ChatComposer = observer(function ChatComposer({
       threadRootId: replyTo?.messageId ?? null,
       mentionAgentIds: mentionAgentIds(sent),
       mentionUserIds: mentionUserIds(sent),
+      mentionSpans: mentionSpans(sent),
       files: files.map(({ file }) => chatFile(file)),
     });
     void chatTitler.sent(serverId, timeline.roomId, body);

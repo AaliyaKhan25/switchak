@@ -11,6 +11,7 @@ import {
   roomActivitySchema,
 } from '@shared/core/chats/activity';
 import {
+  type ChatMentionSpan,
   type ChatMessage,
   type ChatMessagesPage,
   chatMessagesPageSchema,
@@ -233,6 +234,7 @@ export async function sendChatMessage(
     uploadIds: string[];
     mentionAgentIds?: string[];
     mentionUserIds?: string[];
+    mentionSpans?: ChatMentionSpan[];
   }
 ): Promise<ChatMessage[]> {
   return (

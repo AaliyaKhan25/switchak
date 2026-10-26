@@ -3,6 +3,8 @@ import {
   agentTargets,
   composeMentions,
   editMentions,
+  mentionSpans,
+  tokensFromSpans,
   shiftMentions,
   filterMentionAgents,
   filterMentionPeople,
@@ -184,5 +186,18 @@ describe('undoing the removal of a picked mention', () => {
     expect(undone.mentions).toEqual([person]);
     expect(undone.remembered).toEqual([]);
     expect(composeMentions('hi @Bob Member', undone.mentions, targets)[0]!.kind).toBe('person');
+  });
+});
+
+describe('mention spans', () => {
+  it('counts offsets in UTF-16 code units, so an emoji before a mention moves it by two', () => {
+    const body = '🎉 @Bob Member';
+    const tokens = [{ kind: 'person' as const, id: 'u1', start: 3, end: 14 }];
+    expect(body.slice(3, 14)).toBe('@Bob Member');
+    expect(mentionSpans(tokens)).toEqual([{ kind: 'user', id: 'u1', offset: 3, length: 11 }]);
+    expect(tokensFromSpans(body, mentionSpans(tokens))).toEqual(tokens);
+    expect(tokensFromSpans(body, [{ kind: 'agent', id: 'a1', offset: 10, length: 20 }])).toEqual(
+      []
+    );
   });
 });

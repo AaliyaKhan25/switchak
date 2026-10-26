@@ -63,6 +63,15 @@ export const chatAttachmentSchema = z.object({
 });
 export type ChatAttachment = z.infer<typeof chatAttachmentSchema>;
 
+/** Who one stretch of a message's text names: offset and length in UTF-16 code units, as JS strings index. */
+export const chatMentionSpanSchema = z.object({
+  kind: z.enum(['agent', 'user']),
+  id: z.string(),
+  offset: z.number().int(),
+  length: z.number().int(),
+});
+export type ChatMentionSpan = z.infer<typeof chatMentionSpanSchema>;
+
 export const chatMessageSchema = z.object({
   messageId: z.string(),
   seq: z.number().int(),
@@ -78,6 +87,8 @@ export const chatMessageSchema = z.object({
   namedAgentIds: z.array(z.string()),
   /** The people the message mentions; empty from a server older than people mentions. */
   namedUserIds: z.array(z.string()).default([]),
+  /** Each mention's stretch of the body and whom it names; empty for older messages and servers. */
+  mentions: z.array(chatMentionSpanSchema).default([]),
   threadReplyCount: z.number().int(),
   threadLastReplySeq: z.number().int().nullable(),
 });
@@ -163,6 +174,7 @@ export type ChatSendInput = {
   uploadIds: string[];
   mentionAgentIds?: string[];
   mentionUserIds?: string[];
+  mentionSpans?: ChatMentionSpan[];
 };
 
 export type ChatUploadInput = {

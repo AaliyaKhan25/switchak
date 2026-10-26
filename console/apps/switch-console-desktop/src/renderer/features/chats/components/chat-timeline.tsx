@@ -21,6 +21,7 @@ import {
   mentionSegments,
   mentionTokens,
   personTargets,
+  tokensFromSpans,
 } from '../mentions';
 import { hiddenStopRows } from '../stop-rows';
 import type { AgentActivity } from '../stores/chat-activity-store';
@@ -74,13 +75,16 @@ function MentionText({
   people: MentionPerson[];
   serverId: string;
 }) {
-  // The people the message names come first, so one sharing an agent's name reads as the person.
-  const targets = [
-    ...personTargets(people.filter((person) => message.namedUserIds.includes(person.userId))),
-    ...agentTargets(agents),
-  ];
   const body = message.body;
-  return mentionSegments(body, mentionTokens(body, targets)).map((segment, index) =>
+  // The server's stretches say whom each mention names; older messages are read from the text,
+  // the people the message names first, so one sharing an agent's name reads as the person.
+  const tokens = message.mentions.length
+    ? tokensFromSpans(body, message.mentions)
+    : mentionTokens(body, [
+        ...personTargets(people.filter((person) => message.namedUserIds.includes(person.userId))),
+        ...agentTargets(agents),
+      ]);
+  return mentionSegments(body, tokens).map((segment, index) =>
     segment.token ? (
       <MentionMark
         key={index}

@@ -1,5 +1,6 @@
 import { makeAutoObservable, runInAction } from 'mobx';
 import {
+  type ChatMentionSpan,
   type ChatMessage,
   type ChatMessagesPage,
   type ChatUpload,
@@ -43,6 +44,7 @@ export type PendingSend = {
   threadRootId: string | null;
   mentionAgentIds: string[];
   mentionUserIds: string[];
+  mentionSpans: ChatMentionSpan[];
   files: PendingFile[];
   state: 'sending' | 'failed' | 'conflict';
   error: string | null;
@@ -59,6 +61,8 @@ export type SendInput = {
   mentionAgentIds: string[];
   /** The people picked as mentions; they are told, and no agent is addressed by them. */
   mentionUserIds: string[];
+  /** Each picked or matched mention's stretch of the body and whom it names. */
+  mentionSpans: ChatMentionSpan[];
   files: ChatFile[];
 };
 
@@ -83,6 +87,7 @@ export type TimelineApi = {
       uploadIds: string[];
       mentionAgentIds?: string[];
       mentionUserIds?: string[];
+      mentionSpans?: ChatMentionSpan[];
     }
   ) => Promise<ChatMessage[]>;
   newId: () => string;
@@ -208,6 +213,7 @@ export class ChatTimeline {
       threadRootId: input.threadRootId,
       mentionAgentIds: input.mentionAgentIds,
       mentionUserIds: input.mentionUserIds,
+      mentionSpans: input.mentionSpans,
       files: input.files.map((file) => ({
         id: this.api.newId(),
         uploadId: this.api.newId(),
@@ -325,6 +331,7 @@ export class ChatTimeline {
         // A copy: IPC cannot clone a MobX array.
         mentionAgentIds: [...send.mentionAgentIds],
         mentionUserIds: [...send.mentionUserIds],
+        mentionSpans: send.mentionSpans.map((span) => ({ ...span })),
         uploadIds: send.files.map((file) => file.uploadId),
       });
       runInAction(() => {
