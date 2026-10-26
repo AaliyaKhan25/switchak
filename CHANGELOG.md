@@ -136,6 +136,13 @@ version of their own to them without also giving them a release of their own.
   Existing duplicates are left as they are and can be reached by id.
 
 #### Fixed
+- **Full garbage collections no longer stall the server for hundreds of
+  milliseconds.** Once boot has built what lasts for the life of the process
+  (modules, the ORM's mappers, the app's routes), the server freezes it out of
+  garbage collection, so a full pass walks only what was made since. The
+  clients and bridges started after that stay collectable, since replicas hand
+  them to one another. The dashboard's pause chart now shows the average pause
+  next to p99, as Datadog keeps the average for longer.
 - **Agents no longer read offline while their replica shuts down.** With several
   replicas, a stopping replica released its lease before its 5 s drain, so for
   up to about 6 s the other replicas counted its connected agents as gone: `@role`
