@@ -42,6 +42,7 @@ from sqlalchemy import (
     update,
 )
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from switch_core.addressing import allows_on_behalf_of, parse_policy
@@ -1233,13 +1234,7 @@ class ChatService:
                     )
                     await session.commit()
                 operation_id = self._operation_id(tenant_id, user.id, request_id)
-                found = (
-                    await session.execute(
-                        select(Room).where(
-                            Room.metadata_["chat_operation_id"].astext == operation_id
-                        )
-                    )
-                ).scalar_one_or_none()
+                found = await self._room_of_operation(session, operation_id)
             if found is None:
                 names = ", ".join(
                     [agent.name for agent in agents]
@@ -1273,7 +1268,18 @@ class ChatService:
                     )
                 except ValueError as exc:
                     raise ChatError(422, "CHAT_NOT_CREATED", str(exc)) from exc
-                room = created.room
+                except IntegrityError:
+                    # The same request made the room first, on another process.
+                    async with tenant_session(
+                        self.session_factory, tenant_id
+                    ) as session:
+                        found = await self._room_of_operation(session, operation_id)
+                    if found is None:
+                        raise
+                    room = found
+                    await self._room_service.reconcile_room(room)
+                else:
+                    room = created.room
             else:
                 room = found
                 await self._room_service.reconcile_room(room)
@@ -1299,6 +1305,17 @@ class ChatService:
         if len(agents) == 1:
             self._start_session(agents[0].id, room.id)
         return room
+
+    async def _room_of_operation(
+        self, session: AsyncSession, operation_id: str
+    ) -> Room | None:
+        return (
+            await session.execute(
+                select(Room).where(
+                    Room.metadata_["chat_operation_id"].astext == operation_id
+                )
+            )
+        ).scalar_one_or_none()
 
     async def stage_upload(
         self,

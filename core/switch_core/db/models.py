@@ -934,6 +934,15 @@ class Room(TenantScoped, Base):
         # A run is listed, checked and stopped by its root on every agent
         # create and every look at Recently used.
         Index("ix_rooms_run_id", "run_id"),
+        # One room per Switch Console create request, whichever process or
+        # retry gets there first.
+        Index(
+            "uq_rooms_chat_operation_id",
+            "tenant_id",
+            text("(metadata ->> 'chat_operation_id')"),
+            unique=True,
+            postgresql_where=text("metadata ? 'chat_operation_id'"),
+        ),
         UniqueConstraint(
             "tenant_id", "matrix_room_id", name="uq_rooms_tenant_matrix_room_id"
         ),

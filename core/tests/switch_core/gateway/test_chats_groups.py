@@ -13,11 +13,18 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from switch_core.bridges.agent.protocol.agent_connections import AgentConnectionRegistry
 from switch_core.bridges.agent.registration_bootstrap import (
     BOOTSTRAP_OWNER_MARKER_META_KEY,
 )
-from switch_core.db.models import Agent, Message, Room, User, room_agents
-from tests.switch_core.gateway.conftest import _Harness
+from switch_core.chats.service import ChatService
+from switch_core.db.models import Agent, Client, Message, Room, User, room_agents
+from tests.switch_core.gateway.conftest import (
+    _chat_service,
+    _FakeActivityListener,
+    _FakeListener,
+    _Harness,
+)
 from tests.switch_core.gateway.test_chats_routes import (
     _code,
     _events_of,
@@ -885,3 +892,88 @@ async def test_an_ordinary_member_leaves_without_managing(chats: _Harness) -> No
     )
     assert left.status_code == 204
     assert await _reads(chats, chats.bob, room_id) == 403
+
+
+# ── Creating across processes ────────────────────────────────────────────────
+
+
+def _second_process(chats: _Harness) -> ChatService:
+    service, _ = _chat_service(
+        chats.factory,
+        lifecycle=chats.lifecycle,
+        listener=_FakeListener(),
+        activity=_FakeActivityListener(),
+        connections=AgentConnectionRegistry(),
+    )
+    return service
+
+
+async def test_one_create_on_two_processes_makes_one_room(
+    chats: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    agent = await chats.agent("helper", owner=chats.alice)
+    other = _second_process(chats)
+    both_looked = asyncio.Barrier(2)
+    for service in (chats.service, other):
+        look = service._room_of_operation
+
+        async def look_then_wait(
+            session: AsyncSession, operation_id: str, look=look
+        ) -> Room | None:
+            found = await look(session, operation_id)
+            if found is None:
+                await both_looked.wait()
+            return found
+
+        monkeypatch.setattr(service, "_room_of_operation", look_then_wait)
+
+    def create(service: ChatService) -> Any:
+        return service.create_chat(
+            "00000000-0000-0000-0000-000000000000",
+            chats.alice,
+            agent_ids=[agent.id],
+            member_user_ids=[chats.bob.id],
+            kind=None,
+            name=None,
+            request_id="c1",
+            greeting=None,
+        )
+
+    first, second = await asyncio.gather(create(chats.service), create(other))
+    assert first.id == second.id
+    async with chats.factory() as session:
+        assert await session.scalar(select(func.count()).select_from(Room)) == 1
+    assert await _reads(chats, chats.bob, first.id) == 200
+
+
+async def test_a_create_cut_off_before_its_people_joined_finishes_on_retry(
+    chats: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    agent = await chats.agent("helper", owner=chats.alice)
+    join = chats.service._join
+    async with chats.factory() as session:
+        bob_client = await chats.service.member_client(session, chats.bob.id)
+    assert bob_client is None
+
+    async def join_but_not_bob(tenant_id: str, room: Room, client: Client) -> None:
+        if client.user_id == chats.bob.id:
+            raise RuntimeError("cut off")
+        await join(tenant_id, room, client)
+
+    monkeypatch.setattr(chats.service, "_join", join_but_not_bob)
+    body = {"agentId": agent.id, "memberUserIds": [chats.bob.id], "requestId": "c1"}
+    with pytest.raises(RuntimeError, match="cut off"):
+        await chats.client.post("/chats", json=body, headers=chats.as_user(chats.alice))
+    monkeypatch.setattr(chats.service, "_join", join)
+
+    retried = await chats.client.post(
+        "/chats", json=body, headers=chats.as_user(chats.alice)
+    )
+    assert retried.status_code == 200, retried.text
+    room_id = retried.json()["chat"]["roomId"]
+    assert sorted(retried.json()["chat"]["memberUserIds"]) == sorted(
+        [chats.alice.id, chats.bob.id]
+    )
+    async with chats.factory() as session:
+        assert await session.scalar(select(func.count()).select_from(Room)) == 1
+    assert await _reads(chats, chats.bob, room_id) == 200
