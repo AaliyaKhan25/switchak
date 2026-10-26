@@ -28,7 +28,11 @@ from switch_core.db.models import (
     room_agents,
 )
 from switch_core.db.stores.message_store import MessageStore
-from switch_core.delivery.addressing import named_agents
+from switch_core.delivery.addressing import (
+    MENTIONS_KEY,
+    addressable_text,
+    named_agents,
+)
 
 MESSAGE_EVENT_TYPE = "m.room.message"
 COMMAND_EVENT_TYPE = "com.switch.command"
@@ -128,6 +132,8 @@ class ChatMessage(CamelModel):
     # The room's agents the body names by @name or @alias. Display only: who
     # a message addresses is each agent's own decision.
     named_agent_ids: list[str]
+    # The people the sender named (`mentionUserIds`); they address no agent.
+    named_user_ids: list[str]
     # Of a thread's root; 0 and None on a reply and on a message with none.
     thread_reply_count: int
     thread_last_reply_seq: int | None
@@ -354,9 +360,21 @@ async def chat_messages(
                     for attachment in attachments.get(message.id, [])
                 ],
                 client_txn=message.client_txn_id,
-                named_agent_ids=named_agents(names, aliases, message.body or ""),
+                named_agent_ids=named_agents(
+                    names,
+                    aliases,
+                    addressable_text(message.body or "", message.content),
+                ),
+                named_user_ids=_named_user_ids(message),
                 thread_reply_count=thread[0] if thread is not None else 0,
                 thread_last_reply_seq=thread[1] if thread is not None else None,
             )
         )
     return out
+
+
+def _named_user_ids(message: Message) -> list[str]:
+    mentions = message.content.get(MENTIONS_KEY)
+    if not isinstance(mentions, dict):
+        return []
+    return [each for each in mentions.get("user_ids") or [] if isinstance(each, str)]

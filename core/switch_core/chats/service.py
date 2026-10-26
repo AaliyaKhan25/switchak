@@ -88,7 +88,7 @@ from switch_core.db.stores.session_activity_store import (
 )
 from switch_core.db.stores.usage_store import UsageStore
 from switch_core.db.stores.user_store import UserStore
-from switch_core.delivery.addressing import AddressingResolver
+from switch_core.delivery.addressing import MENTIONS_KEY, AddressingResolver
 from switch_core.messages.notify import MessageListener
 from switch_core.messages.row import attachments_in, message_row, new_event_id
 from switch_core.observability.catalogue import MESSAGES_SENT
@@ -1383,6 +1383,7 @@ class ChatService:
         upload_ids: list[str],
         mention_agent_id: str | None,
         mention_agent_ids: list[str],
+        mention_user_ids: list[str],
     ) -> tuple[Room, list[Message]]:
         """Post the user's message, every part of it in one transaction.
 
@@ -1392,9 +1393,11 @@ class ChatService:
         posts it once; one after the commit answers the parts already posted.
 
         The agents the message is for are `mention_agent_ids` together with
-        `mention_agent_id`, the one earlier clients send, as a set.
+        `mention_agent_id`, the one earlier clients send, as a set. The people
+        it names, `mention_user_ids`, address no agent (`MENTIONS_KEY`).
         """
         mentions = sorted(set(mention_agent_ids))
+        people = sorted(set(mention_user_ids))
         request: dict[str, object] = {
             "roomId": room_id,
             "body": body,
@@ -1404,6 +1407,8 @@ class ChatService:
         }
         if mentions:
             request["mentionAgentIds"] = mentions
+        if people:
+            request["mentionUserIds"] = people
         payload_hash = _hash(request)
         if mention_agent_id is not None:
             mentions = sorted({*mentions, mention_agent_id})
@@ -1423,6 +1428,7 @@ class ChatService:
             root = await self._thread_root(session, room, thread_root_id)
             if mentions:
                 body = await self._with_mentions(session, room, mentions, body)
+            named_people = await self._named_people(session, room, people, mentions)
 
             if not await self._claim(
                 session,
@@ -1451,6 +1457,8 @@ class ChatService:
                     )
                 ),
             )
+            if named_people is not None:
+                contents[0][MENTIONS_KEY] = named_people
             posted: list[Message] = []
             routed: list[Routed] = []
             for index, content in enumerate(contents):
@@ -1675,6 +1683,50 @@ class ChatService:
                 422, "THREAD_NOT_FOUND", "The message to reply to is not in this chat."
             )
         return found[0].thread_root_event_id or found[0].transport_event_id
+
+    async def _named_people(
+        self,
+        session: AsyncSession,
+        room: Room,
+        user_ids: list[str],
+        agent_ids: list[str],
+    ) -> dict[str, list[str]] | None:
+        """What a send records of the people it names (`MENTIONS_KEY`): their
+        ids, and the names whose `@` spans address no agent. A name an agent
+        named in the same send also answers to stays the agent's."""
+        if not user_ids:
+            return None
+        names: dict[str, str] = {
+            user_id: name
+            for user_id, name in (
+                await session.execute(
+                    select(User.id, User.name)
+                    .join(Client, Client.user_id == User.id)
+                    .join(ClientRoom, ClientRoom.client_id == Client.id)
+                    .where(
+                        ClientRoom.room_id == room.id,
+                        Client.type == MEMBER_CLIENT_TYPE,
+                        User.id.in_(user_ids),
+                    )
+                )
+            ).all()
+        }
+        if len(names) != len(user_ids):
+            raise ChatError(422, "USER_NOT_IN_CHAT", "That person is not in this chat.")
+        aliases = await self._room_store.list_aliases(session, room.id)
+        spoken: set[str] = set()
+        for agent_id in agent_ids:
+            agent = await self._agent_store.get(session, agent_id)
+            assert agent is not None
+            spoken.add(agent.name.lower())
+            if agent_id in aliases:
+                spoken.add(aliases[agent_id].lower())
+        return {
+            "user_ids": user_ids,
+            "person_names": sorted(
+                {name for name in names.values() if name.lower() not in spoken}
+            ),
+        }
 
     async def _with_mentions(
         self, session: AsyncSession, room: Room, agent_ids: list[str], body: str

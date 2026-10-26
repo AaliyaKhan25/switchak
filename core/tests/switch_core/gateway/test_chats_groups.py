@@ -824,3 +824,64 @@ async def test_reading_re_sends_the_readers_summary(chats: _Harness) -> None:
     name, summary = await events.next()
     assert (name, summary["unreadCount"]) == ("chat", 0)
     await events.stream.aclose()  # type: ignore[attr-defined]
+
+
+# ── People mentions and leaving ──────────────────────────────────────────────
+
+
+async def test_naming_a_person_wakes_no_agent_even_one_of_the_same_name(
+    chats: _Harness,
+) -> None:
+    namesake = await chats.agent("bob", owner=chats.alice)
+    created = await chats.client.post(
+        "/chats",
+        json={
+            "agentIds": [namesake.id],
+            "memberUserIds": [chats.bob.id],
+            "requestId": "c1",
+        },
+        headers=chats.as_user(chats.alice),
+    )
+    room_id = created.json()["chat"]["roomId"]
+
+    person = await chats.send(
+        chats.alice, room_id, "s1", "@bob can you look?", mentionUserIds=[chats.bob.id]
+    )
+    assert person.status_code == 200, person.text
+    [message] = person.json()["messages"]
+    assert message["namedUserIds"] == [chats.bob.id]
+    assert message["namedAgentIds"] == []
+    assert (room_id, message["seq"]) not in await _events_of(chats, namesake)
+
+    both = await chats.send(
+        chats.alice,
+        room_id,
+        "s2",
+        "@bob and you too",
+        mentionUserIds=[chats.bob.id],
+        mentionAgentIds=[namesake.id],
+    )
+    [message] = both.json()["messages"]
+    assert message["namedAgentIds"] == [namesake.id]
+    assert (room_id, message["seq"]) in await _events_of(chats, namesake)
+
+    typed = (await chats.send(chats.alice, room_id, "s3", "@bob typed")).json()
+    assert (room_id, typed["messages"][0]["seq"]) in await _events_of(chats, namesake)
+
+    stranger = await chats.send(
+        chats.alice, room_id, "s4", "@admin hi", mentionUserIds=[chats.admin.id]
+    )
+    assert stranger.status_code == 422
+    assert _code(stranger) == "USER_NOT_IN_CHAT"
+
+
+async def test_an_ordinary_member_leaves_without_managing(chats: _Harness) -> None:
+    agent = await chats.agent("helper", owner=chats.alice)
+    room_id = await chats.new_chat(chats.alice, agent, "c1")
+    assert (await chats.invite(chats.alice, room_id, chats.bob)).status_code == 200
+
+    left = await chats.client.delete(
+        f"/chats/{room_id}/members/{chats.bob.id}", headers=chats.as_user(chats.bob)
+    )
+    assert left.status_code == 204
+    assert await _reads(chats, chats.bob, room_id) == 403

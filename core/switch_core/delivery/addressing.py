@@ -115,6 +115,29 @@ class IncomingMessage:
     formatted_body: str | None = None
     content: dict = field(default_factory=dict)
 
+    @property
+    def addressable_body(self) -> str:
+        return addressable_text(self.body, self.content)
+
+
+# Written by a Switch Console send: the people it names (`user_ids`), and the
+# `@name` spans that name them (`person_names`), which no agent's name, alias
+# or role may then match. A person sharing an agent's name would otherwise
+# wake the agent; the content can only take addressing away, never add it.
+MENTIONS_KEY = "com.switch.mentions"
+
+
+def addressable_text(body: str, content: Mapping[str, object]) -> str:
+    """`body` less the `@name` spans that name people (`MENTIONS_KEY`)."""
+    text = strip_emphasis(body)
+    mentions = content.get(MENTIONS_KEY)
+    if not isinstance(mentions, dict):
+        return text
+    for name in mentions.get("person_names") or []:
+        if isinstance(name, str) and name:
+            text = mention_regex(name).sub("", text)
+    return text
+
 
 class AddressingDecision(NamedTuple):
     """Whether a sender may address an agent, and what to say if not."""
@@ -189,7 +212,7 @@ class AddressingResolver:
             return True
         if channel_type == "direct":
             return None
-        if "@" not in message.body:
+        if "@" not in message.addressable_body:
             return False
         return None
 
@@ -260,9 +283,7 @@ class AddressingResolver:
         """
         if message.formatted_body and agent_user_id in message.formatted_body:
             return True
-        return (
-            mention_regex(agent.name).search(strip_emphasis(message.body)) is not None
-        )
+        return mention_regex(agent.name).search(message.addressable_body) is not None
 
     async def mentions_alias(
         self,
@@ -278,12 +299,12 @@ class AddressingResolver:
         live, so a change takes effect on the next message with no per-client
         cache to invalidate.
         """
-        if "@" not in message.body:
+        if "@" not in message.addressable_body:
             return False
         alias = await self.alias_of(session, room_id, agent.id)
         if not alias:
             return False
-        return mention_regex(alias).search(message.body) is not None
+        return mention_regex(alias).search(message.addressable_body) is not None
 
     async def mentions_role(
         self,
@@ -303,12 +324,12 @@ class AddressingResolver:
         room still matches, because liveness follows the holder rather than
         the room it is attending.
         """
-        if "@" not in message.body:
+        if "@" not in message.addressable_body:
             return False
         role_name = await self.role_of(session, room_id, agent.id)
         if not role_name:
             return False
-        return mention_regex(role_name).search(strip_emphasis(message.body)) is not None
+        return mention_regex(role_name).search(message.addressable_body) is not None
 
     # ── What the rules read ───────────────────────────────────────────────────
     #
