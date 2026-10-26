@@ -62,6 +62,7 @@ from switch_core.db.models import (
     ChatHidden,
     ChatOperation,
     ChatOwnerGrant,
+    ChatRead,
     Client,
     ClientRoom,
     MediaBlob,
@@ -829,6 +830,7 @@ class ChatService:
                 joined = await self._provisioning.record_join(
                     session, room.transport_room_id, client.transport_user_id
                 )
+            await self._start_reading(session, room.id, [target_user_id])
             await session.commit()
         joined()
         await self._make_lasting(tenant_id, target_user_id, room.id)
@@ -943,6 +945,61 @@ class ChatService:
             member_ids = [member.id for member, _ in await self.members(session, room)]
         await self._room_service.set_room_archived(room.id, True)
         self._memberships_changed(tenant_id, member_ids)
+
+    async def _start_reading(
+        self, session: AsyncSession, room_id: str, user_ids: list[str]
+    ) -> None:
+        """Mark the room read up to its head for people joining it, so what
+        was said before they arrived is not unread to them."""
+        await self._read_through(
+            session,
+            room_id,
+            user_ids,
+            await self._message_store.head_seq(session, room_id),
+        )
+
+    async def _read_through(
+        self, session: AsyncSession, room_id: str, user_ids: list[str], seq: int
+    ) -> None:
+        if not user_ids:
+            return
+        insert = pg_insert(ChatRead).values(
+            [
+                {
+                    "tenant_id": require_tenant_id(),
+                    "user_id": user_id,
+                    "room_id": room_id,
+                    "read_through_seq": seq,
+                }
+                for user_id in user_ids
+            ]
+        )
+        await session.execute(
+            insert.on_conflict_do_update(
+                index_elements=["tenant_id", "user_id", "room_id"],
+                set_={
+                    "read_through_seq": func.greatest(
+                        ChatRead.read_through_seq, insert.excluded.read_through_seq
+                    ),
+                    "updated_at": func.now(),
+                },
+            )
+        )
+
+    async def mark_read(
+        self, tenant_id: str, user: User, room_id: str, seq: int
+    ) -> None:
+        """The caller has been shown the room up to `seq`. Never moves their
+        place back; a position past the room's head is refused."""
+        async with tenant_session(self.session_factory, tenant_id) as session:
+            room, _ = await self.require_member(session, tenant_id, user, room_id)
+            if seq < 0 or seq > await self._message_store.head_seq(session, room.id):
+                raise ChatError(
+                    422, "SEQ_OUT_OF_RANGE", "That position is not in this chat."
+                )
+            await self._read_through(session, room.id, [user.id], seq)
+            await session.commit()
+        self._memberships_changed(tenant_id, [user.id])
 
     async def set_hidden(
         self, tenant_id: str, user: User, room_id: str, hidden: bool
@@ -1225,6 +1282,9 @@ class ChatService:
                 await self._join(tenant_id, room, client)
                 await self._make_lasting(tenant_id, joiner.id, room.id)
             async with tenant_session(self.session_factory, tenant_id) as session:
+                await self._start_reading(
+                    session, room.id, [joiner.id for joiner in [user, *members]]
+                )
                 await session.execute(
                     update(ChatOperation)
                     .where(

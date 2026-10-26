@@ -538,6 +538,19 @@ async def remove_agent(
     return Response(status_code=204)
 
 
+class ReadRequest(CamelModel):
+    seq: int
+
+
+@router.put("/{room_id}/read", status_code=204)
+async def mark_read(
+    room_id: str, req: ReadRequest, user: CurrentUser, service: Service
+) -> Response:
+    """The caller has been shown the chat up to `seq`; never moves back."""
+    await service.mark_read(require_tenant_id(), user, room_id, req.seq)
+    return Response(status_code=204)
+
+
 @router.put("/{room_id}/hidden", status_code=204)
 async def hide_chat(room_id: str, user: CurrentUser, service: Service) -> Response:
     await service.set_hidden(require_tenant_id(), user, room_id, True)

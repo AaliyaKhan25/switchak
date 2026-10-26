@@ -18,6 +18,7 @@ from switch_core.chats import MEMBER_CLIENT_TYPE
 from switch_core.db.models import (
     Agent,
     AgentDefinition,
+    ChatRead,
     Client,
     ClientRoom,
     CollaborationBridge,
@@ -91,6 +92,8 @@ class ChatSummary(CamelModel):
     # The people in the room, sorted, so any membership change re-sends the summary.
     member_count: int
     member_user_ids: list[str]
+    # Shown messages past the viewer's read position, less their own.
+    unread_count: int
     last_message: ChatLastMessage | None
 
 
@@ -181,6 +184,26 @@ async def chat_summary(
         ).scalars()
         if user_id is not None
     )
+    unread_count = await session.scalar(
+        select(func.count())
+        .select_from(Message)
+        .where(
+            Message.room_id == room.id,
+            Message.event_type.in_(SHOWN_EVENT_TYPES),
+            Message.seq
+            > func.coalesce(
+                select(ChatRead.read_through_seq)
+                .where(ChatRead.user_id == viewer_id, ChatRead.room_id == room.id)
+                .scalar_subquery(),
+                0,
+            ),
+            Message.sender_client_id.is_distinct_from(
+                select(Client.id)
+                .where(Client.user_id == viewer_id, Client.type == MEMBER_CLIENT_TYPE)
+                .scalar_subquery()
+            ),
+        )
+    )
     channel_name: str | None = None
     if bridge is not None and room.external_channel_id is not None:
         prefix = f"{bridge.display_name}: "
@@ -220,6 +243,7 @@ async def chat_summary(
         owns_agent=any(agent.owner_id == viewer_id for agent in agents),
         member_count=len(member_user_ids),
         member_user_ids=member_user_ids,
+        unread_count=unread_count or 0,
         last_message=(
             ChatLastMessage(
                 seq=last.seq,

@@ -764,3 +764,63 @@ async def test_history_stays_readable_once_the_agents_are_gone(
     )
     assert history.status_code == 200
     assert "kept" in [m["body"] for m in history.json()["messages"]]
+
+
+# ── Reading ──────────────────────────────────────────────────────────────────
+
+
+async def _summary_of(chats: _Harness, user: User, room_id: str) -> dict[str, Any]:
+    return (await _listed(chats, user))[room_id]
+
+
+async def _read(chats: _Harness, user: User, room_id: str, seq: int) -> httpx.Response:
+    return await chats.client.put(
+        f"/chats/{room_id}/read", json={"seq": seq}, headers=chats.as_user(user)
+    )
+
+
+async def test_unread_counts_others_messages_past_the_read_position(
+    chats: _Harness,
+) -> None:
+    agent = await chats.agent("helper", owner=chats.alice)
+    room_id = await chats.new_chat(chats.alice, agent, "c1")
+    before = await chats.send(chats.alice, room_id, "s0", "said before bob")
+    assert (await chats.invite(chats.alice, room_id, chats.bob)).status_code == 200
+    assert (await _summary_of(chats, chats.bob, room_id))["unreadCount"] == 0
+
+    first = (await chats.send(chats.alice, room_id, "s1", "one")).json()["messages"][0]
+    await chats.send(chats.alice, room_id, "s2", "two")
+    await chats.send(chats.bob, room_id, "s3", "bob's own")
+    assert (await _summary_of(chats, chats.bob, room_id))["unreadCount"] == 2
+    assert (await _summary_of(chats, chats.alice, room_id))["unreadCount"] == 1
+
+    assert (await _read(chats, chats.bob, room_id, first["seq"])).status_code == 204
+    assert (await _summary_of(chats, chats.bob, room_id))["unreadCount"] == 1
+    # Never backwards, and idempotent.
+    older = before.json()["messages"][0]["seq"]
+    assert (await _read(chats, chats.bob, room_id, older)).status_code == 204
+    assert (await _read(chats, chats.bob, room_id, first["seq"])).status_code == 204
+    assert (await _summary_of(chats, chats.bob, room_id))["unreadCount"] == 1
+
+    ahead = await _read(chats, chats.bob, room_id, 10_000)
+    assert ahead.status_code == 422
+    assert _code(ahead) == "SEQ_OUT_OF_RANGE"
+    outsider = await _read(chats, chats.admin, room_id, first["seq"])
+    assert outsider.status_code == 403
+
+
+async def test_reading_re_sends_the_readers_summary(chats: _Harness) -> None:
+    agent = await chats.agent("helper", owner=chats.alice)
+    room_id = await chats.new_chat(chats.alice, agent, "c1")
+    assert (await chats.invite(chats.alice, room_id, chats.bob)).status_code == 200
+    sent = (await chats.send(chats.alice, room_id, "s1", "hi")).json()["messages"][0]
+
+    events = _stream(chats, chats.bob, {}, recheck=60.0)
+    name, summary = await events.next()
+    assert (name, summary["unreadCount"]) == ("chat", 1)
+    assert (await events.next())[0] == "ready"
+
+    assert (await _read(chats, chats.bob, room_id, sent["seq"])).status_code == 204
+    name, summary = await events.next()
+    assert (name, summary["unreadCount"]) == ("chat", 0)
+    await events.stream.aclose()  # type: ignore[attr-defined]
