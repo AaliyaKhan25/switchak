@@ -256,6 +256,48 @@ describe('sendChatMessage', () => {
   });
 });
 
+describe('sendChatMessage people and spans', () => {
+  const server = { id: 'server-1' } as SwitchServer;
+  const base = { requestId: 'r', body: '@a1 hi', threadRootId: null, uploadIds: [] };
+
+  it('leaves out empty people and spans, as a server without group chats needs', async () => {
+    vi.mocked(gatewayFetch).mockResolvedValueOnce(
+      new Response(JSON.stringify({ messages: [] }), { status: 200 })
+    );
+    await sendChatMessage(server, 'room-1', {
+      ...base,
+      mentionAgentIds: ['a1'],
+      mentionUserIds: [],
+      mentionSpans: [],
+    });
+    expect(vi.mocked(gatewayFetch).mock.lastCall![2]!.body).toEqual({
+      ...base,
+      mentionAgentIds: ['a1'],
+      mentionAgentId: 'a1',
+    });
+  });
+
+  it('sends people and spans when there are any', async () => {
+    vi.mocked(gatewayFetch).mockResolvedValueOnce(
+      new Response(JSON.stringify({ messages: [] }), { status: 200 })
+    );
+    const spans = [{ kind: 'agent' as const, id: 'a1', offset: 0, length: 3 }];
+    await sendChatMessage(server, 'room-1', {
+      ...base,
+      mentionAgentIds: ['a1'],
+      mentionUserIds: ['u1'],
+      mentionSpans: spans,
+    });
+    expect(vi.mocked(gatewayFetch).mock.lastCall![2]!.body).toEqual({
+      ...base,
+      mentionAgentIds: ['a1'],
+      mentionAgentId: 'a1',
+      mentionUserIds: ['u1'],
+      mentionSpans: spans,
+    });
+  });
+});
+
 describe('fetchThreadMessages', () => {
   it('fetches thread messages with pagination', async () => {
     const server = { id: 'server-1' } as SwitchServer;

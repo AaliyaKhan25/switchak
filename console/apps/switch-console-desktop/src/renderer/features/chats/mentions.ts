@@ -249,3 +249,19 @@ export function withoutGroupMentions(tokens: MentionToken[]): MentionToken[] {
   const first = tokens.find((token) => token.kind === 'agent');
   return first ? [first] : [];
 }
+
+/**
+ * What a send says about its mentions. Without group chats only the agents go:
+ * a server without them refuses people and spans, and the first agent is all
+ * it takes.
+ */
+export function mentionPayload(
+  tokens: MentionToken[],
+  groupChats: boolean
+): { mentionAgentIds: string[]; mentionUserIds: string[]; mentionSpans: ChatMentionSpan[] } {
+  return {
+    mentionAgentIds: mentionAgentIds(tokens),
+    mentionUserIds: groupChats ? mentionUserIds(tokens) : [],
+    mentionSpans: groupChats ? mentionSpans(tokens) : [],
+  };
+}

@@ -18,13 +18,11 @@ import {
   editMentions,
   filterMentionAgents,
   filterMentionPeople,
-  mentionAgentIds,
   type MentionPerson,
+  mentionPayload,
   mentionQuery,
   mentionSegments,
-  mentionSpans,
   type MentionToken,
-  mentionUserIds,
   type RememberedMention,
   withoutGroupMentions,
   personTargets,
@@ -345,9 +343,7 @@ export const ChatComposer = observer(function ChatComposer({
     timeline.send({
       body,
       threadRootId: replyTo?.messageId ?? null,
-      mentionAgentIds: mentionAgentIds(sent),
-      mentionUserIds: mentionUserIds(sent),
-      mentionSpans: mentionSpans(sent),
+      ...mentionPayload(sent, groupChats),
       files: files.map(({ file }) => chatFile(file)),
     });
     void chatTitler.sent(serverId, timeline.roomId, body);

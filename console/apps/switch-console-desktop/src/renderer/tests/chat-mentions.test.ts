@@ -6,6 +6,7 @@ import {
   mentionSpans,
   tokensFromSpans,
   withoutGroupMentions,
+  mentionPayload,
   shiftMentions,
   filterMentionAgents,
   filterMentionPeople,
@@ -212,5 +213,31 @@ describe('withoutGroupMentions', () => {
         { kind: 'agent', id: 'a2', start: 10, end: 14 },
       ])
     ).toEqual([{ kind: 'agent', id: 'a1', start: 5, end: 9 }]);
+  });
+});
+
+describe('mentionPayload', () => {
+  const tokens = [
+    { kind: 'agent' as const, id: 'a1', start: 0, end: 10 },
+    { kind: 'person' as const, id: 'u1', start: 11, end: 22 },
+  ];
+
+  it('sends only the agents without group chats', () => {
+    expect(mentionPayload(tokens, false)).toEqual({
+      mentionAgentIds: ['a1'],
+      mentionUserIds: [],
+      mentionSpans: [],
+    });
+  });
+
+  it('sends people and spans with group chats', () => {
+    expect(mentionPayload(tokens, true)).toEqual({
+      mentionAgentIds: ['a1'],
+      mentionUserIds: ['u1'],
+      mentionSpans: [
+        { kind: 'agent', id: 'a1', offset: 0, length: 10 },
+        { kind: 'user', id: 'u1', offset: 11, length: 11 },
+      ],
+    });
   });
 });

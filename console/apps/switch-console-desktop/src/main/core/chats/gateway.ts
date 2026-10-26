@@ -242,10 +242,18 @@ export async function sendChatMessage(
       method: 'POST',
       // One agent also goes as `mentionAgentId`, which a server from before
       // `mentionAgentIds` reads, so a rolling deploy still addresses it.
-      body:
-        input.mentionAgentIds?.length === 1
-          ? { ...input, mentionAgentId: input.mentionAgentIds[0] }
-          : input,
+      // People and spans go only when there are any: a server without group
+      // chats refuses them even empty.
+      body: {
+        requestId: input.requestId,
+        body: input.body,
+        threadRootId: input.threadRootId,
+        uploadIds: input.uploadIds,
+        ...(input.mentionAgentIds && { mentionAgentIds: input.mentionAgentIds }),
+        ...(input.mentionAgentIds?.length === 1 && { mentionAgentId: input.mentionAgentIds[0] }),
+        ...(input.mentionUserIds?.length && { mentionUserIds: input.mentionUserIds }),
+        ...(input.mentionSpans?.length && { mentionSpans: input.mentionSpans }),
+      },
     })
   ).messages;
 }
