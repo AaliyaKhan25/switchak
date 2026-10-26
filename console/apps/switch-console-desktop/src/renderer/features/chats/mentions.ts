@@ -243,3 +243,9 @@ export function tokensFromSpans(body: string, spans: ChatMentionSpan[]): Mention
     )
     .sort((a, b) => a.start - b.start);
 }
+
+/** Without group chats a message may name one agent and no people: the first agent mention, nothing else. */
+export function withoutGroupMentions(tokens: MentionToken[]): MentionToken[] {
+  const first = tokens.find((token) => token.kind === 'agent');
+  return first ? [first] : [];
+}

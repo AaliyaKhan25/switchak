@@ -4,6 +4,7 @@ import { type KeyboardEvent as ReactKeyboardEvent, useEffect, useRef, useState }
 import { reportBuddyMessage } from '@renderer/features/switch-buddy/buddy-telemetry';
 import { AgentAvatar } from '@renderer/lib/components/agent-avatar';
 import { isEditableTarget } from '@renderer/lib/hooks/use-arrow-key-navigation';
+import { useFeatureFlags } from '@renderer/lib/hooks/useFeatureFlags';
 import { modalStore } from '@renderer/lib/modal/modal-store';
 import { Button } from '@renderer/lib/ui/button';
 import { Popover, PopoverContent, PopoverTitle, PopoverTrigger } from '@renderer/lib/ui/popover';
@@ -25,6 +26,7 @@ import {
   type MentionToken,
   mentionUserIds,
   type RememberedMention,
+  withoutGroupMentions,
   personTargets,
   shiftMentions,
   tokenToRemove,
@@ -216,16 +218,22 @@ export const ChatComposer = observer(function ChatComposer({
   /** Where the `@` of a suggestion list Esc closed sits, so it stays closed for that `@`. */
   const [dismissedAt, setDismissedAt] = useState<number | null>(null);
   // Text typed rather than picked reads as an agent first where a person shares its name.
-  const targets = [...agentTargets(agents), ...personTargets(people)];
-  const tokens = composeMentions(draft, picked, targets);
-  const mentionable = agents.length > 0 || people.length > 0;
+  // A server without group chats takes one agent mention and no people.
+  const groupChats = useFeatureFlags(serverId).group_chats;
+  const mentionPeople = groupChats ? people : [];
+  const targets = [...agentTargets(agents), ...personTargets(mentionPeople)];
+  const allowed = (found: MentionToken[]) => (groupChats ? found : withoutGroupMentions(found));
+  const tokens = allowed(composeMentions(draft, picked, targets));
+  const agentNamed = tokens.some((token) => token.kind === 'agent');
+  const mentionable =
+    (agents.length > 0 && (groupChats || !agentNamed)) || mentionPeople.length > 0;
   const query = mentionable ? mentionQuery(draft, caret) : null;
   const suggestions: Suggestion[] = query
     ? [
         ...filterMentionAgents(agents, query.query).map(
           (agent): Suggestion => ({ kind: 'agent', id: agent.id, agent })
         ),
-        ...filterMentionPeople(people, query.query).map(
+        ...filterMentionPeople(mentionPeople, query.query).map(
           (person): Suggestion => ({ kind: 'person', id: `user:${person.userId}`, person })
         ),
       ]
@@ -333,7 +341,7 @@ export const ChatComposer = observer(function ChatComposer({
       timeline.messages.filter((message) => message.sender.kind === 'human').length +
         timeline.pending.length
     );
-    const sent = composeMentions(body, shiftMentions(draft, body, picked), targets);
+    const sent = allowed(composeMentions(body, shiftMentions(draft, body, picked), targets));
     timeline.send({
       body,
       threadRootId: replyTo?.messageId ?? null,

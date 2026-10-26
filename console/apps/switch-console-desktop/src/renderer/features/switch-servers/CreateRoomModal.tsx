@@ -18,6 +18,7 @@ import {
   personParticipant,
 } from '@renderer/lib/components/participant-search';
 import { failureText } from '@renderer/lib/errors/describe-failure';
+import { useFeatureFlags } from '@renderer/lib/hooks/useFeatureFlags';
 import { rpc } from '@renderer/lib/ipc';
 import { type BaseModalProps, useModalContext } from '@renderer/lib/modal/modal-provider';
 import { sidebarStore } from '@renderer/lib/stores/app-state';
@@ -103,7 +104,11 @@ export const CreateRoomModal = observer(function CreateRoomModal({
   const bridges = (bridgesQuery.data ?? []).filter(
     (b) => b.status === 'active' && b.canCreateChannels
   );
-  const selectedBridge = bridges.find((b) => b.id === where) ?? null;
+  // Without the server's group_chats flag there are no Switch Console rooms: a room is a bridged one.
+  const consoleOffered = useFeatureFlags(serverId || null).group_chats;
+  const selectedBridge =
+    bridges.find((b) => b.id === where) ?? (consoleOffered ? null : (bridges[0] ?? null));
+  const nowhere = !consoleOffered && selectedBridge === null && !bridgesQuery.isLoading;
 
   const managedProviders = new Map(
     (managedQuery.data ?? []).map((managed) => [managed.agentId, managed.definition.provider])
@@ -140,6 +145,7 @@ export const CreateRoomModal = observer(function CreateRoomModal({
   const trimmedName = name.trim();
   const canSubmit =
     workspaceId !== null &&
+    !nowhere &&
     canCreate({ bridgeId: selectedBridge?.id ?? null, name, description }) &&
     !isSubmitting;
 
@@ -297,6 +303,12 @@ export const CreateRoomModal = observer(function CreateRoomModal({
             </section>
           )}
 
+          {nowhere && (
+            <p className="text-xs text-destructive">
+              This server does not offer Switch Console rooms yet, and none of its messaging apps
+              can create a channel, so there is nowhere to create a room.
+            </p>
+          )}
           {bridgesQuery.isError && (
             <p className="text-xs text-destructive">
               {failureText(bridgesQuery.error, 'Could not load messaging apps.')}
@@ -308,6 +320,7 @@ export const CreateRoomModal = observer(function CreateRoomModal({
       <DialogFooter className="sm:justify-between">
         <MessagingAppSelector
           bridges={bridges}
+          consoleOffered={consoleOffered}
           value={where}
           onChange={(next) => {
             setWhere(next);

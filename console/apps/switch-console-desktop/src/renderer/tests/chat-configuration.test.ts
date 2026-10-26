@@ -25,6 +25,8 @@ vi.mock('@renderer/features/chats/stores/chats', () => ({
 }));
 
 const showModal = vi.hoisted(() => vi.fn());
+const flags = vi.hoisted(() => ({ group_chats: true }));
+vi.mock('@renderer/lib/hooks/useFeatureFlags', () => ({ useFeatureFlags: () => flags }));
 vi.mock('@renderer/lib/modal/modal-provider', () => ({ useShowModal: () => showModal }));
 
 const agent = {
@@ -90,6 +92,18 @@ describe('RoomConfigurationPanel for a group chat', () => {
     expect(html.indexOf('aria-label="Remove Helper"')).toBeGreaterThan(field);
     // Nothing picked yet: Add sits beside the field, disabled.
     expect(html).toMatch(/<button[^>]* disabled=""[^>]*><span[^>]*>Add<span data-slot="shortcut"/);
+  });
+
+  it('offers no adding to a manager while the server does not offer group chats', () => {
+    flags.group_chats = false;
+    try {
+      const html = render(true);
+      expect(html).not.toContain('Add participants');
+      expect(html).not.toContain('id="chat-add-participant"');
+      expect(html).toContain('aria-label="Remove Bob"');
+    } finally {
+      flags.group_chats = true;
+    }
   });
 
   it('shows the participants without controls to someone who cannot manage', () => {

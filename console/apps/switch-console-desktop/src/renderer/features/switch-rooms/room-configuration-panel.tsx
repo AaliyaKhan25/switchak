@@ -21,6 +21,7 @@ import {
   personParticipant,
 } from '@renderer/lib/components/participant-search';
 import { describeFailure, failureText } from '@renderer/lib/errors/describe-failure';
+import { useFeatureFlags } from '@renderer/lib/hooks/useFeatureFlags';
 import { rpc } from '@renderer/lib/ipc';
 import { useNavigate } from '@renderer/lib/layout/navigation-provider';
 import { useShowModal } from '@renderer/lib/modal/modal-provider';
@@ -140,6 +141,9 @@ const ChatParticipantsSection = observer(function ChatParticipantsSection({
   const queryClient = useQueryClient();
   const roomId = chat.roomId;
   const membersKey = chatMembersQueryKey(serverId, chat);
+  // Adding to a chat makes it a group, which the server offers only with its group_chats flag.
+  const groupChats = useFeatureFlags(serverId).group_chats;
+  const canAdd = chat.canManage && groupChats;
   const members = useQuery({
     queryKey: membersKey,
     queryFn: () => rpc.chats.members(serverId, roomId),
@@ -189,7 +193,7 @@ const ChatParticipantsSection = observer(function ChatParticipantsSection({
             {membershipSummary(agentIds.length, people.length)}
           </span>
         </div>
-        {chat.canManage && (
+        {canAdd && (
           <Button
             variant="outline"
             size="sm"
@@ -203,7 +207,7 @@ const ChatParticipantsSection = observer(function ChatParticipantsSection({
         )}
       </div>
 
-      {chat.canManage && (
+      {canAdd && (
         <ChatAddParticipantPanel
           serverId={serverId}
           workspaceId={workspaceId}

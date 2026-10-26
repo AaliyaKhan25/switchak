@@ -4,6 +4,8 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import { CreateRoomModal } from './CreateRoomModal';
 
+const flags = vi.hoisted(() => ({ group_chats: true }));
+vi.mock('@renderer/lib/hooks/useFeatureFlags', () => ({ useFeatureFlags: () => flags }));
 vi.mock('@renderer/lib/ipc', () => ({ events: { on: vi.fn() }, rpc: {} }));
 vi.mock('@renderer/features/chats/stores/chats', () => ({ chatsStore: {} }));
 vi.mock('@renderer/lib/modal/modal-provider', () => ({
@@ -34,5 +36,22 @@ describe('CreateRoomModal', () => {
     expect(html).toContain('placeholder="Name this room"');
     expect(html).toMatch(/<label[^>]*for="new-room-participants"[^>]*>Participants<\/label>/);
     expect(html).not.toContain('uppercase');
+    expect(html).not.toContain('does not offer Switch Console rooms');
+  });
+
+  it('says there is nowhere to create a room without group chats or a messaging app', () => {
+    flags.group_chats = false;
+    try {
+      const html = renderToStaticMarkup(
+        createElement(
+          QueryClientProvider,
+          { client: new QueryClient() },
+          createElement(CreateRoomModal, { onSuccess: () => {}, onClose: () => {} })
+        )
+      );
+      expect(html).toContain('does not offer Switch Console rooms');
+    } finally {
+      flags.group_chats = true;
+    }
   });
 });

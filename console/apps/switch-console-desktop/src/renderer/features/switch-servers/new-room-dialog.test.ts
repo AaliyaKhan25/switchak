@@ -40,6 +40,7 @@ describe('MessagingAppSelector', () => {
   it('is hidden when Switch Console is the only choice', () => {
     const html = renderToStaticMarkup(
       createElement(MessagingAppSelector, {
+        consoleOffered: true,
         bridges: [],
         value: SWITCH_CONSOLE,
         onChange: () => {},
@@ -51,6 +52,7 @@ describe('MessagingAppSelector', () => {
   it('shows the chosen app with its icon, and lists Switch Console and each app', () => {
     const html = renderToStaticMarkup(
       createElement(MessagingAppSelector, {
+        consoleOffered: true,
         bridges: [slack],
         value: 'b-slack',
         onChange: () => {},
@@ -61,6 +63,7 @@ describe('MessagingAppSelector', () => {
     expect(
       renderToStaticMarkup(
         createElement(MessagingAppSelector, {
+          consoleOffered: true,
           bridges: [slack],
           value: SWITCH_CONSOLE,
           onChange: () => {},
@@ -71,6 +74,32 @@ describe('MessagingAppSelector', () => {
       { value: SWITCH_CONSOLE, label: 'Switch Console', type: null },
       { value: 'b-slack', label: 'Acme Slack', type: 'slack' },
     ]);
+  });
+});
+
+describe('MessagingAppSelector without Switch Console rooms', () => {
+  const discord = { ...slack, id: 'b-discord', type: 'discord', displayName: 'Acme Discord' };
+
+  it('offers only the apps, and hides with one', () => {
+    const one = renderToStaticMarkup(
+      createElement(MessagingAppSelector, {
+        consoleOffered: false,
+        bridges: [slack],
+        value: 'b-slack',
+        onChange: () => {},
+      })
+    );
+    expect(one).toBe('');
+    const two = renderToStaticMarkup(
+      createElement(MessagingAppSelector, {
+        consoleOffered: false,
+        bridges: [slack, discord],
+        value: SWITCH_CONSOLE,
+        onChange: () => {},
+      })
+    );
+    expect(two).toContain('Acme Slack');
+    expect(two).not.toContain('Switch Console');
   });
 });
 

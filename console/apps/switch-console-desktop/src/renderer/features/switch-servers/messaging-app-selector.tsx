@@ -41,15 +41,20 @@ function OptionIcon({ type }: { type: string | null }) {
  */
 export function MessagingAppSelector({
   bridges,
+  consoleOffered,
   value,
   onChange,
 }: {
   /** The apps a room can be created on: running, and allowed to create channels. */
   bridges: readonly RemoteBridge[];
+  /** Whether the server offers Switch Console rooms (its `group_chats` flag). */
+  consoleOffered: boolean;
   value: string;
   onChange: (value: string) => void;
 }) {
-  const options = messagingOptions(bridges);
+  const options = messagingOptions(bridges).filter(
+    (option) => consoleOffered || option.value !== SWITCH_CONSOLE
+  );
   if (options.length < 2) return null;
   const selected = options.find((option) => option.value === value) ?? options[0];
   return (

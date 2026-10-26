@@ -16,6 +16,9 @@ import {
 } from '@renderer/features/chats/stores/chat-timeline-store';
 import { PromptInput, PromptInputTextarea } from '@renderer/features/chats/ui/prompt-input';
 
+const flags = vi.hoisted(() => ({ group_chats: true }));
+vi.mock('@renderer/lib/hooks/useFeatureFlags', () => ({ useFeatureFlags: () => flags }));
+
 let container: HTMLDivElement | null = null;
 let root: Root | null = null;
 
@@ -150,5 +153,46 @@ describe('ChatComposer picked mentions', () => {
     });
     expect(textarea.value).toBe('@Bob Member ');
     expect(kinds()).toEqual(['person']);
+  });
+});
+
+describe('ChatComposer on a server without group chats', () => {
+  it('offers no people and badges only the first agent mention', async () => {
+    flags.group_chats = false;
+    try {
+      const one = { ...agent, id: 'a1', name: 'agent-one' };
+      const textarea = await render(
+        <ChatComposer
+          serverId="s"
+          timeline={new ChatTimeline('room-flag', {} as TimelineApi)}
+          agents={[one, agent]}
+          people={[{ userId: 'u1', name: 'Bob Member', email: null }]}
+          groupName="Ship review"
+          activity={null}
+          replyTo={null}
+          onClearReply={() => {}}
+          disabled={null}
+        />
+      );
+      await act(async () => {
+        textarea.focus();
+        document.execCommand('insertText', false, '@bo');
+      });
+      expect(container!.querySelector('[role="listbox"]')).toBeNull();
+      await act(async () => {
+        textarea.setSelectionRange(0, textarea.value.length);
+        document.execCommand('insertText', false, '@agent-one and @agent-two ');
+      });
+      expect(
+        [...container!.querySelectorAll('mark[data-mention]')].map((mark) => mark.textContent)
+      ).toEqual(['@agent-one']);
+      await act(async () => {
+        document.execCommand('insertText', false, '@ag');
+      });
+      // One agent is named already: the list does not offer another.
+      expect(container!.querySelector('[role="listbox"]')).toBeNull();
+    } finally {
+      flags.group_chats = true;
+    }
   });
 });

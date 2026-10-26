@@ -5,6 +5,7 @@ import {
   editMentions,
   mentionSpans,
   tokensFromSpans,
+  withoutGroupMentions,
   shiftMentions,
   filterMentionAgents,
   filterMentionPeople,
@@ -199,5 +200,17 @@ describe('mention spans', () => {
     expect(tokensFromSpans(body, [{ kind: 'agent', id: 'a1', offset: 10, length: 20 }])).toEqual(
       []
     );
+  });
+});
+
+describe('withoutGroupMentions', () => {
+  it('keeps the first agent mention only', () => {
+    expect(
+      withoutGroupMentions([
+        { kind: 'person', id: 'u1', start: 0, end: 4 },
+        { kind: 'agent', id: 'a1', start: 5, end: 9 },
+        { kind: 'agent', id: 'a2', start: 10, end: 14 },
+      ])
+    ).toEqual([{ kind: 'agent', id: 'a1', start: 5, end: 9 }]);
   });
 });
