@@ -16,6 +16,12 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from switch_core.bridges.agent.operations import context as op_context
+from switch_core.bridges.agent.operations import template_status
+from switch_core.bridges.agent.operations.callctx import (
+    CallContext,
+    reset_call_context,
+    set_call_context,
+)
 from switch_core.db.models import (
     TENANT_ZERO_ID,
     Agent,
@@ -55,6 +61,10 @@ def _short_listen(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.fixture
 def harness(session_factory: async_sessionmaker[AsyncSession]) -> Iterator[Harness]:
     harness = build_harness(session_factory)
+    harness.protocol.config.feature_flags = {  # type: ignore[attr-defined]
+        "agent_management": True,
+        "switch_buddy": True,
+    }
     previous = op_context._protocol
     op_context.init_operations_protocol(harness.protocol)
     harness.gateway_app.include_router(rooms_router, prefix="/rooms")
@@ -332,3 +342,58 @@ async def test_an_agent_not_named_as_a_buddy_is_never_taken_for_one(
     await _forget_install(harness, agent_id)
 
     assert await _updates(harness).record_existing_buddies(TENANT_ZERO_ID) == 0
+
+
+async def test_the_agent_reads_how_it_differs_and_is_no_longer_told(
+    harness: Harness, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    owner = await add_member(harness.session_factory, "ada")
+    agent_id = await _create_buddy(harness, client, owner, "switch-buddy-ada")
+    await _owner_edits_instructions(harness, agent_id, "Mine, all mine.")
+    install, _ = await _install(harness, agent_id)
+    new = _next_revision(can_manage_agents=False)
+    await _updates(harness).update_install(TENANT_ZERO_ID, new, install)
+    monkeypatch.setattr(template_status, "official_template", lambda *a: new)
+
+    status = await _as(agent_id, template_status.get_template_status)
+
+    assert status["template"] == {
+        "id": BUDDY_ID,
+        "name": "switch-buddy",
+        "source": "official",
+    }
+    assert (status["installed_revision"], status["current_revision"]) == (
+        new.version,
+        new.version,
+    )
+    ((differs),) = status["differs"]
+    assert differs["field"] == "instructions"
+    assert differs["yours"] == "Mine, all mine."
+    assert "(revised)" in differs["recommended"]
+    assert status["permissions"] == [
+        {"setting": "can_manage_agents", "yours": True, "recommended": False}
+    ]
+    _, resource = await _install(harness, agent_id)
+    assert resource.notice is None
+
+
+async def test_an_agent_from_no_template_has_no_status(
+    harness: Harness, client: httpx.AsyncClient
+) -> None:
+    owner = await add_member(harness.session_factory, "ada")
+    agent_id = await _create_buddy(harness, client, owner, "switch-buddy-ada")
+    await _forget_install(harness, agent_id)
+
+    assert await _as(agent_id, template_status.get_template_status) == {
+        "template": None
+    }
+
+
+async def _as(agent_id: str, fn: Any, **kwargs: Any) -> Any:
+    token = set_call_context(
+        CallContext(agent_id=agent_id, session_key=None, session=None)
+    )
+    try:
+        return await fn(**kwargs)
+    finally:
+        reset_call_context(token)

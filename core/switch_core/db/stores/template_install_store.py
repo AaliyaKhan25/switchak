@@ -169,15 +169,24 @@ class TemplateInstallStore:
             .values(notice=notice)
         )
 
-    async def notice_for_agent(
-        self, session: AsyncSession, agent_id: str
-    ) -> str | None:
-        """What Switch has to tell an agent about its template, if anything."""
-        return (
-            await session.execute(
-                select(TemplateInstallResource.notice).where(
-                    TemplateInstallResource.tenant_id == require_tenant_id(),
-                    TemplateInstallResource.agent_id == agent_id,
-                )
+    async def notices_for_agents(
+        self, session: AsyncSession, agent_ids: list[str]
+    ) -> dict[str, str]:
+        """What Switch has to tell each of these agents about its template,
+        for those it has something to tell."""
+        if not agent_ids:
+            return {}
+        rows = await session.execute(
+            select(
+                TemplateInstallResource.agent_id, TemplateInstallResource.notice
+            ).where(
+                TemplateInstallResource.tenant_id == require_tenant_id(),
+                TemplateInstallResource.agent_id.in_(agent_ids),
+                TemplateInstallResource.notice.is_not(None),
             )
-        ).scalar_one_or_none()
+        )
+        return {
+            agent_id: notice
+            for agent_id, notice in rows.tuples()
+            if agent_id is not None and notice is not None
+        }

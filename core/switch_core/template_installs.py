@@ -24,7 +24,8 @@ from typing import Any, Literal
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from switch_core.agent_templates import plan_template
-from switch_core.db.models import Template
+from switch_core.bridges.agent.protocol.agent_detail import addressing_policy_for
+from switch_core.db.models import Agent, AgentDefinition, Template
 from switch_core.db.session_scope import tenant_session
 from switch_core.db.stores.template_install_store import (
     NewInstallResource,
@@ -36,7 +37,7 @@ from switch_core.official_templates import (
     official_templates,
 )
 from switch_core.providers.registry import provider_ids
-from switch_core.template_runs import NewAgentPlan
+from switch_core.template_runs import TEMPLATE_ADDRESSING, NewAgentPlan
 from switch_core.template_v2 import compile_v2, is_v2_text
 
 logger = logging.getLogger(__name__)
@@ -219,3 +220,56 @@ async def record_install(
             sorted(agent_ids.values()),
             exc_info=True,
         )
+
+
+@dataclass(frozen=True)
+class Held:
+    """A permission the template's current revision sets differently from
+    the agent's own, which no update changes."""
+
+    setting: str
+    yours: Any
+    recommended: Any
+
+
+@dataclass(frozen=True)
+class Differs:
+    """A value somebody changed from what the template set, with what the
+    template's current revision would set instead."""
+
+    field: str
+    yours: str | None
+    recommended: str | None
+
+
+def agent_values(agent: Agent, row: AgentDefinition | None) -> dict[str, str | None]:
+    """An agent's own values of the fields a template sets; no
+    ``instructions`` for an agent with no managed definition."""
+    values: dict[str, str | None] = {
+        "description": agent.description,
+        "icon_url": agent.icon_url,
+        "display_name": agent.display_name,
+    }
+    if row is not None:
+        values["instructions"] = str(row.definition.get("instructions") or "")
+    return values
+
+
+def held_permissions(plan: NewAgentPlan, agent: Agent) -> list[Held]:
+    """The permissions `plan` sets that differ from the agent's own."""
+    held: list[Held] = []
+    if plan.can_manage_agents != agent.can_manage_agents:
+        held.append(
+            Held("can_manage_agents", agent.can_manage_agents, plan.can_manage_agents)
+        )
+    choice = TEMPLATE_ADDRESSING.get(plan.addressing)
+    if choice is not None and addressing_policy_for(choice) != agent.addressing_policy:
+        held.append(Held("addressing", _addressing_word(agent), choice))
+    return held
+
+
+def _addressing_word(agent: Agent) -> str:
+    for choice in TEMPLATE_ADDRESSING.values():
+        if addressing_policy_for(choice) == agent.addressing_policy:
+            return choice
+    return "custom"

@@ -29,14 +29,12 @@ from __future__ import annotations
 import logging
 import re
 from collections.abc import Sequence
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from switch_core.bridges.agent.protocol.agent_detail import addressing_policy_for
 from switch_core.db.models import (
     Agent,
     AgentDefinition,
@@ -60,10 +58,14 @@ from switch_core.official_templates import (
 )
 from switch_core.template_installs import (
     AGENT_FIELDS,
+    Held,
+    agent_fields,
+    agent_values,
     fingerprint,
+    held_permissions,
     render_plans,
 )
-from switch_core.template_runs import TEMPLATE_ADDRESSING, NewAgentPlan
+from switch_core.template_runs import NewAgentPlan
 
 if TYPE_CHECKING:
     from switch_core.bridges.agent.protocol.agent_core import AgentCore
@@ -76,70 +78,8 @@ BUDDY_KEY = "buddy"
 _BUDDY_NAME = re.compile(r"^switch-buddy(-[a-z0-9._-]+)?$")
 
 
-@dataclass(frozen=True)
-class Held:
-    """A permission the template's current revision sets differently from
-    the agent's own, which no update changes."""
-
-    setting: str
-    yours: Any
-    recommended: Any
-
-
-@dataclass(frozen=True)
-class Differs:
-    """A value somebody changed from what the template set, with what the
-    template's current revision would set instead."""
-
-    field: str
-    yours: str | None
-    recommended: str | None
-
-
 class LostRace(Exception):
     """Something changed the agent between it being read and written."""
-
-
-def agent_values(agent: Agent, row: AgentDefinition | None) -> dict[str, str | None]:
-    """An agent's own values of the fields a template sets; no
-    ``instructions`` for an agent with no managed definition."""
-    values: dict[str, str | None] = {
-        "description": agent.description,
-        "icon_url": agent.icon_url,
-        "display_name": agent.display_name,
-    }
-    if row is not None:
-        values["instructions"] = str(row.definition.get("instructions") or "")
-    return values
-
-
-def plan_values(plan: NewAgentPlan) -> dict[str, str | None]:
-    return {
-        "instructions": plan.instructions,
-        "description": plan.description,
-        "icon_url": plan.icon_url,
-        "display_name": plan.display_name,
-    }
-
-
-def held_permissions(plan: NewAgentPlan, agent: Agent) -> list[Held]:
-    """The permissions `plan` sets that differ from the agent's own."""
-    held: list[Held] = []
-    if plan.can_manage_agents != agent.can_manage_agents:
-        held.append(
-            Held("can_manage_agents", agent.can_manage_agents, plan.can_manage_agents)
-        )
-    choice = TEMPLATE_ADDRESSING.get(plan.addressing)
-    if choice is not None and addressing_policy_for(choice) != agent.addressing_policy:
-        held.append(Held("addressing", _addressing_word(agent), choice))
-    return held
-
-
-def _addressing_word(agent: Agent) -> str:
-    for choice in TEMPLATE_ADDRESSING.values():
-        if addressing_policy_for(choice) == agent.addressing_policy:
-            return choice
-    return "custom"
 
 
 def notice_text(
@@ -394,7 +334,7 @@ class TemplateUpdates:
         if agent is None:
             return
         current = agent_values(agent, row)
-        new = plan_values(plan)
+        new = agent_fields(plan)
         changes: dict[str, str | None] = {}
         differs: list[str] = []
         fingerprints = dict(resource.fingerprints)

@@ -488,7 +488,7 @@ it('tells a running conversation once that its instructions changed, across rest
 
   const edited = await restart(first, 'Speak plainly.');
   expect(await answer(edited, 2, 'and now?')).toMatch(
-    /^\[Switch\] Your agent instructions were changed by your owner\.[\s\S]*BEGIN AGENT INSTRUCTIONS\nSpeak plainly\.\nEND AGENT INSTRUCTIONS\n\n\[Switch\] A Person addressed you/
+    /^\[Switch\] Your agent instructions were changed, by your owner or by Switch[\s\S]*BEGIN AGENT INSTRUCTIONS\nSpeak plainly\.\nEND AGENT INSTRUCTIONS\n\n\[Switch\] A Person addressed you/
   );
   expect(await answer(edited, 3, 'again')).not.toContain('instructions were changed');
 
