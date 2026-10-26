@@ -25,6 +25,7 @@
     "get_room_group_detail",
     "get_template",
     "get_template_guide",
+    "get_template_status",
     "invite_agent_to_room",
     "link_rooms",
     "list_agents",
