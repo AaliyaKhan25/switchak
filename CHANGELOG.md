@@ -151,6 +151,14 @@ version of their own to them without also giving them a release of their own.
   Existing duplicates are left as they are and can be reached by id.
 
 #### Fixed
+- **The agent HTTP API answers a refused or malformed request with a 4xx, not
+  a 500.** Inviting an agent to a room the caller may not change answered 500
+  instead of 403, and so did looking up a room the agent is not in. A room
+  history request whose `since` or `before` is not an ISO 8601 timestamp
+  answered 500 instead of 400; it now says which parameter was wrong, and so
+  does `read_context` (#1045). One whose offset moves it outside the years 1
+  to 9999 in UTC is refused the same way instead of answering 404, and a time
+  in the last millisecond of 9999 is no longer refused at all.
 - **Every way of setting a password now applies the same rules.** Signup
   already required 8 characters and at most 72 bytes. Changing your own
   password checked only the 8 characters, and an admin creating a user checked

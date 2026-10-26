@@ -5,7 +5,7 @@ import hashlib
 import logging
 from collections.abc import AsyncGenerator
 from contextvars import ContextVar
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any, cast
 
 from fastapi import (
@@ -125,12 +125,31 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
-def parse_timestamp_ms(iso: str) -> int:
-    dt = datetime.fromisoformat(iso)
+
+def parse_timestamp_ms(name: str, iso: str) -> int:
+    """Epoch milliseconds for `iso`, the value of parameter `name`.
+
+    Raises ValueError naming the parameter when `iso` does not parse, or when
+    its offset moves it outside the years 1 to 9999 in UTC, where it could not
+    be turned back into a datetime to query with.
+    """
+    try:
+        dt = datetime.fromisoformat(iso)
+    except ValueError as exc:
+        raise ValueError(f"'{name}' is not an ISO 8601 timestamp: {iso!r}") from exc
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=UTC)
-    return int(dt.timestamp() * 1000)
+    try:
+        dt = dt.astimezone(UTC)
+    except OverflowError as exc:
+        raise ValueError(
+            f"'{name}' is outside the years 1 to 9999 in UTC: {iso!r}"
+        ) from exc
+    # Integer arithmetic: through a float, a time in the last millisecond of
+    # 9999 rounds up into the year 10000.
+    return (dt - _EPOCH) // timedelta(milliseconds=1)
 
 
 async def _resolve_registration_user_id(
@@ -1666,8 +1685,11 @@ async def get_room_history(
     ] = None,
     limit: Annotated[int, Query()] = 50,
 ) -> HistoryResponse:
-    since_ms = parse_timestamp_ms(since) if since else None
-    before_ms = parse_timestamp_ms(before) if before else None
+    try:
+        since_ms = parse_timestamp_ms("since", since) if since else None
+        before_ms = parse_timestamp_ms("before", before) if before else None
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
     try:
         context = await protocol.read_context(
@@ -1923,6 +1945,8 @@ async def invite_agent(
         )
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e)) from e
     return {"ok": True}
 
 
@@ -1955,6 +1979,8 @@ async def get_room(
         room_detail = await protocol.get_room_detail(agent.id, room_id)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e)) from e
 
     return RoomDetailResponse(
         id=room_detail.id,

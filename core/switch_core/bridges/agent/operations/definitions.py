@@ -709,8 +709,8 @@ async def read_context(
         room_id = sole_connected_room(connected)
 
     protocol = get_protocol()
-    since_ms = parse_timestamp_ms(since) if since else None
-    before_ms = parse_timestamp_ms(before) if before else None
+    since_ms = parse_timestamp_ms("since", since) if since else None
+    before_ms = parse_timestamp_ms("before", before) if before else None
 
     buffer = protocol.event_buffer
     tenant_id = require_tenant_id()
