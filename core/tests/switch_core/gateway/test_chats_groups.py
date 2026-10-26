@@ -977,3 +977,39 @@ async def test_a_create_cut_off_before_its_people_joined_finishes_on_retry(
     async with chats.factory() as session:
         assert await session.scalar(select(func.count()).select_from(Room)) == 1
     assert await _reads(chats, chats.bob, room_id) == 200
+
+
+async def test_a_chat_noticed_late_is_followed_from_the_join(
+    chats: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    agent = await chats.agent("helper", owner=chats.alice)
+    room_id = await chats.new_chat(chats.alice, agent, "c1")
+    events = _stream(chats, chats.bob, {}, recheck=0.2)
+    assert (await events.next())[0] == "ready"
+
+    # The membership signal is lost; only the periodic recheck finds the room.
+    monkeypatch.setattr(chats.service, "_memberships_changed", lambda *_: None)
+    assert (await chats.invite(chats.alice, room_id, chats.bob)).status_code == 200
+    for index in range(3):
+        sent = await chats.send(chats.alice, room_id, f"s{index}", f"m{index}")
+        assert sent.status_code == 200
+
+    name, summary = await events.next()
+    assert (name, summary["roomId"]) == ("chat", room_id)
+    bodies = [(await events.next())[1]["body"] for _ in range(3)]
+    assert bodies == ["m0", "m1", "m2"]
+    await events.stream.aclose()  # type: ignore[attr-defined]
+
+
+async def test_a_reconnect_cursor_still_decides_where_a_chat_resumes(
+    chats: _Harness,
+) -> None:
+    agent = await chats.agent("helper", owner=chats.alice)
+    room_id = await chats.new_chat(chats.alice, agent, "c1")
+    first = (await chats.send(chats.alice, room_id, "s1", "seen")).json()
+    await chats.send(chats.alice, room_id, "s2", "new")
+
+    events = _stream(chats, chats.alice, {room_id: first["messages"][0]["seq"]}, 60.0)
+    name, data = await events.next()
+    assert (name, data["body"]) == ("message", "new")
+    await events.stream.aclose()  # type: ignore[attr-defined]

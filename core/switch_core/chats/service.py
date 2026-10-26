@@ -727,6 +727,18 @@ class ChatService:
             limit,
         )
 
+    async def read_position(
+        self, session: AsyncSession, user_id: str, room_id: str
+    ) -> int:
+        """How far the user has read the room (set to its head as they joined),
+        or its head when nothing is recorded."""
+        seq = await session.scalar(
+            select(ChatRead.read_through_seq).where(
+                ChatRead.user_id == user_id, ChatRead.room_id == room_id
+            )
+        )
+        return seq if seq is not None else await self.head_seq(session, room_id)
+
     async def head_seq(self, session: AsyncSession, room_id: str) -> int:
         return await self._message_store.head_seq(session, room_id)
 

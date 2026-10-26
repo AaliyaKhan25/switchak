@@ -693,12 +693,18 @@ class _ChatStream:
                     self.cursors[room_id] = self.after[room_id]
                     if room_id in listed:
                         self.announced.add(room_id)
-                elif room_id in listed:
-                    frames.extend(await self._announce(session, room))
-                    self.cursors[room_id] = await service.head_seq(session, room_id)
-                    self.announced.add(room_id)
                 else:
-                    self.cursors[room_id] = await service.head_seq(session, room_id)
+                    if room_id in listed:
+                        frames.extend(await self._announce(session, room))
+                        self.announced.add(room_id)
+                    # A room joined since the stream opened is followed from
+                    # where the caller joined it, so whatever was said before
+                    # the stream noticed it is still sent.
+                    self.cursors[room_id] = (
+                        await service.head_seq(session, room_id)
+                        if initial
+                        else await service.read_position(session, self.user.id, room_id)
+                    )
                 service.listener.subscribe(room_id, self.on_room)
             for room_id, room in listed.items():
                 if room_id not in self.announced or resummarize:
