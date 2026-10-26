@@ -10,11 +10,14 @@ import { MENTION_BADGE } from '../mentions';
  * behind the composer's text, so it must not change the text's width.
  */
 export function MentionMark({
+  kind,
   agent,
   serverId,
   className,
   children,
 }: {
+  kind: 'agent' | 'person';
+  /** The agent mentioned; null for a person, whose badge is never tinted. */
   agent: ChatAgent | null;
   serverId: string;
   className: string;
@@ -24,6 +27,7 @@ export function MentionMark({
   const tint = accent ? `color-mix(in srgb, ${accent} 18%, transparent)` : null;
   return (
     <mark
+      data-mention={kind}
       className={cn(tint ? 'rounded-sm' : MENTION_BADGE, className)}
       style={tint ? { backgroundColor: tint, boxShadow: `0 0 0 2px ${tint}` } : undefined}
     >

@@ -47,6 +47,7 @@ const makeMessage = (overrides: Partial<ChatMessage> = {}): ChatMessage => ({
   attachments: [],
   clientTxn: null,
   namedAgentIds: [],
+  namedUserIds: [],
   threadReplyCount: 0,
   threadLastReplySeq: null,
   ...overrides,

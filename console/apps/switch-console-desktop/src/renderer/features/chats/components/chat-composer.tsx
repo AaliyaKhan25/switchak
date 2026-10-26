@@ -8,14 +8,20 @@ import { modalStore } from '@renderer/lib/modal/modal-store';
 import { Button } from '@renderer/lib/ui/button';
 import { Popover, PopoverContent, PopoverTitle, PopoverTrigger } from '@renderer/lib/ui/popover';
 import { cn } from '@renderer/utils/utils';
+import { agentInitials } from '@shared/core/agents/agent-avatar';
 import { type ChatAgent, type ChatMessage, chatAgentLabel } from '@shared/core/chats/chats';
 import { snippetOf } from '../chat-threads';
 import {
+  agentTargets,
   filterMentionAgents,
+  filterMentionPeople,
   mentionAgentIds,
+  type MentionPerson,
   mentionQuery,
   mentionSegments,
   mentionTokens,
+  mentionUserIds,
+  personTargets,
   tokenToRemove,
 } from '../mentions';
 import { isInterruptAck } from '../stop-rows';
@@ -42,6 +48,10 @@ async function toBase64(file: File): Promise<string> {
 function chatFile(file: File): ChatFile {
   return { name: file.name, type: file.type, size: file.size, read: () => toBase64(file) };
 }
+
+type Suggestion =
+  | { kind: 'agent'; id: string; agent: ChatAgent }
+  | { kind: 'person'; id: string; person: MentionPerson & { email: string | null } };
 
 /** Drafts by chat, so a draft outlives navigating away. */
 const drafts = new Map<string, string>();
@@ -146,6 +156,7 @@ export const ChatComposer = observer(function ChatComposer({
   serverId,
   timeline,
   agents,
+  people,
   groupName,
   activity,
   replyTo,
@@ -155,6 +166,8 @@ export const ChatComposer = observer(function ChatComposer({
   serverId: string;
   timeline: ChatTimeline;
   agents: ChatAgent[];
+  /** The other people in the chat, who can be mentioned after its agents. */
+  people: (MentionPerson & { email: string | null })[];
   /** The chat's name when it is a group, which is who a message goes to; null in a direct chat. */
   groupName: string | null;
   activity: AgentActivity | null;
@@ -177,9 +190,26 @@ export const ChatComposer = observer(function ChatComposer({
   const [mentionIndex, setMentionIndex] = useState(0);
   /** Where the `@` of a suggestion list Esc closed sits, so it stays closed for that `@`. */
   const [dismissedAt, setDismissedAt] = useState<number | null>(null);
-  const tokens = mentionTokens(draft, agents);
-  const query = agents.length ? mentionQuery(draft, caret) : null;
-  const suggestions = query ? filterMentionAgents(agents, query.query) : [];
+  /** People picked from the list; one sharing an agent's name is read as the person. */
+  const [pickedPeople, setPickedPeople] = useState<ReadonlySet<string>>(new Set());
+  const targets = [
+    ...personTargets(people.filter((person) => pickedPeople.has(person.userId))),
+    ...agentTargets(agents),
+    ...personTargets(people.filter((person) => !pickedPeople.has(person.userId))),
+  ];
+  const tokens = mentionTokens(draft, targets);
+  const mentionable = agents.length > 0 || people.length > 0;
+  const query = mentionable ? mentionQuery(draft, caret) : null;
+  const suggestions: Suggestion[] = query
+    ? [
+        ...filterMentionAgents(agents, query.query).map(
+          (agent): Suggestion => ({ kind: 'agent', id: agent.id, agent })
+        ),
+        ...filterMentionPeople(people, query.query).map(
+          (person): Suggestion => ({ kind: 'person', id: `user:${person.userId}`, person })
+        ),
+      ]
+    : [];
   const suggesting = query !== null && query.start !== dismissedAt && suggestions.length > 0;
   const activeIndex = Math.min(mentionIndex, suggestions.length - 1);
   const listId = `mentions-${timeline.roomId}`;
@@ -221,16 +251,19 @@ export const ChatComposer = observer(function ChatComposer({
     input.current?.focus();
   };
 
-  const pick = (picked: ChatAgent) => {
+  const pick = (picked: Suggestion) => {
     const textarea = input.current;
     if (!textarea || !query) return;
+    const name = picked.kind === 'agent' ? picked.agent.name : picked.person.name;
+    if (picked.kind === 'person')
+      setPickedPeople((current) => new Set(current).add(picked.person.userId));
     textarea.focus();
     textarea.setSelectionRange(query.start, caret);
     // insertText keeps the native undo stack; a controlled-value write would wipe it.
-    if (!document.execCommand('insertText', false, `@${picked.name} `)) {
-      const next = `${draft.slice(0, query.start)}@${picked.name} ${draft.slice(caret)}`;
+    if (!document.execCommand('insertText', false, `@${name} `)) {
+      const next = `${draft.slice(0, query.start)}@${name} ${draft.slice(caret)}`;
       setDraft(next);
-      setCaret(query.start + picked.name.length + 2);
+      setCaret(query.start + name.length + 2);
     }
     setMentionIndex(0);
   };
@@ -280,12 +313,14 @@ export const ChatComposer = observer(function ChatComposer({
     timeline.send({
       body,
       threadRootId: replyTo?.messageId ?? null,
-      mentionAgentIds: mentionAgentIds(mentionTokens(body, agents)),
+      mentionAgentIds: mentionAgentIds(mentionTokens(body, targets)),
+      mentionUserIds: mentionUserIds(mentionTokens(body, targets)),
       files: files.map(({ file }) => chatFile(file)),
     });
     void chatTitler.sent(serverId, timeline.roomId, body);
     setDraft('');
     setFiles([]);
+    setPickedPeople(new Set());
     onClearReply();
   };
 
@@ -364,7 +399,7 @@ export const ChatComposer = observer(function ChatComposer({
                 <div
                   id={listId}
                   role="listbox"
-                  aria-label="Mention an agent"
+                  aria-label="Mention an agent or person"
                   className="absolute bottom-full left-0 z-50 mb-3 flex max-h-60 w-72 flex-col overflow-y-auto rounded-md border bg-background-quaternary p-1 text-sm shadow-sm"
                 >
                   {suggestions.map((each, index) => (
@@ -382,17 +417,36 @@ export const ChatComposer = observer(function ChatComposer({
                       onMouseDown={(event) => event.preventDefault()}
                       onClick={() => pick(each)}
                     >
-                      <AgentAvatar
-                        name={each.name}
-                        iconUrl={each.iconUrl}
-                        serverId={serverId}
-                        size={20}
-                      />
-                      <span className="truncate">{chatAgentLabel(each)}</span>
-                      {each.alias && (
-                        <span className="truncate text-xs text-foreground-muted">
-                          @{each.alias}
-                        </span>
+                      {each.kind === 'agent' ? (
+                        <>
+                          <AgentAvatar
+                            name={each.agent.name}
+                            iconUrl={each.agent.iconUrl}
+                            serverId={serverId}
+                            size={20}
+                          />
+                          <span className="truncate">{chatAgentLabel(each.agent)}</span>
+                          {each.agent.alias && (
+                            <span className="truncate text-xs text-foreground-muted">
+                              @{each.agent.alias}
+                            </span>
+                          )}
+                        </>
+                      ) : (
+                        <>
+                          <span
+                            aria-hidden
+                            className="flex size-5 shrink-0 items-center justify-center rounded-full bg-[var(--fill-2)] text-[9px] font-medium text-foreground"
+                          >
+                            {agentInitials(each.person.name)}
+                          </span>
+                          <span className="truncate">{each.person.name}</span>
+                          {each.person.email && (
+                            <span className="ml-auto truncate text-xs text-foreground-muted">
+                              {each.person.email}
+                            </span>
+                          )}
+                        </>
                       )}
                     </div>
                   ))}
@@ -404,10 +458,16 @@ export const ChatComposer = observer(function ChatComposer({
                 className="pointer-events-none absolute inset-0 overflow-y-auto px-1 py-1.5 text-sm break-words whitespace-pre-wrap text-transparent"
               >
                 {mentionSegments(draft, tokens).map((segment, index) =>
-                  segment.agentId ? (
+                  segment.token ? (
                     <MentionMark
                       key={index}
-                      agent={agents.find((each) => each.id === segment.agentId) ?? null}
+                      kind={segment.token.kind}
+                      // People are never tinted: their badge stays grey.
+                      agent={
+                        segment.token.kind === 'agent'
+                          ? (agents.find((each) => each.id === segment.token?.id) ?? null)
+                          : null
+                      }
                       serverId={serverId}
                       className="text-transparent"
                     >
@@ -427,9 +487,9 @@ export const ChatComposer = observer(function ChatComposer({
                 placeholder={disabled ?? `Message ${recipient}...`}
                 value={draft}
                 disabled={disabled !== null}
-                role={agents.length ? 'combobox' : undefined}
-                aria-autocomplete={agents.length ? 'list' : undefined}
-                aria-expanded={agents.length ? suggesting : undefined}
+                role={mentionable ? 'combobox' : undefined}
+                aria-autocomplete={mentionable ? 'list' : undefined}
+                aria-expanded={mentionable ? suggesting : undefined}
                 aria-controls={suggesting ? listId : undefined}
                 aria-activedescendant={
                   suggesting ? `${listId}-${suggestions[activeIndex]!.id}` : undefined

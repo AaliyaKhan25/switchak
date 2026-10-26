@@ -2,11 +2,11 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
+import { chatMembersQueryKey } from '@renderer/features/chats/chat-people';
 import {
   addAllToChat,
   addLabel,
   addToChat,
-  chatMembersQueryKey,
   InviteHint,
   RoomConfigurationPanel,
 } from '@renderer/features/switch-rooms/room-configuration-panel';

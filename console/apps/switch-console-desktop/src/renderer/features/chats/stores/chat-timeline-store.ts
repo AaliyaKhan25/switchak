@@ -42,6 +42,7 @@ export type PendingSend = {
   body: string;
   threadRootId: string | null;
   mentionAgentIds: string[];
+  mentionUserIds: string[];
   files: PendingFile[];
   state: 'sending' | 'failed' | 'conflict';
   error: string | null;
@@ -56,6 +57,8 @@ export type SendInput = {
   threadRootId: string | null;
   /** The agents picked as mentions; the server adds `@name` for any the body does not name. */
   mentionAgentIds: string[];
+  /** The people picked as mentions; they are told, and no agent is addressed by them. */
+  mentionUserIds: string[];
   files: ChatFile[];
 };
 
@@ -79,6 +82,7 @@ export type TimelineApi = {
       threadRootId: string | null;
       uploadIds: string[];
       mentionAgentIds?: string[];
+      mentionUserIds?: string[];
     }
   ) => Promise<ChatMessage[]>;
   newId: () => string;
@@ -203,6 +207,7 @@ export class ChatTimeline {
       body: input.body,
       threadRootId: input.threadRootId,
       mentionAgentIds: input.mentionAgentIds,
+      mentionUserIds: input.mentionUserIds,
       files: input.files.map((file) => ({
         id: this.api.newId(),
         uploadId: this.api.newId(),
@@ -319,6 +324,7 @@ export class ChatTimeline {
         threadRootId: send.threadRootId,
         // A copy: IPC cannot clone a MobX array.
         mentionAgentIds: [...send.mentionAgentIds],
+        mentionUserIds: [...send.mentionUserIds],
         uploadIds: send.files.map((file) => file.uploadId),
       });
       runInAction(() => {

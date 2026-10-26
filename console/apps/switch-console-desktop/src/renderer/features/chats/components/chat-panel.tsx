@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Button } from '@renderer/lib/ui/button';
 import { SERVER_TOO_OLD_FOR_ACTIVITY } from '@shared/core/chats/activity';
 import type { ChatMessage, ChatSummary } from '@shared/core/chats/chats';
+import { useChatPeople } from '../chat-people';
 import { agentActivities } from '../stores/activities';
 import type { AgentActivity } from '../stores/chat-activity-store';
 import type { ChatTimeline } from '../stores/chat-timeline-store';
@@ -76,6 +77,7 @@ export const ChatPanel = observer(function ChatPanel({
   const timeline = chatsStore.timelines.get(serverId, roomId);
   const chat = chatsStore.chat(roomId);
   const activities = useAgentActivities(serverId, chat);
+  const people = useChatPeople(serverId, chat);
   const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
   const lost = timeline.accessLost || chatsStore.removed.has(roomId);
 
@@ -154,6 +156,7 @@ export const ChatPanel = observer(function ChatPanel({
                 serverId={serverId}
                 timeline={timeline}
                 agents={chat?.agents ?? []}
+                people={people}
                 activities={activities}
                 onReply={setReplyTo}
               />
@@ -177,6 +180,7 @@ export const ChatPanel = observer(function ChatPanel({
         serverId={serverId}
         timeline={timeline}
         agents={chat?.agents ?? []}
+        people={people}
         groupName={chat && chat.channelType !== 'direct' ? chat.name : null}
         activity={activities[0] ?? null}
         replyTo={replyTo}

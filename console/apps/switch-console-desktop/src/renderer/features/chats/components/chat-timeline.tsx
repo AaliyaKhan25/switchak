@@ -15,7 +15,13 @@ import {
 } from '@shared/core/chats/chats';
 import { foldTurnEndNotices, placeTurns, type TurnActivity } from '../activity-join';
 import { messageAnchorId, threadChip } from '../chat-threads';
-import { mentionSegments, mentionTokens } from '../mentions';
+import {
+  agentTargets,
+  type MentionPerson,
+  mentionSegments,
+  mentionTokens,
+  personTargets,
+} from '../mentions';
 import { hiddenStopRows } from '../stop-rows';
 import type { AgentActivity } from '../stores/chat-activity-store';
 import type { ChatTimeline, PendingSend } from '../stores/chat-timeline-store';
@@ -58,19 +64,33 @@ function isBridged(message: ChatMessage): boolean {
 /** A person's initials disc: people have no picture in Switch. */
 /** `body` with each `@name` or `@alias` of a chat agent drawn as a badge. */
 function MentionText({
-  body,
+  message,
   agents,
+  people,
   serverId,
 }: {
-  body: string;
+  message: ChatMessage;
   agents: ChatAgent[];
+  people: MentionPerson[];
   serverId: string;
 }) {
-  return mentionSegments(body, mentionTokens(body, agents)).map((segment, index) =>
-    segment.agentId ? (
+  // The people the message names come first, so one sharing an agent's name reads as the person.
+  const targets = [
+    ...personTargets(people.filter((person) => message.namedUserIds.includes(person.userId))),
+    ...agentTargets(agents),
+  ];
+  const body = message.body;
+  return mentionSegments(body, mentionTokens(body, targets)).map((segment, index) =>
+    segment.token ? (
       <MentionMark
         key={index}
-        agent={agents.find((agent) => agent.id === segment.agentId) ?? null}
+        kind={segment.token.kind}
+        // People are never tinted: their badge stays grey.
+        agent={
+          segment.token.kind === 'agent'
+            ? (agents.find((agent) => agent.id === segment.token?.id) ?? null)
+            : null
+        }
         serverId={serverId}
         className="text-foreground"
       >
@@ -131,6 +151,8 @@ type Props = {
   serverId: string;
   timeline: ChatTimeline;
   agents: ChatAgent[];
+  /** The chat's people, to name the ones a message mentions. */
+  people: MentionPerson[];
   activities: AgentActivity[];
   onReply: (message: ChatMessage) => void;
 };
@@ -144,6 +166,7 @@ export const ChatTimelineView = observer(function ChatTimelineView({
   serverId,
   timeline,
   agents,
+  people,
   activities,
   onReply,
 }: Props) {
@@ -305,7 +328,12 @@ export const ChatTimelineView = observer(function ChatTimelineView({
                   </span>
                   {chip && <ThreadChipButton chip={chip} />}
                   <div className="min-w-0 rounded-2xl bg-background-1 px-4 py-2.5 text-sm leading-relaxed break-words whitespace-pre-wrap">
-                    <MentionText body={message.body} agents={agents} serverId={serverId} />
+                    <MentionText
+                      message={message}
+                      agents={agents}
+                      people={people}
+                      serverId={serverId}
+                    />
                   </div>
                   <ChatAttachments
                     serverId={serverId}

@@ -214,6 +214,7 @@ export const chatsController = createRPCController({
         threadRootId: input.threadRootId,
         uploadIds: input.uploadIds,
         mentionAgentIds: input.mentionAgentIds,
+        mentionUserIds: input.mentionUserIds,
       })
     ),
   threadMessages: (params: {

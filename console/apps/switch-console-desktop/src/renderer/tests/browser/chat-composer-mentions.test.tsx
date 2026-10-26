@@ -55,6 +55,7 @@ describe('ChatComposer mention badges', () => {
         serverId="s"
         timeline={new ChatTimeline('room-geometry', {} as TimelineApi)}
         agents={[agent]}
+        people={[]}
         groupName="Ship review"
         activity={null}
         replyTo={null}

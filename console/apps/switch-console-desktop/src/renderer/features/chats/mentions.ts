@@ -4,19 +4,36 @@ import type { ChatAgent } from '@shared/core/chats/chats';
 const NAME_CHAR = /[A-Za-z0-9._-]/;
 
 export type MentionAgent = Pick<ChatAgent, 'id' | 'name' | 'alias'>;
-export type MentionToken = { agentId: string; start: number; end: number };
+/** A person in the chat, mentioned by their whole display name, spaces and all. */
+export type MentionPerson = { userId: string; name: string };
+/** Someone a mention can name: an agent or a person, by the names they answer to. */
+export type MentionTarget = { kind: 'agent' | 'person'; id: string; names: string[] };
+export type MentionToken = { kind: 'agent' | 'person'; id: string; start: number; end: number };
+
+/** Agents as mention targets, by name and alias. */
+export function agentTargets(agents: MentionAgent[]): MentionTarget[] {
+  return agents.map((agent) => ({
+    kind: 'agent',
+    id: agent.id,
+    names: [agent.name, agent.alias].filter((name): name is string => Boolean(name)),
+  }));
+}
+
+/** People as mention targets, by their display name. */
+export function personTargets(people: MentionPerson[]): MentionTarget[] {
+  return people.map((person) => ({ kind: 'person', id: person.userId, names: [person.name] }));
+}
 
 /**
- * Every whole `@name` or `@alias` of a chat agent in `text`, in order. Derived
- * from the text alone, so undo, paste and a restored draft keep their badges,
- * and an edit inside one (or the agent leaving the chat) turns it back to text.
+ * Every whole `@name` of a target in `text`, in order. Where a person and an
+ * agent share a name, the target listed first wins. Derived from the text
+ * alone, so undo, paste and a restored draft keep their badges, and an edit
+ * inside one (or its owner leaving the chat) turns it back to text.
  */
-export function mentionTokens(text: string, agents: MentionAgent[]): MentionToken[] {
-  const spoken = agents
-    .flatMap((agent) =>
-      [agent.name, agent.alias].flatMap((name) => (name ? [{ agent, name }] : []))
-    )
-    // Longest first, so `@cc-2` is never read as `@cc` followed by text.
+export function mentionTokens(text: string, targets: MentionTarget[]): MentionToken[] {
+  const spoken = targets
+    .flatMap((target) => target.names.map((name) => ({ target, name })))
+    // Longest first, so `@cc-2` is never read as `@cc` followed by text; the sort is stable, so ties keep the callers' order.
     .sort((a, b) => b.name.length - a.name.length);
   const tokens: MentionToken[] = [];
   for (let at = text.indexOf('@'); at !== -1; at = text.indexOf('@', at + 1)) {
@@ -29,7 +46,12 @@ export function mentionTokens(text: string, agents: MentionAgent[]): MentionToke
       );
     });
     if (!hit) continue;
-    tokens.push({ agentId: hit.agent.id, start: at, end: at + 1 + hit.name.length });
+    tokens.push({
+      kind: hit.target.kind,
+      id: hit.target.id,
+      start: at,
+      end: at + 1 + hit.name.length,
+    });
     at += hit.name.length;
   }
   return tokens;
@@ -37,7 +59,21 @@ export function mentionTokens(text: string, agents: MentionAgent[]): MentionToke
 
 /** The agents a message is for, each once. */
 export function mentionAgentIds(tokens: MentionToken[]): string[] {
-  return [...new Set(tokens.map((token) => token.agentId))];
+  return [...new Set(tokens.filter((token) => token.kind === 'agent').map((token) => token.id))];
+}
+
+/** The people a message mentions, each once; they are never sent as agents. */
+export function mentionUserIds(tokens: MentionToken[]): string[] {
+  return [...new Set(tokens.filter((token) => token.kind === 'person').map((token) => token.id))];
+}
+
+/** People whose name contains `query`, those it starts first. */
+export function filterMentionPeople<T extends MentionPerson>(people: T[], query: string): T[] {
+  const q = query.toLowerCase();
+  const rank = (person: T) => (person.name.toLowerCase().startsWith(q) ? 0 : 1);
+  return people
+    .filter((person) => person.name.toLowerCase().includes(q))
+    .sort((a, b) => rank(a) - rank(b));
 }
 
 /** The `@query` being typed at the caret, if any: `@` at the start or after whitespace. */
@@ -75,19 +111,19 @@ export function tokenToRemove(
   );
 }
 
-/** `text` split into plain runs and mention runs (with their agent), for drawing badges. */
+/** `text` split into plain runs and mention runs (with their token), for drawing badges. */
 export function mentionSegments(
   text: string,
   tokens: MentionToken[]
-): { text: string; agentId: string | null }[] {
-  const segments: { text: string; agentId: string | null }[] = [];
+): { text: string; token: MentionToken | null }[] {
+  const segments: { text: string; token: MentionToken | null }[] = [];
   let at = 0;
   for (const token of tokens) {
-    if (token.start > at) segments.push({ text: text.slice(at, token.start), agentId: null });
-    segments.push({ text: text.slice(token.start, token.end), agentId: token.agentId });
+    if (token.start > at) segments.push({ text: text.slice(at, token.start), token: null });
+    segments.push({ text: text.slice(token.start, token.end), token });
     at = token.end;
   }
-  if (at < text.length) segments.push({ text: text.slice(at), agentId: null });
+  if (at < text.length) segments.push({ text: text.slice(at), token: null });
   return segments;
 }
 

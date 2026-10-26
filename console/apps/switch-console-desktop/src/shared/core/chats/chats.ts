@@ -74,6 +74,8 @@ export const chatMessageSchema = z.object({
   attachments: z.array(chatAttachmentSchema),
   clientTxn: z.string().nullable(),
   namedAgentIds: z.array(z.string()),
+  /** The people the message mentions; empty from a server older than people mentions. */
+  namedUserIds: z.array(z.string()).default([]),
   threadReplyCount: z.number().int(),
   threadLastReplySeq: z.number().int().nullable(),
 });
@@ -158,6 +160,7 @@ export type ChatSendInput = {
   threadRootId: string | null;
   uploadIds: string[];
   mentionAgentIds?: string[];
+  mentionUserIds?: string[];
 };
 
 export type ChatUploadInput = {

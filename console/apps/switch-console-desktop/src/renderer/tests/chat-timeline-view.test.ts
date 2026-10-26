@@ -30,6 +30,7 @@ function message(seq: number, userId: string, name: string): ChatMessage {
     attachments: [],
     clientTxn: null,
     namedAgentIds: [],
+    namedUserIds: [],
     threadReplyCount: 0,
     threadLastReplySeq: null,
   };
@@ -47,6 +48,7 @@ describe('ChatTimelineView', () => {
         serverId: 's',
         timeline,
         agents: [],
+        people: [],
         activities: [],
         onReply: () => {},
       })
@@ -74,6 +76,7 @@ describe('ChatTimelineView thread replies', () => {
         serverId: 's',
         timeline,
         agents: [],
+        people: [],
         activities: [],
         onReply: () => {},
       })
@@ -88,5 +91,40 @@ describe('ChatTimelineView thread replies', () => {
       expect(chip).toBeGreaterThan(from);
       expect(html.indexOf(body, from)).toBeGreaterThan(chip);
     }
+  });
+});
+
+describe('ChatTimelineView mentions', () => {
+  const cc = {
+    id: 'a3',
+    name: 'cc',
+    displayName: null,
+    iconUrl: null,
+    provider: null,
+    alias: null,
+    ownerName: null,
+    ownedByViewer: false,
+  };
+  const render = (namedUserIds: string[], namedAgentIds: string[]) => {
+    const timeline = new ChatTimeline('room-1', api);
+    timeline.apply({ ...message(1, 'me', 'Alice'), body: '@cc hi', namedUserIds, namedAgentIds });
+    return renderToStaticMarkup(
+      createElement(ChatTimelineView, {
+        serverId: 's',
+        timeline,
+        agents: [cc],
+        people: [{ userId: 'u2', name: 'cc' }],
+        activities: [],
+        onReply: () => {},
+      })
+    );
+  };
+
+  it('shows a person the message names as the person, even with an agent of the same name', () => {
+    expect(render(['u2'], [])).toContain('data-mention="person"');
+  });
+
+  it('shows the agent when the message names no person', () => {
+    expect(render([], ['a3'])).toContain('data-mention="agent"');
   });
 });

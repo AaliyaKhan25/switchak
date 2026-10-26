@@ -227,6 +227,7 @@ export async function sendChatMessage(
     threadRootId: string | null;
     uploadIds: string[];
     mentionAgentIds?: string[];
+    mentionUserIds?: string[];
   }
 ): Promise<ChatMessage[]> {
   return (

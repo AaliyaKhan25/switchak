@@ -22,6 +22,7 @@ function message(seq: number, extra: Partial<ChatMessage> = {}): ChatMessage {
     attachments: [],
     clientTxn: null,
     namedAgentIds: [],
+    namedUserIds: [],
     threadReplyCount: 0,
     threadLastReplySeq: null,
     ...extra,
@@ -79,6 +80,7 @@ const input = (files: ChatFile[] = []) => ({
   body: 'hello',
   threadRootId: null,
   mentionAgentIds: [],
+  mentionUserIds: [],
   files,
 });
 

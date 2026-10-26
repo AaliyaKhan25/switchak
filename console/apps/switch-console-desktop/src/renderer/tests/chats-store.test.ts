@@ -54,6 +54,7 @@ function message(roomId: string, seq: number): ChatMessage {
     attachments: [],
     clientTxn: null,
     namedAgentIds: [],
+    namedUserIds: [],
     threadReplyCount: 0,
     threadLastReplySeq: null,
   };

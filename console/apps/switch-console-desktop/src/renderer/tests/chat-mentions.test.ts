@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  agentTargets,
   filterMentionAgents,
+  filterMentionPeople,
+  mentionUserIds,
+  personTargets,
   mentionAgentIds,
   mentionQuery,
   mentionSegments,
@@ -18,45 +22,45 @@ const agents = [
 describe('mentionTokens', () => {
   it('finds whole @name and @alias mentions, case-insensitively', () => {
     const text = 'hi @Agent-Two and @reviewer, @agent-one!';
-    expect(mentionTokens(text, agents)).toEqual([
-      { agentId: 'a2', start: 3, end: 13 },
-      { agentId: 'a2', start: 18, end: 27 },
-      { agentId: 'a1', start: 29, end: 39 },
+    expect(mentionTokens(text, agentTargets(agents))).toEqual([
+      { kind: 'agent', id: 'a2', start: 3, end: 13 },
+      { kind: 'agent', id: 'a2', start: 18, end: 27 },
+      { kind: 'agent', id: 'a1', start: 29, end: 39 },
     ]);
   });
 
   it('prefers the longest name and never matches inside a longer word', () => {
-    expect(mentionTokens('@cc-2 @cc @cc-3 bob@cc', agents).map((t) => t.agentId)).toEqual([
+    expect(mentionTokens('@cc-2 @cc @cc-3 bob@cc', agentTargets(agents)).map((t) => t.id)).toEqual([
       'a4',
       'a3',
     ]);
   });
 
   it('drops a mention once an edit lands inside it, or its agent leaves', () => {
-    expect(mentionTokens('@agent-tXwo hi', agents)).toEqual([]);
-    expect(mentionTokens('@agent-twos hi', agents)).toEqual([]);
-    expect(mentionTokens('@agent-two hi', agents.slice(0, 1))).toEqual([]);
+    expect(mentionTokens('@agent-tXwo hi', agentTargets(agents))).toEqual([]);
+    expect(mentionTokens('@agent-twos hi', agentTargets(agents))).toEqual([]);
+    expect(mentionTokens('@agent-two hi', agentTargets(agents.slice(0, 1)))).toEqual([]);
   });
 
   it('addresses an agent once however often it is mentioned', () => {
-    expect(mentionAgentIds(mentionTokens('@agent-two @reviewer @agent-two', agents))).toEqual([
-      'a2',
-    ]);
+    expect(
+      mentionAgentIds(mentionTokens('@agent-two @reviewer @agent-two', agentTargets(agents)))
+    ).toEqual(['a2']);
   });
 
   it('splits text into plain and mention runs', () => {
     const text = 'x @cc y';
-    expect(mentionSegments(text, mentionTokens(text, agents))).toEqual([
-      { text: 'x ', agentId: null },
-      { text: '@cc', agentId: 'a3' },
-      { text: ' y', agentId: null },
+    expect(mentionSegments(text, mentionTokens(text, agentTargets(agents)))).toEqual([
+      { text: 'x ', token: null },
+      { text: '@cc', token: { kind: 'agent', id: 'a3', start: 2, end: 5 } },
+      { text: ' y', token: null },
     ]);
   });
 });
 
 describe('mention editing', () => {
   const text = 'a @agent-two b';
-  const tokens = mentionTokens(text, agents);
+  const tokens = mentionTokens(text, agentTargets(agents));
 
   it('removes a whole mention on Backspace at its end or inside it', () => {
     expect(tokenToRemove(tokens, 12, 'Backspace')).toEqual(tokens[0]);
@@ -87,5 +91,39 @@ describe('mention suggestions', () => {
       { id: 'y', name: 'ann', alias: null },
     ];
     expect(filterMentionAgents(named, 'ann').map((a) => a.id)).toEqual(['y', 'x']);
+  });
+});
+
+describe('people mentions', () => {
+  const people = [
+    { userId: 'u1', name: 'Bob Member' },
+    { userId: 'u2', name: 'cc' },
+  ];
+
+  it('matches a whole display name with spaces, and sends people apart from agents', () => {
+    const text = 'hi @Bob Member, ask @agent-one';
+    const tokens = mentionTokens(text, [...agentTargets(agents), ...personTargets(people)]);
+    expect(tokens).toEqual([
+      { kind: 'person', id: 'u1', start: 3, end: 14 },
+      { kind: 'agent', id: 'a1', start: 20, end: 30 },
+    ]);
+    expect(mentionAgentIds(tokens)).toEqual(['a1']);
+    expect(mentionUserIds(tokens)).toEqual(['u1']);
+    expect(mentionTokens('@Bob Memberx', personTargets(people))).toEqual([]);
+  });
+
+  it('reads a name shared by a person and an agent as whichever is listed first', () => {
+    const asPerson = mentionTokens('@cc', [...personTargets(people), ...agentTargets(agents)]);
+    expect(asPerson).toEqual([{ kind: 'person', id: 'u2', start: 0, end: 3 }]);
+    // A person-only mention addresses no agent.
+    expect(mentionAgentIds(asPerson)).toEqual([]);
+    expect(mentionTokens('@cc', [...agentTargets(agents), ...personTargets(people)])[0]!.kind).toBe(
+      'agent'
+    );
+  });
+
+  it('suggests people whose name contains the query, those it starts first', () => {
+    expect(filterMentionPeople(people, 'm').map((p) => p.userId)).toEqual(['u1']);
+    expect(filterMentionPeople(people, '').map((p) => p.userId)).toEqual(['u1', 'u2']);
   });
 });
