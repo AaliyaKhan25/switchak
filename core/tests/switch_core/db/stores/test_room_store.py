@@ -5,8 +5,17 @@ import uuid
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from switch_core.db.models import Room, Tenant, TenantNotBoundError
+from switch_core.db.models import (
+    Package,
+    Reference,
+    Room,
+    Tenant,
+    TenantNotBoundError,
+    User,
+)
 from switch_core.db.session_scope import tenant_session
+from switch_core.db.stores.package_store import PackageStore
+from switch_core.db.stores.reference_store import ReferenceStore
 from switch_core.db.stores.room_store import RoomStore
 
 
@@ -111,3 +120,52 @@ class TestGetByTransportRoomIdRequiresATenant:
         async with session_factory() as verify:
             with pytest.raises(TenantNotBoundError):
                 await store.get_by_transport_room_id(verify, shared_transport_room_id)
+
+
+class TestDelete:
+    async def test_deletes_a_room_with_a_package_and_a_reference_attached(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        packages, references = PackageStore(), ReferenceStore()
+        async with session_factory() as session:
+            owner = User(name="owner", email="owner@example.com", role="admin")
+            session.add(owner)
+            await session.flush()
+            room = await _make_room(session, "!attached:switch.local")
+            package = await packages.create(
+                session,
+                Package(
+                    owner_id=owner.id,
+                    read_visibility="private",
+                    write_visibility="private",
+                    name="pkg",
+                    description="d",
+                    instructions="i",
+                ),
+            )
+            reference = await references.create(
+                session,
+                Reference(
+                    owner_id=owner.id,
+                    read_visibility="private",
+                    write_visibility="private",
+                    type="url",
+                    name="ref",
+                    description="d",
+                    instructions="i",
+                    value={"url": "https://example.com"},
+                ),
+            )
+            await packages.attach_to_room(session, room.id, package.id)
+            await references.attach_to_room(session, room.id, reference.id)
+            await session.commit()
+            room_id, package_id, reference_id = room.id, package.id, reference.id
+
+        async with session_factory() as session:
+            await RoomStore().delete(session, room_id)
+            await session.commit()
+
+        async with session_factory() as session:
+            assert await session.get(Room, room_id) is None
+            assert await packages.get(session, package_id) is not None
+            assert await session.get(Reference, reference_id) is not None

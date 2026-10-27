@@ -1,8 +1,20 @@
+import { randomBytes } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
-import { sleep, type MattermostPost } from '../clients/mattermost-client.ts';
+import { stringify } from 'yaml';
+import { MattermostClient, sleep, type MattermostPost } from '../clients/mattermost-client.ts';
+import { OWNER_ONLY, TemplateRefusal, type TemplateRun } from '../clients/switch-client.ts';
+import type { NameScope } from '../core/run.ts';
 import type { ScenarioHeader } from '../core/scenario.ts';
-import type { Harness } from './harness.ts';
+import { IssuedSecrets } from '../core/secrets.ts';
+import {
+  AGENT_INSTRUCTIONS,
+  CLAUDE_MODEL,
+  NOT_READY_CODES,
+  PLACEMENT_DEADLINE_MS,
+  PROVIDER_BY_AGENT_TYPE,
+  type Harness,
+} from './harness.ts';
 
 /**
  * The scenarios. Each one drives the full path
@@ -26,7 +38,8 @@ export interface ScenarioResult {
   durationMs: number;
 }
 
-export type Scenario = (harness: Harness) => Promise<ScenarioResult>;
+/** `names` names whatever a scenario makes beyond the shared agent and channel. */
+export type Scenario = (harness: Harness, names: NameScope) => Promise<ScenarioResult>;
 
 /** How long a scenario waits for the agent to say something. */
 const REPLY_DEADLINE_MS = Number(process.env.SWITCH_E2E_REPLY_TIMEOUT_MS ?? 5 * 60_000);
@@ -204,8 +217,10 @@ async function ask(harness: Harness, text: string): Promise<number> {
 
 /** Wait for a bot post matching `predicate`, or throw with the transcript. */
 async function expectBotPost(
-  harness: Harness,
+  mattermost: MattermostClient,
   params: {
+    /** The channel to watch, and the bot whose posts count. */
+    where: { channelId: string; botId: string };
     since: number;
     predicate: (post: MattermostPost) => boolean;
     describe: string;
@@ -213,9 +228,9 @@ async function expectBotPost(
     record: (posts: MattermostPost[]) => void;
   }
 ): Promise<MattermostPost> {
-  const { match, transcript } = await harness.mattermost.waitForPost({
-    channelId: harness.channel.id,
-    fromUserId: harness.bot.id,
+  const { match, transcript } = await mattermost.waitForPost({
+    channelId: params.where.channelId,
+    fromUserId: params.where.botId,
     // Neither a no-session notice nor Switch's activity commentary is ever a
     // match, however permissive the caller's predicate — both are Switch
     // talking on the bot's account, not the agent.
@@ -232,6 +247,11 @@ async function expectBotPost(
     );
   }
   return match;
+}
+
+/** The shared channel, and the shared agent's bot. */
+function sharedRoom(harness: Harness): { channelId: string; botId: string } {
+  return { channelId: harness.channel.id, botId: harness.bot.id };
 }
 
 function summarise(posts: MattermostPost[]): string {
@@ -255,7 +275,8 @@ function lower(post: MattermostPost): string {
 export const greet: Scenario = (harness) =>
   scenario('greet', async (record) => {
     const since = await ask(harness, `reply with exactly ${OK_MARKER} and nothing else`);
-    const match = await expectBotPost(harness, {
+    const match = await expectBotPost(harness.mattermost, {
+      where: sharedRoom(harness),
       since,
       record,
       predicate: (post) => post.message.includes(OK_MARKER),
@@ -291,7 +312,8 @@ export const question: Scenario = (harness) =>
             `exactly the options ${CHOICES.join(', ')}. Then reply with the single word I chose.`
     );
 
-    const asked = await expectBotPost(harness, {
+    const asked = await expectBotPost(harness.mattermost, {
+      where: sharedRoom(harness),
       since,
       record,
       // A native question is relayed as a request card numbering the options;
@@ -312,7 +334,8 @@ export const question: Scenario = (harness) =>
     const answeredAt = prose
       ? await ask(harness, CHOSEN)
       : await answerCard(harness, asked, chosenOption(asked));
-    const answer = await expectBotPost(harness, {
+    const answer = await expectBotPost(harness.mattermost, {
+      where: sharedRoom(harness),
       since: answeredAt,
       record,
       predicate: (post) =>
@@ -348,7 +371,8 @@ export const approval: Scenario = (harness) =>
       `run the shell command \`echo ${OK_MARKER} > ${file}\` and then reply with the single word done`
     );
 
-    const prompt = await expectBotPost(harness, {
+    const prompt = await expectBotPost(harness.mattermost, {
+      where: sharedRoom(harness),
       since,
       record,
       predicate: (post) =>
@@ -358,7 +382,8 @@ export const approval: Scenario = (harness) =>
     });
 
     const approvedAt = await answerCard(harness, prompt, 1);
-    const done = await expectBotPost(harness, {
+    const done = await expectBotPost(harness.mattermost, {
+      where: sharedRoom(harness),
       since: approvedAt,
       record,
       predicate: (post) => lower(post).includes('done'),
@@ -398,7 +423,8 @@ export const interrupt: Scenario = (harness) =>
       harness,
       `Run this exact shell command for a bounded cancellation test: \`${command}\`. Wait for completion before replying. Do not create these files with another tool.`
     );
-    const permission = await expectBotPost(harness, {
+    const permission = await expectBotPost(harness.mattermost, {
+      where: sharedRoom(harness),
       since,
       record,
       predicate: (post) =>
@@ -430,6 +456,228 @@ export const interrupt: Scenario = (harness) =>
     if ((await markerContents(finishedFile)) !== null)
       throw new Error('The interrupted command completed.');
     return 'command start confirmed; completion marker absent after 95s';
+  });
+
+// ── card answered by someone who may not ─────────────────────────────────────
+
+/** The bot Switch posts its own notices as, on Mattermost. */
+const SWITCH_ADMIN = 'switch-admin';
+
+/**
+ * Answering a request card takes the same permission as addressing the agent.
+ * With the agent open only to its owner, a person who is not the owner answers
+ * the card and is told the answer did not land, and the command does not run;
+ * the owner answers it and the command runs.
+ *
+ * The second person signs up on the spot, so this runs only where Mattermost
+ * lets anyone sign up: the throwaway stack and a local one. On both, the person
+ * the harness posts as is the identity the admin who owns the agent claimed.
+ */
+export const cardAnswerRefused: Scenario = (harness, names) =>
+  scenario('card-answer-refused', async (record) => {
+    const mattermostEnv = harness.env.mattermost;
+    if (mattermostEnv === null) throw new Error('This scenario needs Mattermost.');
+    const secrets = new IssuedSecrets(harness.env.secretsFile);
+    const username = names.name('other');
+    const password = `E2e-${randomBytes(18).toString('base64url')}`;
+    secrets.record(password);
+    const other = await MattermostClient.signUp(mattermostEnv, harness.env.environment, {
+      username,
+      email: `${username}@example.com`,
+      password,
+    });
+    secrets.record(other.token);
+    const team = await harness.mattermost.findTeam(mattermostEnv.team);
+    await other.client.joinTeam(team.id, other.user.id);
+    await harness.mattermost.addUserToChannel(harness.channel.id, other.user.id);
+    const admin = await harness.mattermost.findBotUser(SWITCH_ADMIN);
+    if (admin === null) throw new Error(`Mattermost has no '${SWITCH_ADMIN}' account.`);
+
+    await harness.switch.setAddressingPolicy(harness.agent.id, OWNER_ONLY);
+    try {
+      const file = `refused-${harness.runId}.txt`;
+      const since = await ask(
+        harness,
+        `run the shell command \`echo ${OK_MARKER} > ${file}\` and then reply with the single word done`
+      );
+      const card = await expectBotPost(harness.mattermost, {
+        where: sharedRoom(harness),
+        since,
+        record,
+        predicate: (post) =>
+          requestHandle(post.message) !== null &&
+          APPROVAL_HINTS.some((hint) => lower(post).includes(hint)),
+        describe: 'an approval card for the shell command',
+      });
+      const handle = requestHandle(card.message)!;
+      const thread = card.root_id === '' ? card.id : card.root_id;
+
+      const refusedAt = Date.now() - 1;
+      await other.client.post({ channelId: harness.channel.id, message: `${handle} 1` });
+      const { match: notice, transcript } = await harness.mattermost.waitForPost({
+        channelId: harness.channel.id,
+        fromUserId: admin.id,
+        predicate: (post) =>
+          post.root_id === thread &&
+          post.message.includes(`answer to ${handle} did not land`) &&
+          post.message.includes('may not address this agent'),
+        sinceMs: refusedAt,
+        deadlineMs: 60_000,
+      });
+      record(transcript);
+      if (notice === null) {
+        throw new Error(
+          `${username}'s answer to ${handle} was not refused in the card's thread. Channel said: ${summarise(transcript)}`
+        );
+      }
+      const ranEarly = (
+        await harness.mattermost.postsFrom(harness.channel.id, harness.bot.id, refusedAt)
+      ).filter(
+        (post) =>
+          !isRuntimeStatusPost(post) && !isNoSessionNotice(post) && lower(post).includes('done')
+      );
+      record(ranEarly);
+      if (ranEarly.length > 0) {
+        throw new Error(`The command ran on the answer of someone who may not address the agent.`);
+      }
+
+      const approvedAt = await answerCard(harness, card, 1);
+      const done = await expectBotPost(harness.mattermost, {
+        where: sharedRoom(harness),
+        since: approvedAt,
+        record,
+        predicate: (post) => lower(post).includes('done'),
+        describe: "a 'done' reply after the owner approved the command",
+      });
+      return `refused in ${notice.id}, approved by the owner, completed in ${done.id}`;
+    } finally {
+      await harness.switch.openAddressing(harness.agent.id);
+    }
+  });
+
+// ── template ─────────────────────────────────────────────────────────────────
+
+/**
+ * Run a template, retrying while the controller is not ready to take its agent:
+ * a refused run creates nothing, so running it again is safe.
+ */
+async function runTemplate(harness: Harness, template: string): Promise<TemplateRun> {
+  const until = Date.now() + PLACEMENT_DEADLINE_MS;
+  for (;;) {
+    try {
+      return await harness.switch.runTemplateDocument({ template, templateName: 'e2e-template' });
+    } catch (error) {
+      const waiting =
+        error instanceof TemplateRefusal &&
+        error.problems.length > 0 &&
+        error.problems.every((problem) => NOT_READY_CODES.has(problem.code));
+      if (!waiting || Date.now() > until) throw error;
+      await sleep(3_000);
+    }
+  }
+}
+
+/**
+ * A template creates a managed agent on the controller and a room on the
+ * Mattermost bridge with it in it, and the agent answers there: what a person
+ * using a template from Switch Console gets.
+ */
+export const templateAgent: Scenario = (harness, names) =>
+  scenario('template-agent', async (record) => {
+    const controllerId = harness.env.provider.controllerId;
+    if (controllerId === null) throw new Error('This scenario needs an agent controller.');
+    const provider = PROVIDER_BY_AGENT_TYPE[harness.env.provider.agentType];
+    const about = `Switch end-to-end harness (run ${harness.runId}). Safe to delete.`;
+    const agentName = names.name('tpl');
+    const bridge = await harness.switch.defaultBridge('mattermost');
+    const template = stringify({
+      version: 1,
+      agent: {
+        name: agentName,
+        description: about,
+        instructions: AGENT_INSTRUCTIONS,
+        provider,
+        machine: controllerId,
+        // The machine's own workspace for the agent, when the run names none.
+        directory: harness.env.provider.agentRepoDir ?? '{$agents_dir}/{agent}',
+        ...(provider === 'claude' ? { model: CLAUDE_MODEL } : {}),
+        auto_mode: false,
+        auto_approve: false,
+        addressing: 'anyone',
+      },
+      room: {
+        name: names.name('troom'),
+        description: about,
+        bridge: bridge.displayName,
+        agents: ['{agent}'],
+        users: [harness.human.username],
+      },
+    });
+
+    const run = await runTemplate(harness, template);
+    const undo: { label: string; run: () => Promise<void> }[] = [];
+    for (const made of run.created_agents) {
+      undo.push({
+        label: `agent ${made.name} (${made.agent_id})`,
+        run: () => harness.switch.deleteAgentByName(made.name),
+      });
+    }
+    const room = await harness.switch.getRoom(run.room.room_id);
+    const channelId = room.externalChannelId;
+    undo.push({
+      label: `room ${room.name} (${room.id})`,
+      run: async () => {
+        await harness.switch.deleteRoom(room.id);
+        if (channelId === null) return;
+        const left = await harness.mattermost.getChannel(channelId);
+        if (!left.delete_at) await harness.mattermost.archiveChannel(channelId);
+      },
+    });
+
+    let failed = false;
+    try {
+      if (run.created_agents.length !== 1) {
+        throw new Error(`The template made ${run.created_agents.length} agents, not one.`);
+      }
+      const made = run.created_agents[0]!;
+      if (made.name !== agentName || made.machine.id !== controllerId || !made.listening) {
+        throw new Error(`The template's agent is not the one asked for: ${JSON.stringify(made)}`);
+      }
+      if (channelId === null)
+        throw new Error(`The template's room ${room.id} has no Mattermost channel.`);
+      const bot = await harness.mattermost.waitForBotUser(agentName, 60_000);
+      const marker = `${OK_MARKER}_TPL`;
+      const since = Date.now() - 1;
+      await harness.mattermost.post({
+        channelId,
+        message: `@${agentName} reply with exactly ${marker} and nothing else`,
+      });
+      const reply = await expectBotPost(harness.mattermost, {
+        where: { channelId, botId: bot.id },
+        since,
+        record,
+        predicate: (post) => post.message.includes(marker),
+        describe: `a reply containing ${marker} from the template's agent`,
+      });
+      return `${agentName} on ${made.machine.name} replied in post ${reply.id}`;
+    } catch (error) {
+      failed = true;
+      throw error;
+    } finally {
+      const left: string[] = [];
+      for (const step of undo.reverse()) {
+        try {
+          await step.run();
+        } catch (error) {
+          left.push(`${step.label}: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+      if (left.length > 0) {
+        const message = `could not remove what the template made — delete it by hand: ${left.join('; ')}`;
+        if (failed) console.warn(message);
+        else throw new Error(message);
+      }
+    }
   });
 
 /**
@@ -471,6 +719,26 @@ export const SCENARIOS: readonly ProviderScenario[] = [
   {
     header: providerHeader('interrupt', ['connect_to_room', 'post_message'], ['agent-dir']),
     run: interrupt,
+  },
+  {
+    // A second person signs up, which only a throwaway or local Mattermost lets anyone do.
+    header: {
+      ...providerHeader(
+        'card-answer-refused',
+        ['PUT /gateway/agents/{agent_id}/addressing-policy'],
+        []
+      ),
+      environments: ['ephemeral', 'local'],
+    },
+    run: cardAnswerRefused,
+  },
+  {
+    header: providerHeader(
+      'template-agent',
+      ['POST /gateway/rooms/from-template-document'],
+      ['controller']
+    ),
+    run: templateAgent,
   },
 ];
 
