@@ -39,7 +39,7 @@ vi.mock('@renderer/features/managed-agents/use-managed-agents', async (importOri
 const roomsData = vi.hoisted(() => ({ rooms: [] as unknown[] }));
 
 vi.mock('@renderer/features/switch-servers/switch-rooms-store', () => ({
-  switchRoomsStore: { workspacesNotSignedIn: [], readableRoomsInWorkspace: () => roomsData.rooms },
+  switchRoomsStore: { workspacesNotSignedIn: [], listedRoomsInWorkspace: () => roomsData.rooms },
 }));
 
 vi.mock('@renderer/features/workspaces/workspaces-store', () => ({

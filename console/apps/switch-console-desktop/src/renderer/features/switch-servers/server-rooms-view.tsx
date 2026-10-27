@@ -15,15 +15,17 @@ import { useShowModal } from '@renderer/lib/modal/modal-provider';
 import { useWorkspaceAgents } from '@renderer/lib/stores/use-workspace-agents';
 import { Button } from '@renderer/lib/ui/button';
 import { SearchInput } from '@renderer/lib/ui/search-input';
+import { ToggleGroup, ToggleGroupItem } from '@renderer/lib/ui/toggle-group';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@renderer/lib/ui/tooltip';
 import { cn } from '@renderer/utils/utils';
 import type { RemoteRoomSummary } from '@shared/core/switch-servers/switch-servers';
+import { allReadableRooms } from './room-filters';
 import { groupByMessagingApp, type RoomGroup } from './rooms-by-messaging-app';
 import { ServerPage, ServerTableEmpty } from './server-page';
 import { ServerSectionTitlebar } from './server-section-titlebar';
 import { switchRoomsStore } from './switch-rooms-store';
 import { switchServersStore } from './switch-servers-store';
-import { useReadableRoomsInWorkspace } from './use-listed-rooms';
+import { useListedRoomsInWorkspace, useReadableRoomsInWorkspace } from './use-listed-rooms';
 
 function useServerId(): string {
   return useParams('serverRooms').params.serverId;
@@ -44,7 +46,12 @@ const ServerRoomsPanel = observer(function ServerRoomsPanel() {
   }, [serverId]);
 
   const workspaceId = workspacesStore.idOnServerInScope(serverId);
-  const rooms = useReadableRoomsInWorkspace(workspaceId);
+  const yours = useListedRoomsInWorkspace(workspaceId);
+  const all = allReadableRooms(yours, useReadableRoomsInWorkspace(workspaceId));
+  // Only someone who can read more than their own (an admin, or public rooms) gets the choice.
+  const [showAll, setShowAll] = useState(false);
+  const canShowAll = all.length > yours.length;
+  const rooms = showAll && canShowAll ? all : yours;
   const signedOut = switchRoomsStore.workspacesNotSignedIn.some((w) => w.id === workspaceId);
   const failed = switchRoomsStore.workspacesThatFailedToLoad.some((w) => w.id === workspaceId);
 
@@ -83,24 +90,41 @@ const ServerRoomsPanel = observer(function ServerRoomsPanel() {
         <ServerTableEmpty>
           This server&apos;s room list could not be read. Refresh from Home to try again.
         </ServerTableEmpty>
-      ) : rooms.length === 0 ? (
+      ) : all.length === 0 ? (
         <ServerTableEmpty>
           No rooms here yet. Create one to give your agents somewhere to work.
         </ServerTableEmpty>
       ) : (
         <div className="flex flex-col gap-6">
-          <SearchInput
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-            placeholder="Filter rooms by name…"
-            aria-label="Filter rooms by name"
-          />
+          <div className="flex items-center gap-2">
+            {canShowAll && (
+              <ToggleGroup
+                multiple={false}
+                value={[showAll ? 'all' : 'yours']}
+                onValueChange={([value]) => {
+                  if (value) setShowAll(value === 'all');
+                }}
+              >
+                <ToggleGroupItem value="yours">Your rooms</ToggleGroupItem>
+                <ToggleGroupItem value="all">All rooms</ToggleGroupItem>
+              </ToggleGroup>
+            )}
+            <SearchInput
+              containerClassName="flex-1"
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              placeholder="Filter rooms by name…"
+              aria-label="Filter rooms by name"
+            />
+          </div>
           {/* The filter finding nothing is not the same as the server having no
             rooms, and the empty state above answers a question this user is not
             asking. */}
           {groups.length === 0 ? (
             <p className="py-2 text-sm text-foreground-muted">
-              No room here matches “{filter.trim()}”.
+              {query === ''
+                ? 'You are in none of these rooms yet. Choose All rooms to see the rest.'
+                : `No room here matches “${filter.trim()}”.`}
             </p>
           ) : (
             groups.map((group) => (

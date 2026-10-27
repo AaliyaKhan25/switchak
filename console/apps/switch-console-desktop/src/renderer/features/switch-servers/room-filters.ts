@@ -60,3 +60,19 @@ export function withConsoleGroupChats(
   if (added.length === 0) return rooms;
   return [...rooms, ...added].sort((a, b) => a.name.localeCompare(b.name));
 }
+
+/**
+ * Your rooms, then every other room you can read except Switch Console chats you
+ * are not in: the server will not open those to a non-member, admin or not.
+ */
+export function allReadableRooms(
+  yours: RemoteRoomSummary[],
+  readable: RemoteRoomSummary[]
+): RemoteRoomSummary[] {
+  const listed = new Set(yours.map((room) => room.id));
+  const more = readable.filter(
+    (room) => !listed.has(room.id) && (room.bridgeType !== null || room.viewerIsMember)
+  );
+  if (more.length === 0) return yours;
+  return [...yours, ...more].sort((a, b) => a.name.localeCompare(b.name));
+}

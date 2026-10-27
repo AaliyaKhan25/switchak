@@ -37,13 +37,22 @@ export function useListedRoomsInActiveScope(): RemoteRoomSummary[] {
  * chats follow.
  */
 export function useReadableRoomsInWorkspace(workspaceId: string | null): RemoteRoomSummary[] {
+  return useRoomsInWorkspace(workspaceId, (id) => switchRoomsStore.readableRoomsInWorkspace(id));
+}
+
+/** {@link useReadableRoomsInWorkspace}, narrowed to the rooms the sidebar lists: yours. */
+export function useListedRoomsInWorkspace(workspaceId: string | null): RemoteRoomSummary[] {
+  return useRoomsInWorkspace(workspaceId, (id) => switchRoomsStore.listedRoomsInWorkspace(id));
+}
+
+function useRoomsInWorkspace(
+  workspaceId: string | null,
+  rooms: (workspaceId: string) => RemoteRoomSummary[]
+): RemoteRoomSummary[] {
   const flags = useFeatureFlags(workspaceId && workspacesStore.serverIdFor(workspaceId));
   if (workspaceId === null) return [];
   return withConsoleGroupChats(
-    filterConsoleDirectChats(
-      switchRoomsStore.readableRoomsInWorkspace(workspaceId),
-      flags.agent_chats
-    ),
+    filterConsoleDirectChats(rooms(workspaceId), flags.agent_chats),
     flags.agent_chats && workspaceId === workspacesStore.activeId ? chatsStore.chats.values() : []
   );
 }
