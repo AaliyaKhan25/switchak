@@ -2,7 +2,6 @@ import { CircleAlert, ExternalLink } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { LogTail } from '@renderer/features/switch-servers/log-tail';
-import { switchServersStore } from '@renderer/features/switch-servers/switch-servers-store';
 import { AgentIcon } from '@renderer/lib/components/agent-icon';
 import { failureText } from '@renderer/lib/errors/describe-failure';
 import { events, rpc } from '@renderer/lib/ipc';
@@ -15,6 +14,7 @@ import { agentProviders, requireProvider } from '@shared/core/providers/agent-pr
 import { linksIn } from '@shared/core/providers/provider-login';
 import type { UiEntryPoint } from '@shared/core/telemetry/reporting';
 import { providerLoginExitChannel, providerLoginLineChannel } from '@shared/events/appEvents';
+import { buddyPerson } from './buddy-person';
 import { type BuddyProvider, buddyProviders } from './buddy-providers';
 import { reportBuddyStep } from './buddy-telemetry';
 import { createBuddy } from './create-buddy';
@@ -142,7 +142,6 @@ export const ProviderSetup = observer(function ProviderSetup({
     reportBuddyStep('start', provider.id);
     setBusy('create');
     setError(null);
-    const user = switchServersStore.statusFor(serverId)?.user ?? null;
     try {
       onCreated(
         await createBuddy({
@@ -150,7 +149,7 @@ export const ProviderSetup = observer(function ProviderSetup({
           workspaceId,
           machineId: computer.machine.id,
           provider: provider.id,
-          person: { name: user?.name ?? null, email: user?.email ?? null },
+          person: buddyPerson(serverId),
           entryPoint,
         })
       );

@@ -3,7 +3,6 @@ import { motion } from 'motion/react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useManagedAgents } from '@renderer/features/managed-agents/use-managed-agents';
 import { onboardingStore } from '@renderer/features/onboarding/onboarding-store';
-import { switchServersStore } from '@renderer/features/switch-servers/switch-servers-store';
 import { AgentIcon } from '@renderer/lib/components/agent-icon';
 import { failureText } from '@renderer/lib/errors/describe-failure';
 import { report } from '@renderer/lib/telemetry/report';
@@ -12,7 +11,8 @@ import { Spinner } from '@renderer/lib/ui/spinner';
 import { OnboardingSurface, useWizardExit } from '@renderer/lib/ui/wizard-frame';
 import { agentProviders } from '@shared/core/providers/agent-provider-registry';
 import { BuddyAvatar } from './buddy-avatar';
-import { firstNameOf, isBuddy } from './buddy-identity';
+import { findBuddy, firstNameOf } from './buddy-identity';
+import { buddyPerson } from './buddy-person';
 import { buddyProviders, startButtons } from './buddy-providers';
 import { reportBuddyStep } from './buddy-telemetry';
 import { createBuddy } from './create-buddy';
@@ -86,11 +86,11 @@ export const MeetBuddyPage = observer(function MeetBuddyPage({
     () => (firstDecided ?? []).flatMap((id) => providers.filter((provider) => provider.id === id)),
     [firstDecided, providers]
   );
-  const existing = useManagedAgents(serverId).data?.find(isBuddy) ?? null;
+  const existing = findBuddy(useManagedAgents(serverId).data);
   const [starting, setStarting] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const user = switchServersStore.statusFor(serverId)?.user ?? null;
-  const firstName = firstNameOf(user?.name);
+  const person = buddyPerson(serverId);
+  const firstName = firstNameOf(person.name);
   // The opening plays once: back from setting up a provider, it is at rest.
   const introPlayed = useRef(false);
 
@@ -135,7 +135,7 @@ export const MeetBuddyPage = observer(function MeetBuddyPage({
           workspaceId,
           machineId: computer.machine.id,
           provider: providerId,
-          person: { name: user?.name ?? null, email: user?.email ?? null },
+          person,
           entryPoint: 'onboarding',
         })
       );

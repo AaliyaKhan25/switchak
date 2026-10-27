@@ -1,12 +1,12 @@
 import { focusComposerWhenOpened } from '@renderer/features/chats/components/chat-composer';
 import { chatsStore, chatTitler } from '@renderer/features/chats/stores/chats';
-import { switchServersStore } from '@renderer/features/switch-servers/switch-servers-store';
 import { failureText } from '@renderer/lib/errors/describe-failure';
 import { toast } from '@renderer/lib/hooks/use-toast';
 import { rpc } from '@renderer/lib/ipc';
 import { appState } from '@renderer/lib/stores/app-state';
 import type { ChatSummary } from '@shared/core/chats/chats';
 import { firstNameOf } from './buddy-identity';
+import { buddyPerson } from './buddy-person';
 import { buddyWelcomeMessage } from './buddy-welcome-message';
 
 /** What the buddy's first chat is called, as on the board; it keeps it. */
@@ -28,14 +28,16 @@ async function buddyChat(
   );
   const existing = direct.find((chat) => chat.name === BUDDY_CHAT_NAME) ?? direct[0];
   if (existing) return existing;
-  const user = switchServersStore.statusFor(serverId)?.user ?? null;
   const chat = await rpc.chats.create({
     serverId,
     agentIds: [agentId],
     name: BUDDY_CHAT_NAME,
     requestId: crypto.randomUUID(),
     // Said by the buddy as it joins the chat, in place of its usual line.
-    greeting: buddyWelcomeMessage({ firstName: firstNameOf(user?.name), agentName: agent.name }),
+    greeting: buddyWelcomeMessage({
+      firstName: firstNameOf(buddyPerson(serverId).name),
+      agentName: agent.name,
+    }),
   });
   chatsStore.add(serverId, chat);
   // Named here, so its first message does not rename it.

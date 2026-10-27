@@ -4,6 +4,7 @@ import { rpc } from '@renderer/lib/ipc';
 import { Button } from '@renderer/lib/ui/button';
 import { Spinner } from '@renderer/lib/ui/spinner';
 import { OnboardingSurface, useWizardExit } from '@renderer/lib/ui/wizard-frame';
+import { buddyOffered } from './buddy-identity';
 import { MeetBuddyPage } from './meet-buddy-page';
 
 /**
@@ -42,7 +43,7 @@ export function BuddyStep({
         const { data } = await rpc.featureFlags.get(serverId);
         // Flags that could not be read are not an answer: off would skip the buddy on a guess.
         if (data.error !== null) throw new Error(data.error);
-        if (live) setOffered(data.flags.switch_buddy && data.flags.agent_management);
+        if (live) setOffered(buddyOffered(data.flags));
       } catch (cause) {
         if (live)
           setOffered({ error: failureText(cause, 'Could not ask the server what it offers.') });
