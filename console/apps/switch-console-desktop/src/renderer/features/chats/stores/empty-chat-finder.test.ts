@@ -405,7 +405,7 @@ describe('EmptyChatFinder', () => {
     expect(finder.find('agent-1')).toBeNull();
   });
 
-  it('handles multi-agent chat default name', () => {
+  it('never reuses a chat with more than one agent, which is a group', () => {
     const chat = makeChat({
       roomId: 'room-1',
       name: 'Chat with Ada, Bob',
@@ -444,6 +444,36 @@ describe('EmptyChatFinder', () => {
       timeline: () => undefined,
     });
 
-    expect(finder.find('agent-1')).toBe(chat);
+    expect(finder.find('agent-1')).toBeNull();
+  });
+
+  describe('only the viewer’s own 1:1 with the agent', () => {
+    const finder = (chat: ChatSummary) =>
+      new EmptyChatFinder({
+        chatsOfAgent: () => [chat],
+        userId: () => 'user-1',
+        timeline: () => undefined,
+      });
+
+    it('reuses an empty direct chat with just the viewer in it', () => {
+      const chat = makeChat({ memberUserIds: ['user-1'], memberCount: 1 });
+      expect(finder(chat).find('agent-1')).toBe(chat);
+    });
+
+    it('never reuses an empty group, even one that was a direct chat', () => {
+      const converted = makeChat({
+        channelType: 'channel_private',
+        memberUserIds: ['user-1', 'user-2'],
+        memberCount: 2,
+      });
+      expect(finder(converted).find('agent-1')).toBeNull();
+      const peopleInDirect = makeChat({ memberUserIds: ['user-1', 'user-2'], memberCount: 2 });
+      expect(finder(peopleInDirect).find('agent-1')).toBeNull();
+    });
+
+    it('never reuses a bridged room or another agent’s chat', () => {
+      expect(finder(makeChat({ bridgeType: 'slack' })).find('agent-1')).toBeNull();
+      expect(finder(makeChat()).find('agent-2')).toBeNull();
+    });
   });
 });
