@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from tests.switch_core.test_migration_oidc_identities_backfill import _upgrade_to
 
 _DB = "migration_console_direct_chats_to_groups"
-_BEFORE = "c7715ebb95c9"
+_BEFORE = "f68b679599ab"
 _UNDER_TEST = "d4e8a1c5b7f3"
 _TENANT = "00000000-0000-0000-0000-000000000000"
 
