@@ -13,6 +13,7 @@ const room = (id: string, bridgeType: string | null): RemoteRoomSummary => ({
   externalChannelUrl: null,
   ownerId: null,
   viewerIsMember: false,
+  isConsoleChat: false,
   archived: false,
   createdAt: '',
 });

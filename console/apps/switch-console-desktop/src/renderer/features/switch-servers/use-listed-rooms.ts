@@ -3,7 +3,7 @@ import { chatsStore } from '@renderer/features/chats/stores/chats';
 import { workspacesStore } from '@renderer/features/workspaces/workspaces-store';
 import { useFeatureFlags } from '@renderer/lib/hooks/useFeatureFlags';
 import type { RemoteRoomSummary } from '@shared/core/switch-servers/switch-servers';
-import { isConsoleChatRoom, isConsoleDirectChat, withConsoleGroupChats } from './room-filters';
+import { isConsoleDirectChat, withConsoleGroupChats } from './room-filters';
 import { switchRoomsStore } from './switch-rooms-store';
 import { switchServersStore } from './switch-servers-store';
 
@@ -22,14 +22,12 @@ function filterConsoleDirectChats(
  */
 function withoutChatsYouAreNotIn(
   rooms: RemoteRoomSummary[],
-  serverId: string | null,
-  chatsOn: boolean
+  serverId: string | null
 ): RemoteRoomSummary[] {
-  if (!chatsOn) return rooms;
   const following = serverId !== null && chatsStore.serverId === serverId;
   return rooms.filter(
     (room) =>
-      !isConsoleChatRoom(room) ||
+      !room.isConsoleChat ||
       (following && (chatsStore.chats.has(room.id) || chatsStore.unlisted.has(room.id)))
   );
 }
@@ -47,8 +45,7 @@ export function useListedRoomsInActiveScope(): RemoteRoomSummary[] {
     withConsoleGroupChats(
       withoutChatsYouAreNotIn(
         filterConsoleDirectChats(switchRoomsStore.listedRoomsInActiveScope, flags.agent_chats),
-        serverId,
-        flags.agent_chats || flags.group_chats
+        serverId
       ),
       flags.agent_chats ? chatsStore.chats.values() : []
     )
@@ -80,8 +77,7 @@ function useRoomsInWorkspace(
   return withConsoleGroupChats(
     withoutChatsYouAreNotIn(
       filterConsoleDirectChats(rooms(workspaceId), flags.agent_chats),
-      active ? serverId : null,
-      flags.agent_chats || flags.group_chats
+      active ? serverId : null
     ),
     flags.agent_chats && workspaceId === workspacesStore.activeId ? chatsStore.chats.values() : []
   );

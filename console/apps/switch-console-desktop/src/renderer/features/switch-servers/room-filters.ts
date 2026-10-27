@@ -53,6 +53,7 @@ export function withConsoleGroupChats(
         // shortcut: a chat summary names no owner, so a chat-only row offers no delete; read it from the room detail if one is wanted.
         ownerId: null,
         viewerIsMember: true,
+        isConsoleChat: true,
         archived: false,
         createdAt: chat.lastMessage?.sentAt ?? '',
       })
@@ -72,18 +73,4 @@ export function allReadableRooms(
   const more = readable.filter((room) => !listed.has(room.id));
   if (more.length === 0) return yours;
   return [...yours, ...more].sort((a, b) => a.name.localeCompare(b.name));
-}
-
-/**
- * A Switch Console chat: unbridged, direct or private. Whether the user is in it
- * is the chat list's to say, not the room list's `viewerIsMember`, which is also
- * true for a room one of their agents is in.
- */
-export function isConsoleChatRoom(
-  room: Pick<RemoteRoomSummary, 'bridgeType' | 'channelType'>
-): boolean {
-  return (
-    room.bridgeType === null &&
-    (room.channelType === 'direct' || room.channelType === 'channel_private')
-  );
 }

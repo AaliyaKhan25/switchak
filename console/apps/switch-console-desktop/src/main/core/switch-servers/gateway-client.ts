@@ -2900,6 +2900,7 @@ type RoomSummaryJson = {
   external_channel_url?: string | null;
   owner_id?: string | null;
   viewer_is_member?: boolean;
+  is_console_chat?: boolean;
   archived: boolean;
   created_at: string;
 };
@@ -2916,6 +2917,7 @@ function mapRoomSummary(r: RoomSummaryJson): RemoteRoomSummary {
     externalChannelUrl: r.external_channel_url ?? null,
     ownerId: r.owner_id ?? null,
     viewerIsMember: r.viewer_is_member ?? false,
+    isConsoleChat: r.is_console_chat ?? false,
     archived: r.archived,
     createdAt: r.created_at,
   };

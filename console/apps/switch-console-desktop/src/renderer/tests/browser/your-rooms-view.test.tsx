@@ -87,6 +87,7 @@ function room(id: string, extra: Partial<RemoteRoomSummary>): RemoteRoomSummary 
     externalChannelUrl: null,
     ownerId: 'bob',
     viewerIsMember: false,
+    isConsoleChat: false,
     archived: false,
     createdAt: '',
     ...extra,
@@ -110,11 +111,21 @@ function chat(id: string) {
 beforeEach(() => {
   rooms.list = observable({
     all: [
-      room('bobs-chat', { viewerIsMember: true, channelType: 'channel_private' }),
-      // The room list says "member" because the user's agent is in it; the user is not.
-      room('agent-only-chat', { viewerIsMember: true, channelType: 'channel_private' }),
-      room('strangers-chat', { channelType: 'channel_private' }),
-      room('public-room', { channelType: 'channel_public' }),
+      room('bobs-chat', {
+        viewerIsMember: true,
+        channelType: 'channel_private',
+        isConsoleChat: true,
+      }),
+      // The room list says "member" because the user's agent is in it; the user is not in the chat.
+      room('agent-only-chat', {
+        viewerIsMember: true,
+        channelType: 'channel_private',
+        isConsoleChat: true,
+      }),
+      // A private room made from YAML or a tool, not a chat: the usual rules apply.
+      room('yaml-room', { viewerIsMember: true, channelType: 'channel_private' }),
+      room('strangers-chat', { channelType: 'channel_private', isConsoleChat: true }),
+      room('private-tool-room', { channelType: 'channel_private' }),
       room('public-slack', { bridgeType: 'slack', bridgeDisplayName: 'Slack' }),
     ],
   });
@@ -152,21 +163,27 @@ const toggle = (label: string) =>
 
 it('lists your rooms by default, and drops a chat once you are removed from it', async () => {
   await render();
-  expect(names()).toEqual(['bobs-chat']);
+  expect(names()).toEqual(['bobs-chat', 'yaml-room']);
   await removeFromBobsChat();
-  expect(names()).toEqual([]);
+  expect(names()).toEqual(['yaml-room']);
 });
 
 it('offers All rooms to someone who can read more: bridged rooms, never chats they are not in', async () => {
   await render();
   await act(async () => toggle('All rooms')!.click());
-  expect(names()).toEqual(['#public-slack', 'bobs-chat', 'public-room']);
+  expect(names()).toEqual(['#public-slack', 'bobs-chat', 'private-tool-room', 'yaml-room']);
   await removeFromBobsChat();
-  expect(names()).toEqual(['#public-slack', 'public-room']);
+  expect(names()).toEqual(['#public-slack', 'private-tool-room', 'yaml-room']);
 });
 
 it('offers no choice to someone who can read only their own rooms', async () => {
-  rooms.list.all = [room('bobs-chat', { viewerIsMember: true, channelType: 'channel_private' })];
+  rooms.list.all = [
+    room('bobs-chat', {
+      viewerIsMember: true,
+      channelType: 'channel_private',
+      isConsoleChat: true,
+    }),
+  ];
   await render();
   expect(toggle('All rooms')).toBeUndefined();
 });

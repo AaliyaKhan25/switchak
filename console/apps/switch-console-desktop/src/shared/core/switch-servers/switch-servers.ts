@@ -333,6 +333,8 @@ export type RemoteRoomSummary = {
   ownerId: string | null;
   /** The signed-in user is a member of the room. False from a server that does not say. */
   viewerIsMember: boolean;
+  /** A Switch Console chat: only its members can open it. False from a server that does not say. */
+  isConsoleChat: boolean;
   archived: boolean;
   createdAt: string;
 };

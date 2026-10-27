@@ -103,6 +103,7 @@ describe('withConsoleGroupChats', () => {
     externalChannelUrl: null,
     ownerId: 'u',
     viewerIsMember: false,
+    isConsoleChat: false,
     archived: false,
     createdAt: '',
   });

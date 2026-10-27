@@ -391,6 +391,7 @@ async def list_rooms(
                 created_at=str(room.created_at),
                 archived=room.archived_at is not None,
                 viewer_is_member=room.id in involved,
+                is_console_chat="chat_operation_id" in (room.metadata_ or {}),
             )
         )
 
