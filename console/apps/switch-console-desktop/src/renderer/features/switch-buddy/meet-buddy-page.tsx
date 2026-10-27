@@ -2,9 +2,7 @@ import { observer } from 'mobx-react-lite';
 import { motion } from 'motion/react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useManagedAgents } from '@renderer/features/managed-agents/use-managed-agents';
-import { onboardingStore } from '@renderer/features/onboarding/onboarding-store';
 import { AgentIcon } from '@renderer/lib/components/agent-icon';
-import { report } from '@renderer/lib/telemetry/report';
 import { Button } from '@renderer/lib/ui/button';
 import { Spinner } from '@renderer/lib/ui/spinner';
 import { OnboardingSurface, useWizardExit } from '@renderer/lib/ui/wizard-frame';
@@ -44,11 +42,14 @@ export const MeetBuddyPage = observer(function MeetBuddyPage({
   workspaceId,
   onCreated,
   onSkip,
+  onSetupOpened,
 }: {
   serverId: string;
   workspaceId: string;
   onCreated: (agent: { agentId: string; name: string }) => void;
   onSkip: () => void;
+  /** The person opened the other providers' setup, for the page that holds this one to count. */
+  onSetupOpened: () => void;
 }) {
   const exit = useWizardExit();
   const [settingUp, setSettingUp] = useState(false);
@@ -105,7 +106,7 @@ export const MeetBuddyPage = observer(function MeetBuddyPage({
 
   const openSetup = () => {
     reportBuddyStep('setup_opened', null);
-    report('onboarding_page', { page: 'provider_setup', path: onboardingStore.via });
+    onSetupOpened();
     setSettingUp(true);
   };
 

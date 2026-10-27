@@ -58,6 +58,7 @@ let container: HTMLDivElement | null = null;
 let root: Root | null = null;
 const onCreated = vi.fn();
 const onSkip = vi.fn();
+const onSetupOpened = vi.fn();
 
 const ready = (provider: string): Reported => ({
   provider,
@@ -106,6 +107,7 @@ async function render() {
         workspaceId="ws-1"
         onCreated={(agent) => onCreated(agent)}
         onSkip={onSkip}
+        onSetupOpened={onSetupOpened}
       />
     )
   );
@@ -170,6 +172,19 @@ describe('MeetBuddyPage', () => {
       expect.objectContaining({ machineId: 'm-1', provider: 'claude', entryPoint: 'onboarding' })
     );
     expect(onCreated).toHaveBeenCalledWith({ agentId: 'a-1', name: 'switch-buddy-max-tam' });
+  });
+
+  it('tells the page holding it when the person opens the other providers', async () => {
+    state.computer = machine(ready('claude'), signedOut('codex'));
+    await render();
+
+    await act(async () =>
+      [...container!.querySelectorAll('button')]
+        .find((b) => b.textContent === 'Use other AI providers')!
+        .click()
+    );
+
+    expect(onSetupOpened).toHaveBeenCalledTimes(1);
   });
 
   it('offers to open the buddy someone already has', async () => {

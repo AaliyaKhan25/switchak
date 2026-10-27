@@ -6,6 +6,7 @@ import { rpc } from '@renderer/lib/ipc';
 import { appState } from '@renderer/lib/stores/app-state';
 import type { ChatSummary } from '@shared/core/chats/chats';
 import { firstNameOf } from './buddy-identity';
+import { buddyIntroStore } from './buddy-intro-store';
 import { buddyPerson } from './buddy-person';
 import { buddyWelcomeMessage } from './buddy-welcome-message';
 
@@ -70,4 +71,21 @@ export async function openBuddyChat(
     name: agent.name,
     ...(roomId ? { roomId } : {}),
   });
+}
+
+/**
+ * Where the first run ends: the buddy's chat once it exists, else its page,
+ * which waits for an AI provider. Skipping the buddy there also keeps its
+ * pop-up away for the rest of this launch: it was just declined.
+ */
+export async function openBuddyAfterOnboarding(
+  serverId: string,
+  agent: { agentId: string; name: string } | null
+): Promise<void> {
+  if (agent) {
+    await openBuddyChat(serverId, agent);
+    return;
+  }
+  buddyIntroStore.skipped();
+  appState.navigation.navigate('switchBuddy', { serverId });
 }

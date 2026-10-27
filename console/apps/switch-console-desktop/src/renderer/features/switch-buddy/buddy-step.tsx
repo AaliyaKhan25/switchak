@@ -22,12 +22,15 @@ export function BuddyStep({
   workspaceId,
   onCreated,
   onSkip,
+  onSetupOpened,
   onNotOffered,
 }: {
   serverId: string;
   workspaceId: string;
   onCreated: (agent: { agentId: string; name: string }) => void;
   onSkip: () => void;
+  /** The person chose to set up a provider other than those already signed in, for the flow to count. */
+  onSetupOpened: () => void;
   onNotOffered: () => void;
 }) {
   const exit = useWizardExit();
@@ -90,6 +93,7 @@ export function BuddyStep({
       workspaceId={workspaceId}
       onCreated={onCreated}
       onSkip={onSkip}
+      onSetupOpened={onSetupOpened}
     />
   );
 }

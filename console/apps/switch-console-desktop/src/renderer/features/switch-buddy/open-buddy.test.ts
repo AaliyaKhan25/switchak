@@ -7,6 +7,7 @@ const toast = vi.hoisted(() => vi.fn());
 const focusComposerWhenOpened = vi.hoisted(() => vi.fn());
 const addChat = vi.hoisted(() => vi.fn());
 const titled = vi.hoisted(() => vi.fn());
+const skipped = vi.hoisted(() => vi.fn());
 
 vi.mock('@renderer/lib/ipc', () => ({
   rpc: { chats: { list: listChats, create: createChat } },
@@ -23,12 +24,13 @@ vi.mock('@renderer/features/chats/stores/chats', () => ({
 vi.mock('@renderer/features/switch-servers/switch-servers-store', () => ({
   switchServersStore: { statusFor: () => ({ user: { name: 'Max Tam' } }) },
 }));
+vi.mock('./buddy-intro-store', () => ({ buddyIntroStore: { skipped } }));
 vi.mock('./buddy-welcome-message', () => ({
   buddyWelcomeMessage: ({ firstName, agentName }: { firstName: string; agentName: string }) =>
     `welcome ${firstName} from ${agentName}`,
 }));
 
-const { BUDDY_CHAT_NAME, openBuddyChat } = await import('./open-buddy');
+const { BUDDY_CHAT_NAME, openBuddyAfterOnboarding, openBuddyChat } = await import('./open-buddy');
 
 const buddy = { agentId: 'a-1', name: 'switch-buddy-max' };
 
@@ -109,5 +111,27 @@ describe('openBuddyChat', () => {
       agentId: 'a-1',
       name: 'switch-buddy-max',
     });
+  });
+});
+
+describe('openBuddyAfterOnboarding', () => {
+  it("ends the first run in the buddy's chat once it exists", async () => {
+    listChats.mockResolvedValue([chat('r-welcome', BUDDY_CHAT_NAME)]);
+
+    await openBuddyAfterOnboarding('srv-1', buddy);
+
+    expect(navigate).toHaveBeenCalledWith(
+      'managedAgent',
+      expect.objectContaining({ roomId: 'r-welcome' })
+    );
+    expect(skipped).not.toHaveBeenCalled();
+  });
+
+  it('else on its page, keeping its pop-up away for this launch', async () => {
+    await openBuddyAfterOnboarding('srv-1', null);
+
+    expect(navigate).toHaveBeenCalledWith('switchBuddy', { serverId: 'srv-1' });
+    expect(skipped).toHaveBeenCalledTimes(1);
+    expect(listChats).not.toHaveBeenCalled();
   });
 });
