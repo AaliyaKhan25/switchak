@@ -3,12 +3,12 @@ import { useEffect } from 'react';
 import type { GuardResult, ViewDefinition } from '@renderer/app/view-registry';
 import { managedAgentLabel } from '@renderer/features/managed-agents/managed-agent-state';
 import { useManagedAgents } from '@renderer/features/managed-agents/use-managed-agents';
-import { isConsoleGroupChatSummary } from '@renderer/features/switch-servers/room-filters';
 import { Titlebar } from '@renderer/lib/components/titlebar/Titlebar';
 import { useParams } from '@renderer/lib/layout/navigation-provider';
 import { appState } from '@renderer/lib/stores/app-state';
 import { ChatHeaderControls, ChatHeaderTitle } from './components/chat-header';
 import { ChatPanel, useAgentActivities } from './components/chat-panel';
+import { useOpenGroupAsRoom } from './console-chat-redirect';
 import { agentChatsFlag } from './stores/agent-chats-flag';
 import { chatsStore } from './stores/chats';
 
@@ -67,29 +67,10 @@ function useLeaveWhenChatsOff(params: ChatParams): boolean | undefined {
   return enabled;
 }
 
-/**
- * A group chat opens as a room, including a direct chat the moment it becomes
- * one; its draft and loaded messages are held by chat, so they come along.
- */
-function useOpenGroupAsRoom(roomId: string): void {
-  const chat = chatsStore.chat(roomId);
-  const group = chat !== undefined && isConsoleGroupChatSummary(chat);
-  useEffect(() => {
-    if (!group) return;
-    appState.history.prune(
-      (entry) =>
-        entry.kind === 'view' &&
-        entry.viewId === 'chat' &&
-        (entry.params as { roomId?: string }).roomId === roomId
-    );
-    appState.navigation.navigate('room', { roomId });
-  }, [group, roomId]);
-}
-
 const ChatMainPanel = observer(function ChatMainPanel(): React.JSX.Element | null {
   const { params } = useParams('chat');
   const enabled = useLeaveWhenChatsOff(params);
-  useOpenGroupAsRoom(params.roomId);
+  useOpenGroupAsRoom(params.roomId, 'chat');
   if (enabled !== true) return null;
   return (
     <ChatPanel

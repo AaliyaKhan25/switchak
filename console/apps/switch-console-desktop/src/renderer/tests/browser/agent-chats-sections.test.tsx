@@ -98,8 +98,12 @@ vi.mock('@renderer/features/chats/components/chat-panel', async (importOriginal)
 }));
 
 import '@renderer/index.css';
+import { runInAction } from 'mobx';
+import { chatsStore } from '@renderer/features/chats/stores/chats';
 import { AgentChats } from '@renderer/features/managed-agents/agent-chats';
 import { roomEmbedSlotStore } from '@renderer/features/switch-rooms/room-embed-slot';
+import { appState } from '@renderer/lib/stores/app-state';
+import type { ChatSummary } from '@shared/core/chats/chats';
 
 const AGENT: ManagedAgentView = {
   serverId: 'server-1',
@@ -309,4 +313,60 @@ it("opens a room whose platform can't be drawn here on its settings", async () =
 
   await act(async () => roomRow('agents-only').click());
   expect(embeddedRoom()?.textContent).toBe('Settings of room-2');
+});
+
+it('follows the open direct chat into its room when it becomes a group, not an older chat', async () => {
+  const navigate = vi.spyOn(appState.navigation, 'navigate').mockImplementation(() => {});
+  const agentInChat = {
+    id: 'agent-1',
+    name: 'pm-agent',
+    displayName: null,
+    iconUrl: null,
+    provider: null,
+    alias: null,
+    ownerName: null,
+    ownedByViewer: true,
+  };
+  const chat = (roomId: string, channelType: ChatSummary['channelType'], seq: number) =>
+    ({
+      roomId,
+      name: roomId,
+      channelType,
+      bridgeType: null,
+      channelName: null,
+      agents: [agentInChat],
+      canManage: true,
+      ownsAgent: true,
+      memberUserIds: [],
+      memberCount: 1,
+      unreadCount: 0,
+      lastMessage: { seq, sentAt: `2026-01-0${seq}T00:00:00Z`, preview: '', senderName: '' },
+    }) satisfies ChatSummary;
+  try {
+    runInAction(() => {
+      chatsStore.serverId = 'server-1';
+    });
+    chatsStore.upsert(chat('older', 'direct', 1));
+    chatsStore.upsert(chat('current', 'direct', 2));
+    navigation.reset({
+      serverId: 'server-1',
+      agentId: 'agent-1',
+      name: 'pm-agent',
+      roomId: 'current',
+    });
+    await act(async () => root.render(<AgentChats agent={AGENT} />));
+    expect(navigate).not.toHaveBeenCalled();
+
+    // Someone adds a person: the open chat is now a group.
+    await act(async () => chatsStore.upsert(chat('current', 'channel_private', 3)));
+    expect(navigate).toHaveBeenCalledWith('room', { roomId: 'current' });
+    expect(navigation.params().roomId).toBe('current');
+  } finally {
+    navigate.mockRestore();
+    runInAction(() => {
+      chatsStore.chats.delete('older');
+      chatsStore.chats.delete('current');
+      chatsStore.serverId = null;
+    });
+  }
 });

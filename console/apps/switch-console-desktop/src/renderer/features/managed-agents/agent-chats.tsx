@@ -4,6 +4,7 @@ import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { agentConversations } from '@renderer/features/chats/agent-conversations';
 import { ChatPanel } from '@renderer/features/chats/components/chat-panel';
 import { ChatRow } from '@renderer/features/chats/components/chat-row';
+import { useOpenGroupAsRoom } from '@renderer/features/chats/console-chat-redirect';
 import { directChats } from '@renderer/features/chats/start-direct-chat';
 import { chatsStore } from '@renderer/features/chats/stores/chats';
 import { RoomListRow } from '@renderer/features/sidebar/main-section';
@@ -133,6 +134,8 @@ export const AgentChats = observer(function AgentChats({ agent }: { agent: Manag
   const shownRoom = openAgentRoom(agent, params.room, section);
   const roomId = shownRoom ? null : (openAgentChat(agent, params.roomId)?.roomId ?? null);
   const open = (id: string) => setParams({ roomId: id, section: undefined, room: undefined });
+  // The chat open here that becomes a group follows into its room, rather than another chat taking its place.
+  useOpenGroupAsRoom(shownRoom || section ? null : (params.roomId ?? null), 'managedAgent');
   const newChat = async () => {
     const chat = await directChats.start(serverId, agentId);
     if (chat) open(chat.roomId);
