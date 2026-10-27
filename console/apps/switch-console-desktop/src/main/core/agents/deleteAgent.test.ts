@@ -84,7 +84,8 @@ vi.mock('@main/core/switch-servers/gateway-client', () => ({
   GatewayError: class GatewayError extends Error {
     constructor(
       readonly kind: string,
-      message: string
+      message: string,
+      readonly status?: number
     ) {
       super(message);
     }
@@ -119,8 +120,9 @@ const { getAgentLocation } = await import('./agent-location');
 const { stopRemoteWatcher } = await import('./remote-watcher');
 const { autoSessionWatcher } = await import('@main/core/switch-rooms/auto-session-watcher');
 const { stopSharedAgentSessions } = await import('./stop-shared-agent-sessions');
-const { deleteAgent: gatewayDeleteAgent } =
+const { deleteAgent: gatewayDeleteAgent, GatewayError } =
   await import('@main/core/switch-servers/gateway-client');
+const { forgetManagedAgent } = await import('@main/core/agent-migration/managed-agents-store');
 
 const CREDS = JSON.stringify({
   env: { SWITCH_API_ENDPOINT: 'https://s', SWITCH_API_TOKEN: 'tok-123', SWITCH_AGENT_ID: 'sw-1' },
@@ -477,6 +479,61 @@ describe('deleteAgent', () => {
         'agent_removed',
         expect.objectContaining({ failure_reason: 'not_linked_to_switch' })
       );
+    });
+  });
+  describe('deleting in Switch', () => {
+    // An early agent: linked to Switch, its credentials still in the legacy
+    // `.claude/switch-subagents/` file.
+    const legacyAgent = {
+      id: 'agent-1',
+      name: 'cc-hoot',
+      providerId: 'claude',
+      locationId: 'loc',
+      workspaceId: 'ws-1',
+      switchAgentId: 'sw-1',
+    };
+    const full = { deleteInSwitch: true, removeProvisionedFiles: true, trigger: 'user' } as const;
+
+    beforeEach(() => {
+      h.state.agent = legacyAgent;
+      h.state.fs = fakeFs({ '.claude/switch-subagents/cc-hoot.settings.json': CREDS });
+      h.state.repoAgents = {
+        removeLocal: async (fs: PluginFs, name: string) =>
+          fs.delete(`.claude/switch-subagents/${name}.settings.json`),
+      };
+    });
+
+    it('removes a legacy agent for good: its row, managed record and credentials', async () => {
+      vi.mocked(gatewayDeleteAgent).mockResolvedValue(undefined);
+      await deleteAgent('agent-1', full);
+
+      expect(gatewayDeleteAgent).toHaveBeenCalledWith({ id: 'srv-1' }, 'sw-1');
+      expect(h.deleteRow).toHaveBeenCalledTimes(1);
+      expect(forgetManagedAgent).toHaveBeenCalledWith('agent-1');
+      expect(await h.state.fs.exists('.claude/switch-subagents/cc-hoot.settings.json')).toBe(false);
+    });
+
+    it('still removes the agent here when its Switch identity is already gone', async () => {
+      vi.mocked(gatewayDeleteAgent).mockRejectedValue(
+        new GatewayError('http', '404 Not Found', 404)
+      );
+      await deleteAgent('agent-1', full);
+
+      expect(h.deleteRow).toHaveBeenCalledTimes(1);
+      expect(await h.state.fs.exists('.claude/switch-subagents/cc-hoot.settings.json')).toBe(false);
+    });
+
+    it('surfaces any other refusal and leaves the agent, and its controller, untouched', async () => {
+      vi.mocked(gatewayDeleteAgent).mockRejectedValue(
+        new GatewayError('http', '500 Internal Server Error', 500)
+      );
+      await expect(deleteAgent('agent-1', full)).rejects.toThrow('500');
+
+      expect(autoSessionWatcher.stopForAgent).not.toHaveBeenCalled();
+      expect(stopSharedAgentSessions).not.toHaveBeenCalled();
+      expect(h.discardControllerState).not.toHaveBeenCalled();
+      expect(h.deleteRow).not.toHaveBeenCalled();
+      expect(await h.state.fs.exists('.claude/switch-subagents/cc-hoot.settings.json')).toBe(true);
     });
   });
 });
