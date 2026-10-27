@@ -98,6 +98,31 @@ describe('openBuddyChat', () => {
     );
   });
 
+  it('makes one Welcome chat when the chat is opened twice at once', async () => {
+    // The setup dialog's success and the buddy page noticing the new buddy
+    // both open its chat in the same moment.
+    listChats.mockResolvedValue([]);
+    createChat.mockResolvedValue(chat('r-new', BUDDY_CHAT_NAME));
+
+    await Promise.all([openBuddyChat('srv-1', buddy), openBuddyChat('srv-1', buddy)]);
+
+    expect(createChat).toHaveBeenCalledTimes(1);
+    expect(navigate).toHaveBeenCalledTimes(2);
+    for (const call of navigate.mock.calls) expect(call[1]).toMatchObject({ roomId: 'r-new' });
+  });
+
+  it('looks again for a later open, once the first has finished', async () => {
+    listChats.mockResolvedValue([]);
+    createChat.mockResolvedValue(chat('r-new', BUDDY_CHAT_NAME));
+    await openBuddyChat('srv-1', buddy);
+
+    listChats.mockResolvedValue([chat('r-new', BUDDY_CHAT_NAME)]);
+    await openBuddyChat('srv-1', buddy);
+
+    expect(listChats).toHaveBeenCalledTimes(2);
+    expect(createChat).toHaveBeenCalledTimes(1);
+  });
+
   it("still opens the buddy's page, and says why, when its chat cannot be had", async () => {
     listChats.mockRejectedValue(new Error('Switch is down.'));
 

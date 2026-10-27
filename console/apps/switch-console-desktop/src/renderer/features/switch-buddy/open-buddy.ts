@@ -13,13 +13,32 @@ import { buddyWelcomeMessage } from './buddy-welcome-message';
 /** What the buddy's first chat is called, as on the board; it keeps it. */
 export const BUDDY_CHAT_NAME = 'Welcome';
 
+/** The buddy chats being found or made, by server and agent: one at a time each. */
+const finding = new Map<string, Promise<ChatSummary>>();
+
 /**
  * The buddy's chat to open: the one named Welcome, else its newest direct
  * chat; a new Welcome chat only when it has none. Opening the buddy again —
  * replaying onboarding, a second Start — lands in the same chat rather than
  * adding one each time.
+ *
+ * Two opens at once share one look, so they cannot each find no chat and
+ * each make one: the setup dialog's success and the buddy's page noticing it
+ * now exists both open it in the same moment.
  */
-async function buddyChat(
+function buddyChat(
+  serverId: string,
+  agent: { agentId: string; name: string }
+): Promise<ChatSummary> {
+  const key = `${serverId}\u0000${agent.agentId}`;
+  const running = finding.get(key);
+  if (running) return running;
+  const found = findOrMakeBuddyChat(serverId, agent).finally(() => finding.delete(key));
+  finding.set(key, found);
+  return found;
+}
+
+async function findOrMakeBuddyChat(
   serverId: string,
   agent: { agentId: string; name: string }
 ): Promise<ChatSummary> {
