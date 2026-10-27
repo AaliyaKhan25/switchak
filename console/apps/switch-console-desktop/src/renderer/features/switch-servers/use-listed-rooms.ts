@@ -3,7 +3,7 @@ import { chatsStore } from '@renderer/features/chats/stores/chats';
 import { workspacesStore } from '@renderer/features/workspaces/workspaces-store';
 import { useFeatureFlags } from '@renderer/lib/hooks/useFeatureFlags';
 import type { RemoteRoomSummary } from '@shared/core/switch-servers/switch-servers';
-import { isConsoleDirectChat, withConsoleGroupChats } from './room-filters';
+import { isConsoleChatRoom, isConsoleDirectChat, withConsoleGroupChats } from './room-filters';
 import { switchRoomsStore } from './switch-rooms-store';
 import { switchServersStore } from './switch-servers-store';
 
@@ -16,6 +16,25 @@ function filterConsoleDirectChats(
 }
 
 /**
+ * Without the Switch Console chats the user is not in: they cannot open one. Only
+ * the chat list knows, and it follows the active workspace's server, so a chat
+ * elsewhere is left out until that workspace is the active one.
+ */
+function withoutChatsYouAreNotIn(
+  rooms: RemoteRoomSummary[],
+  serverId: string | null,
+  chatsOn: boolean
+): RemoteRoomSummary[] {
+  if (!chatsOn) return rooms;
+  const following = serverId !== null && chatsStore.serverId === serverId;
+  return rooms.filter(
+    (room) =>
+      !isConsoleChatRoom(room) ||
+      (following && (chatsStore.chats.has(room.id) || chatsStore.unlisted.has(room.id)))
+  );
+}
+
+/**
  * Rooms listed in the sidebar and on the Your Rooms page, filtered by the
  * agent_chats flag: when on, 1-1 Console chats (see `isConsoleDirectChat`)
  * are hidden and the group chats you are in are listed. Bridged DMs and
@@ -23,9 +42,14 @@ function filterConsoleDirectChats(
  */
 export function useListedRoomsInActiveScope(): RemoteRoomSummary[] {
   const flags = useFeatureFlags(switchServersStore.activeServerId);
+  const serverId = switchServersStore.activeServerId;
   return computed(() =>
     withConsoleGroupChats(
-      filterConsoleDirectChats(switchRoomsStore.listedRoomsInActiveScope, flags.agent_chats),
+      withoutChatsYouAreNotIn(
+        filterConsoleDirectChats(switchRoomsStore.listedRoomsInActiveScope, flags.agent_chats),
+        serverId,
+        flags.agent_chats || flags.group_chats
+      ),
       flags.agent_chats ? chatsStore.chats.values() : []
     )
   ).get();
@@ -49,10 +73,16 @@ function useRoomsInWorkspace(
   workspaceId: string | null,
   rooms: (workspaceId: string) => RemoteRoomSummary[]
 ): RemoteRoomSummary[] {
-  const flags = useFeatureFlags(workspaceId && workspacesStore.serverIdFor(workspaceId));
+  const serverId = workspaceId && workspacesStore.serverIdFor(workspaceId);
+  const flags = useFeatureFlags(serverId);
   if (workspaceId === null) return [];
+  const active = workspaceId === workspacesStore.activeId;
   return withConsoleGroupChats(
-    filterConsoleDirectChats(rooms(workspaceId), flags.agent_chats),
+    withoutChatsYouAreNotIn(
+      filterConsoleDirectChats(rooms(workspaceId), flags.agent_chats),
+      active ? serverId : null,
+      flags.agent_chats || flags.group_chats
+    ),
     flags.agent_chats && workspaceId === workspacesStore.activeId ? chatsStore.chats.values() : []
   );
 }

@@ -30,7 +30,17 @@ vi.mock('@renderer/features/sidebar/sidebar-tree-data', () => ({
 }));
 vi.mock('@renderer/features/switch-rooms/open-room', () => ({ openRoom: async () => {} }));
 vi.mock('@renderer/features/chats/components/unread-badge', () => ({ UnreadBadge: () => null }));
-vi.mock('@renderer/features/chats/stores/chats', () => ({ chatsStore: { chats: new Map() } }));
+// The chats the user is in, as GET /gateway/chats lists them.
+vi.mock('@renderer/features/chats/stores/chats', async () => {
+  const { observable } = await import('mobx');
+  return {
+    chatsStore: observable({
+      serverId: 'srv',
+      chats: new Map<string, unknown>(),
+      unlisted: new Set<string>(),
+    }),
+  };
+});
 vi.mock('@renderer/lib/stores/use-workspace-agents', () => ({
   useWorkspaceAgents: () => ({ data: [] }),
 }));
@@ -44,7 +54,7 @@ vi.mock('@renderer/features/workspaces/workspaces-store', () => ({
   workspacesStore: {
     idOnServerInScope: () => 'ws',
     serverIdFor: () => 'srv',
-    activeId: 'other',
+    activeId: 'ws',
   },
 }));
 vi.mock('@renderer/features/switch-servers/switch-servers-store', () => ({
@@ -62,6 +72,7 @@ vi.mock('@renderer/features/switch-servers/switch-rooms-store', () => ({
   },
 }));
 
+import { chatsStore } from '@renderer/features/chats/stores/chats';
 import { serverRoomsView } from '@renderer/features/switch-servers/server-rooms-view';
 
 function room(id: string, extra: Partial<RemoteRoomSummary>): RemoteRoomSummary {
@@ -85,16 +96,41 @@ function room(id: string, extra: Partial<RemoteRoomSummary>): RemoteRoomSummary 
 let container: HTMLDivElement;
 let root: Root;
 
+function chat(id: string) {
+  return {
+    roomId: id,
+    name: id,
+    channelType: 'channel_private',
+    bridgeType: null,
+    agents: [{ id: 'a1' }, { id: 'a2' }],
+    lastMessage: null,
+  };
+}
+
 beforeEach(() => {
   rooms.list = observable({
     all: [
       room('bobs-chat', { viewerIsMember: true, channelType: 'channel_private' }),
+      // The room list says "member" because the user's agent is in it; the user is not.
+      room('agent-only-chat', { viewerIsMember: true, channelType: 'channel_private' }),
       room('strangers-chat', { channelType: 'channel_private' }),
       room('public-room', { channelType: 'channel_public' }),
       room('public-slack', { bridgeType: 'slack', bridgeDisplayName: 'Slack' }),
     ],
   });
+  runInAction(() => {
+    chatsStore.chats.clear();
+    chatsStore.chats.set('bobs-chat', chat('bobs-chat') as never);
+  });
 });
+
+const removeFromBobsChat = () =>
+  act(async () =>
+    runInAction(() => {
+      chatsStore.chats.delete('bobs-chat');
+      rooms.list.all[0].viewerIsMember = false;
+    })
+  );
 
 afterEach(async () => {
   await act(async () => root.unmount());
@@ -117,7 +153,7 @@ const toggle = (label: string) =>
 it('lists your rooms by default, and drops a chat once you are removed from it', async () => {
   await render();
   expect(names()).toEqual(['bobs-chat']);
-  await act(async () => runInAction(() => (rooms.list.all[0].viewerIsMember = false)));
+  await removeFromBobsChat();
   expect(names()).toEqual([]);
 });
 
@@ -125,12 +161,12 @@ it('offers All rooms to someone who can read more: bridged rooms, never chats th
   await render();
   await act(async () => toggle('All rooms')!.click());
   expect(names()).toEqual(['#public-slack', 'bobs-chat', 'public-room']);
-  await act(async () => runInAction(() => (rooms.list.all[0].viewerIsMember = false)));
+  await removeFromBobsChat();
   expect(names()).toEqual(['#public-slack', 'public-room']);
 });
 
 it('offers no choice to someone who can read only their own rooms', async () => {
-  rooms.list.all = [room('bobs-chat', { viewerIsMember: true })];
+  rooms.list.all = [room('bobs-chat', { viewerIsMember: true, channelType: 'channel_private' })];
   await render();
   expect(toggle('All rooms')).toBeUndefined();
 });

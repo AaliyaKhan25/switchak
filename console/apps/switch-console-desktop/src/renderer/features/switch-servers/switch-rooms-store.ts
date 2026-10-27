@@ -9,7 +9,6 @@ import {
   type RetireOutcome,
 } from '@shared/core/switch-servers/switch-servers';
 import { UNBRIDGED_FILTER_VALUE } from '@shared/view-state';
-import { isConsoleChatYouAreNotIn } from './room-filters';
 import { serverAvailability } from './server-availability';
 import { switchServersStore } from './switch-servers-store';
 
@@ -185,11 +184,7 @@ export class SwitchRoomsStore {
   listedRoomsInWorkspace(workspaceId: string): RemoteRoomSummary[] {
     const serverId = workspacesStore.serverIdFor(workspaceId);
     const managed = switchServersStore.servers.find((s) => s.id === serverId)?.managed ?? false;
-    if (managed) {
-      return (this.allRoomsByWorkspace.get(workspaceId) ?? []).filter(
-        (room) => !isConsoleChatYouAreNotIn(room)
-      );
-    }
+    if (managed) return this.allRoomsByWorkspace.get(workspaceId) ?? [];
     const own = this.ownedRoomsByWorkspace.get(workspaceId) ?? [];
     const ownIds = new Set(own.map((room) => room.id));
     // And the rooms the user's agents are in, managed ones included, by their membership.

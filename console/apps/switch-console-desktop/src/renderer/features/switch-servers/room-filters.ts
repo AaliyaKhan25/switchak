@@ -62,26 +62,28 @@ export function withConsoleGroupChats(
 }
 
 /**
- * Your rooms, then every other room you can read except Switch Console chats you
- * are not in: the server will not open those to a non-member, admin or not.
+ * Your rooms, then every other room you can read: one list, by name.
  */
 export function allReadableRooms(
   yours: RemoteRoomSummary[],
   readable: RemoteRoomSummary[]
 ): RemoteRoomSummary[] {
   const listed = new Set(yours.map((room) => room.id));
-  const more = readable.filter((room) => !listed.has(room.id) && !isConsoleChatYouAreNotIn(room));
+  const more = readable.filter((room) => !listed.has(room.id));
   if (more.length === 0) return yours;
   return [...yours, ...more].sort((a, b) => a.name.localeCompare(b.name));
 }
 
-/** A Switch Console chat (unbridged, direct or private) the signed-in user is not in: they cannot open it. */
-export function isConsoleChatYouAreNotIn(
-  room: Pick<RemoteRoomSummary, 'bridgeType' | 'channelType' | 'viewerIsMember'>
+/**
+ * A Switch Console chat: unbridged, direct or private. Whether the user is in it
+ * is the chat list's to say, not the room list's `viewerIsMember`, which is also
+ * true for a room one of their agents is in.
+ */
+export function isConsoleChatRoom(
+  room: Pick<RemoteRoomSummary, 'bridgeType' | 'channelType'>
 ): boolean {
   return (
     room.bridgeType === null &&
-    (room.channelType === 'direct' || room.channelType === 'channel_private') &&
-    !room.viewerIsMember
+    (room.channelType === 'direct' || room.channelType === 'channel_private')
   );
 }
