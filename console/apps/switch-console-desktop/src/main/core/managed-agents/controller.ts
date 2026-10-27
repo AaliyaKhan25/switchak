@@ -6,6 +6,8 @@ import {
   vertexLoginCredential,
 } from '@switch-console/agent-providers';
 import { agentMigrationService } from '@main/core/agent-migration/agent-migration';
+import { listManagedAgentRecords } from '@main/core/agent-migration/managed-agents-store';
+import { deleteAgent as deleteConsoleAgent } from '@main/core/agents/deleteAgent';
 import { embeddedControllerService } from '@main/core/embedded-controller/embedded-controllers';
 import { hostControllerService } from '@main/core/host-controllers/host-controllers';
 import {
@@ -44,6 +46,7 @@ import type {
 } from '@shared/core/managed-agents/managed-agents';
 import type { AgentProviderId } from '@shared/core/providers/agent-provider-registry';
 import { createRPCController } from '@shared/lib/ipc/rpc';
+import { forgetDeletedManagedAgents } from './forget-deleted';
 import { ownedMachines, preferredFirst, thisComputerReport } from './owned-machines';
 
 async function machinesOn(serverId: string): Promise<OwnedMachine[] | null> {
@@ -91,6 +94,22 @@ export const managedAgentsController = createRPCController({
         if (error instanceof AgentManagementUnavailableError) return null;
         throw error;
       }
+      // The list came back: a moved agent missing from it was deleted on the server.
+      await forgetDeletedManagedAgents(
+        workspace.id,
+        new Set(agents.map((agent) => agent.agentId)),
+        {
+          records: listManagedAgentRecords,
+          forget: (consoleAgentId) =>
+            deleteConsoleAgent(consoleAgentId, {
+              deleteInSwitch: false,
+              removeProvisionedFiles: false,
+              trigger: 'server_teardown',
+            }),
+          warn: (message, context) => log.warn(message, context),
+          now: Date.now,
+        }
+      );
       return agents.map((agent): ManagedAgentView => {
         const machine =
           agent.machine !== undefined

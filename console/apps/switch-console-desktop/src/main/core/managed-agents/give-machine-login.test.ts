@@ -21,6 +21,10 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('@main/core/agent-migration/agent-migration', () => ({ agentMigrationService: {} }));
+vi.mock('@main/core/agent-migration/managed-agents-store', () => ({
+  listManagedAgentRecords: async () => [],
+}));
+vi.mock('@main/core/agents/deleteAgent', () => ({ deleteAgent: vi.fn() }));
 vi.mock('@main/lib/logger', () => ({ log: { warn: vi.fn(), error: vi.fn(), info: vi.fn() } }));
 vi.mock('@main/core/embedded-controller/embedded-controllers', () => ({
   embeddedControllerService: {},
