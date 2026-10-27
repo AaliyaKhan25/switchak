@@ -7,6 +7,7 @@ import { OWNER_ONLY, TemplateRefusal, type TemplateRun } from '../clients/switch
 import type { NameScope } from '../core/run.ts';
 import type { ScenarioHeader } from '../core/scenario.ts';
 import { IssuedSecrets } from '../core/secrets.ts';
+import { waitForBridgeReady } from '../fixtures/fixtures.ts';
 import {
   AGENT_INSTRUCTIONS,
   CLAUDE_MODEL,
@@ -460,9 +461,6 @@ export const interrupt: Scenario = (harness) =>
 
 // ── card answered by someone who may not ─────────────────────────────────────
 
-/** The bot Switch posts its own notices as, on Mattermost. */
-const SWITCH_ADMIN = 'switch-admin';
-
 /**
  * Answering a request card takes the same permission as addressing the agent.
  * With the agent open only to its owner, a person who is not the owner answers
@@ -490,8 +488,6 @@ export const cardAnswerRefused: Scenario = (harness, names) =>
     const team = await harness.mattermost.findTeam(mattermostEnv.team);
     await other.client.joinTeam(team.id, other.user.id);
     await harness.mattermost.addUserToChannel(harness.channel.id, other.user.id);
-    const admin = await harness.mattermost.findBotUser(SWITCH_ADMIN);
-    if (admin === null) throw new Error(`Mattermost has no '${SWITCH_ADMIN}' account.`);
 
     await harness.switch.setAddressingPolicy(harness.agent.id, OWNER_ONLY);
     try {
@@ -514,21 +510,27 @@ export const cardAnswerRefused: Scenario = (harness, names) =>
 
       const refusedAt = Date.now() - 1;
       await other.client.post({ channelId: harness.channel.id, message: `${handle} 1` });
-      const { match: notice, transcript } = await harness.mattermost.waitForPost({
-        channelId: harness.channel.id,
-        fromUserId: admin.id,
-        predicate: (post) =>
-          post.root_id === thread &&
-          post.message.includes(`answer to ${handle} did not land`) &&
-          post.message.includes('may not address this agent'),
-        sinceMs: refusedAt,
-        deadlineMs: 60_000,
-      });
-      record(transcript);
-      if (notice === null) {
+      // Said by the bridge's own admin account, whatever it is called here.
+      const isNotice = (post: MattermostPost): boolean =>
+        post.root_id === thread &&
+        post.message.includes(`answer to ${handle} did not land`) &&
+        post.message.includes('may not address this agent');
+      let notice: MattermostPost | undefined;
+      const until = Date.now() + 60_000;
+      while (notice === undefined && Date.now() < until) {
+        const posts = await harness.mattermost.postsSince(harness.channel.id, refusedAt);
+        record(posts);
+        notice = posts.find(isNotice);
+        if (notice === undefined) await sleep(2_000);
+      }
+      if (notice === undefined) {
+        const seen = await harness.mattermost.postsSince(harness.channel.id, refusedAt);
         throw new Error(
-          `${username}'s answer to ${handle} was not refused in the card's thread. Channel said: ${summarise(transcript)}`
+          `${username}'s answer to ${handle} was not refused in the card's thread. Channel said: ${summarise(seen)}`
         );
+      }
+      if (notice.user_id === other.user.id || notice.user_id === harness.human.id) {
+        throw new Error(`The refusal notice was posted by a person, not by Switch: ${notice.id}`);
       }
       const ranEarly = (
         await harness.mattermost.postsFrom(harness.channel.id, harness.bot.id, refusedAt)
@@ -609,7 +611,8 @@ export const templateAgent: Scenario = (harness, names) =>
         name: names.name('troom'),
         description: about,
         bridge: bridge.displayName,
-        agents: ['{agent}'],
+        // The witness reads the room for the bridge probe, as in the shared room.
+        agents: ['{agent}', harness.witness.name],
         users: [harness.human.username],
       },
     });
@@ -646,6 +649,16 @@ export const templateAgent: Scenario = (harness, names) =>
       if (channelId === null)
         throw new Error(`The template's room ${room.id} has no Mattermost channel.`);
       const bot = await harness.mattermost.waitForBotUser(agentName, 60_000);
+      const channel = await harness.mattermost.getChannel(channelId);
+      // A post made before the new bot's socket is up is dropped.
+      await waitForBridgeReady({
+        switchClient: harness.switch,
+        mattermost: harness.mattermost,
+        agent: harness.witness,
+        room,
+        channel,
+        runId: harness.runId,
+      });
       const marker = `${OK_MARKER}_TPL`;
       const since = Date.now() - 1;
       await harness.mattermost.post({
