@@ -114,6 +114,7 @@ from switch_core.bridges.agent.registration_bootstrap import (
 )
 from switch_core.budgets import BudgetExceeded
 from switch_core.config import SwitchConfig
+from switch_core.content_disposition import content_disposition
 from switch_core.db.models import Agent
 from switch_core.db.stores.api_key_store import ApiKeyStore
 from switch_core.gateway.known_agents import known_agent
@@ -519,7 +520,9 @@ async def download_media(
 
     headers = {}
     if filename:
-        headers["Content-Disposition"] = f'inline; filename="{filename}"'
+        headers["Content-Disposition"] = content_disposition(
+            "inline", filename, "attachment"
+        )
     return Response(
         content=data,
         media_type=content_type or "application/octet-stream",
