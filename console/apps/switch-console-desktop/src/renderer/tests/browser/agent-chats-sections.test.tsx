@@ -370,3 +370,25 @@ it('follows the open direct chat into its room when it becomes a group, not an o
     });
   }
 });
+
+it('offers a new room or an existing one from the Rooms section, with the agent picked', async () => {
+  const { showModal } = await import('@renderer/lib/modal/modal-provider');
+  vi.mocked(showModal).mockClear();
+  await act(async () => root.render(<AgentChats agent={AGENT} />));
+  const add = container.querySelector<HTMLButtonElement>('[aria-label="Add to a room"]')!;
+  await act(async () => add.click());
+  const items = () => [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')];
+  expect(items().map((item) => item.textContent)).toEqual(['New room', 'Add to existing room']);
+  await act(async () => items()[0]!.click());
+  expect(showModal).toHaveBeenCalledWith('createRoomModal', {
+    serverId: 'server-1',
+    agentId: 'agent-1',
+  });
+  await act(async () => add.click());
+  await act(async () => items()[1]!.click());
+  expect(showModal).toHaveBeenCalledWith('addAgentToRoomModal', {
+    workspaceId: 'workspace-1',
+    switchAgentId: 'agent-1',
+    agentName: 'pm-agent',
+  });
+});

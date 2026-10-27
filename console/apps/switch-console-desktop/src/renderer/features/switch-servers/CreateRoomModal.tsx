@@ -43,6 +43,8 @@ type CreateRoomModalArgs = {
   /** Create on this server instead of the active one — for callers that are not
    * driven by the sidebar's server scope, such as onboarding. */
   serverId?: string;
+  /** An agent to start the room with, already picked: the room is made from its page. */
+  agentId?: string;
 };
 
 type Props = BaseModalProps<{ roomId: string }> & CreateRoomModalArgs;
@@ -54,6 +56,7 @@ type Props = BaseModalProps<{ roomId: string }> & CreateRoomModalArgs;
  */
 export const CreateRoomModal = observer(function CreateRoomModal({
   serverId: overrideServerId,
+  agentId: startingAgentId,
   onSuccess,
   onClose,
 }: Props) {
@@ -139,6 +142,15 @@ export const CreateRoomModal = observer(function CreateRoomModal({
       personParticipant
     ),
   ];
+  // The agent the room is made from starts picked, once the agents are read.
+  const [seeded, setSeeded] = useState(startingAgentId === undefined);
+  if (!seeded) {
+    const start = candidates.find((each) => each.kind === 'agent' && each.id === startingAgentId);
+    if (start) {
+      setSeeded(true);
+      setPicked((current) => [start, ...current.filter((each) => each.id !== start.id)]);
+    }
+  }
   const agentIds = picked.filter((each) => each.kind === 'agent').map((each) => each.id);
   const memberUserIds = picked.filter((each) => each.kind === 'person').map((each) => each.id);
 

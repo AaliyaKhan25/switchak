@@ -15,6 +15,12 @@ import { useFeatureFlags } from '@renderer/lib/hooks/useFeatureFlags';
 import { useParams } from '@renderer/lib/layout/navigation-provider';
 import { showModal } from '@renderer/lib/modal/modal-provider';
 import { Button } from '@renderer/lib/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@renderer/lib/ui/dropdown-menu';
 import { EmptyState } from '@renderer/lib/ui/empty-state';
 import type { ChatSummary } from '@shared/core/chats/chats';
 import { isCloudMachine, type ManagedAgentView } from '@shared/core/managed-agents/managed-agents';
@@ -54,11 +60,14 @@ function Section({
   title,
   addLabel,
   onAdd,
+  addChoices,
   children,
 }: {
   title: string;
   addLabel: string;
   onAdd: () => void;
+  /** Ways to add, offered as a menu on the button instead of `onAdd`; null for just `onAdd`. */
+  addChoices: { label: string; onSelect: () => void }[] | null;
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(true);
@@ -75,9 +84,28 @@ function Section({
           <Chevron className="size-3.5" />
           {title}
         </button>
-        <SidebarItemMiniButton aria-label={addLabel} title={addLabel} onClick={onAdd}>
-          <Plus className="size-3.5" />
-        </SidebarItemMiniButton>
+        {addChoices ? (
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
+                <SidebarItemMiniButton aria-label={addLabel} title={addLabel}>
+                  <Plus className="size-3.5" />
+                </SidebarItemMiniButton>
+              }
+            />
+            <DropdownMenuContent align="end">
+              {addChoices.map((choice) => (
+                <DropdownMenuItem key={choice.label} onClick={choice.onSelect}>
+                  {choice.label}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : (
+          <SidebarItemMiniButton aria-label={addLabel} title={addLabel} onClick={onAdd}>
+            <Plus className="size-3.5" />
+          </SidebarItemMiniButton>
+        )}
       </div>
       {open && children}
     </section>
@@ -172,7 +200,12 @@ export const AgentChats = observer(function AgentChats({ agent }: { agent: Manag
           selected={section}
           onSelect={(chosen) => setParams({ section: chosen })}
         />
-        <Section title="Direct chats" addLabel="New chat" onAdd={() => void newChat()}>
+        <Section
+          title="Direct chats"
+          addLabel="New chat"
+          onAdd={() => void newChat()}
+          addChoices={null}
+        >
           {chatsStore.listError && <Note>{chatsStore.listError}</Note>}
           {direct.map((chat) => (
             <ChatRow
@@ -187,8 +220,23 @@ export const AgentChats = observer(function AgentChats({ agent }: { agent: Manag
         </Section>
         <Section
           title="Rooms"
-          addLabel="Create room"
-          onAdd={() => showModal('createRoomModal', { serverId })}
+          addLabel="Add to a room"
+          onAdd={() => showModal('createRoomModal', { serverId, agentId })}
+          addChoices={[
+            {
+              label: 'New room',
+              onSelect: () => showModal('createRoomModal', { serverId, agentId }),
+            },
+            {
+              label: 'Add to existing room',
+              onSelect: () =>
+                showModal('addAgentToRoomModal', {
+                  workspaceId,
+                  switchAgentId: agentId,
+                  agentName: managedAgentLabel(agent),
+                }),
+            },
+          ]}
         >
           {roomsError && <Note>{roomsError}</Note>}
           {rooms.map((room) => (
