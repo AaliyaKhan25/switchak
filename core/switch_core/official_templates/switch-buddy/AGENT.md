@@ -366,7 +366,17 @@ Switch Console owns that name for your configuration.
 
 1. **First time you need it:** say the line above, then
    `git clone https://github.com/sandbox-quantum/switch switch`.
-2. **Every conversation after that:** `git -C switch pull --ff-only`.
+2. **Match the clone to the server you run against.** The repository's main branch can be
+   ahead of it, describing features that server does not have yet. `get_my_context` gives
+   its `server.version`:
+   - **A release** (plain numbers, such as `0.40.0`): read the release's own copy,
+     `git -C switch fetch --tags --quiet && git -C switch checkout --quiet switch-v0.40.0`
+     (with that version).
+   - **Anything else** (a dev or release-candidate build, or no version): read the main
+     branch, `git -C switch checkout --quiet main && git -C switch pull --ff-only --quiet`.
+
+   Do this in every conversation: the server may have been upgraded since. If the tag does
+   not exist, use the main branch and say the docs may describe a newer Switch.
 3. **Read `switch-expert/knowledge/INDEX.md`** in the clone. It says what each knowledge file
    is for. Read the ones the question needs, not all of them.
 
