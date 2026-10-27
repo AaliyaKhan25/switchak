@@ -2,15 +2,18 @@ from collections.abc import Collection
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import delete, insert, or_, select, update
+from sqlalchemy import ColumnElement, delete, exists, insert, or_, select, update
 from sqlalchemy import func as sa_func
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from switch_core.chats import MEMBER_CLIENT_TYPE
 from switch_core.db.models import (
     Agent,
     Client,
     ClientRoom,
+    ExternalUser,
+    ExternalUserClaim,
     Room,
     RoomGroup,
     require_tenant_id,
@@ -234,17 +237,27 @@ class RoomStore:
         is_admin: bool,
         include_archived: bool = False,
     ) -> list[Room]:
-        """Return rooms the user may read: owned, publicly readable, or all
-        if admin. Archived rooms are excluded unless `include_archived`."""
+        """Return rooms the user may read: publicly readable, ones they take
+        part in (`involves`), or all if admin. Archived rooms are excluded
+        unless `include_archived`."""
         stmt = select(Room)
         if not is_admin:
-            stmt = stmt.where(
-                or_(Room.owner_id == user_id, Room.read_visibility == "public")
-            )
+            stmt = stmt.where(or_(Room.read_visibility == "public", involves(user_id)))
         if not include_archived:
             stmt = stmt.where(Room.archived_at.is_(None))
         result = await session.execute(stmt)
         return list(result.scalars().all())
+
+    async def involved_room_ids(
+        self, session: AsyncSession, user_id: str, room_ids: Collection[str]
+    ) -> set[str]:
+        """Of `room_ids`, the rooms `involves(user_id)` holds for."""
+        if not room_ids:
+            return set()
+        result = await session.execute(
+            select(Room.id).where(Room.id.in_(room_ids), involves(user_id))
+        )
+        return set(result.scalars().all())
 
     async def delete(self, session: AsyncSession, room_id: str) -> None:
         await session.execute(delete(ClientRoom).where(ClientRoom.room_id == room_id))
@@ -761,3 +774,30 @@ class RoomStore:
         )
         await session.flush()
         return result.rowcount or 0  # type: ignore[attr-defined]
+
+
+def involves(user_id: str) -> ColumnElement[bool]:
+    """True for a `Room` row the user takes part in: they own it, their Switch
+    Console member client or a platform account they have claimed is in it,
+    or an agent they own is. For reading and listing only; it grants no
+    write or configuration access."""
+    return or_(
+        Room.owner_id == user_id,
+        exists().where(
+            ClientRoom.room_id == Room.id,
+            ClientRoom.client_id == Client.id,
+            Client.user_id == user_id,
+            Client.type == MEMBER_CLIENT_TYPE,
+        ),
+        exists().where(
+            ClientRoom.room_id == Room.id,
+            ClientRoom.client_id == ExternalUser.client_id,
+            ExternalUser.id == ExternalUserClaim.external_user_id,
+            ExternalUserClaim.user_id == user_id,
+        ),
+        exists().where(
+            room_agents.c.room_id == Room.id,
+            room_agents.c.agent_id == Agent.id,
+            Agent.owner_id == user_id,
+        ),
+    )

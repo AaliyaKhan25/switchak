@@ -112,7 +112,11 @@ async def _require_room(
             room,
         )
     except PermissionError as e:
-        raise HTTPException(status_code=403, detail=str(e)) from e
+        # Whoever takes part in a room may read it, as its listing shows them.
+        if action != "read" or not await room_store.involved_room_ids(
+            session, user.id, [room.id]
+        ):
+            raise HTTPException(status_code=403, detail=str(e)) from e
     return room
 
 
@@ -348,6 +352,7 @@ async def list_rooms(
     room_ids = [room.id for room in rooms]
     agent_ids_by_room = await room_store.agent_ids_by_room(session, room_ids)
     client_ids_by_room = await room_store.client_ids_by_room(session, room_ids)
+    involved = await room_store.involved_room_ids(session, user.id, room_ids)
     # Not held across the deeplinks, which can ask the platform on a cache miss.
     await session.commit()
 
@@ -385,6 +390,7 @@ async def list_rooms(
                 write_visibility=room.write_visibility,
                 created_at=str(room.created_at),
                 archived=room.archived_at is not None,
+                viewer_is_member=room.id in involved,
             )
         )
 

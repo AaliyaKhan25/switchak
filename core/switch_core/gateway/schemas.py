@@ -85,6 +85,9 @@ class RoomSummary(BaseModel):
     created_at: str
     # True when the room is archived (hidden from the default active list).
     archived: bool = False
+    # The caller owns the room, is in it (in Switch Console or through a
+    # platform account they claimed), or owns an agent in it.
+    viewer_is_member: bool = False
 
 
 class RoomDetail(RoomSummary):
