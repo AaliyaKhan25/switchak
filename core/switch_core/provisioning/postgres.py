@@ -76,6 +76,24 @@ class PostgresProvisioning:
         self._client_store = client_store
         self._router = router
         self._invites = invites
+        self._membership_listeners: tuple[
+            Callable[[str, str, list[str]], None], ...
+        ] = ()
+
+    def on_membership_changed(
+        self, listener: Callable[[str, str, list[str]], None]
+    ) -> None:
+        """Call `listener(tenant_id, room_id, [client_id])` once a membership
+        written here has committed, a join or a removal (`room_changes`). It
+        must not block."""
+        self._membership_listeners = (*self._membership_listeners, listener)
+
+    def _membership_changed(self, tenant_id: str, room_id: str, client_id: str) -> None:
+        for listener in self._membership_listeners:
+            try:
+                listener(tenant_id, room_id, [client_id])
+            except Exception:
+                logger.exception("Membership listener failed for room %s", room_id)
 
     async def create_room(self, name: str, topic: str) -> str:
         """Mint the id the caller will store on its own room row.
@@ -169,7 +187,12 @@ class PostgresProvisioning:
             message=arrival,
             attachments=[],
         )
-        return routed.committed
+
+        def committed() -> None:
+            routed.committed()
+            self._membership_changed(tenant_id, switch_room_id, client_id)
+
+        return committed
 
     async def kick_user(self, room_id: str, user_id: str) -> None:
         """Remove a membership, stopping a live client's delivery with it.
@@ -203,6 +226,7 @@ class PostgresProvisioning:
             await session.commit()
         await removed.committed()
         await self._invites.remove(client_id, room_id)
+        self._membership_changed(tenant_id, switch_room_id, client_id)
 
     async def delete_room(self, room_id: str) -> None:
         """Nothing of its own to discard.

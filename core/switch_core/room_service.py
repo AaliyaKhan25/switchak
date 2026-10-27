@@ -165,6 +165,7 @@ class RoomService:
     # None as "report nothing".
     _telemetry: TelemetryService | None = None
     _room_agents_listeners: tuple[Callable[[str, str], Awaitable[None]], ...] = ()
+    _room_listeners: tuple[Callable[[str, str, list[str]], None], ...] = ()
 
     def __init__(
         self,
@@ -193,6 +194,19 @@ class RoomService:
         self._telemetry = telemetry
         # The shared delivery read; told when a room goes.
         self._room_cache = room_cache
+
+    def on_room_changed(self, listener: Callable[[str, str, list[str]], None]) -> None:
+        """Call `listener(tenant_id, room_id, [])` once a room is created,
+        archived or unarchived, or its agents change (`room_changes`). It must
+        not block."""
+        self._room_listeners = (*self._room_listeners, listener)
+
+    def _room_changed(self, tenant_id: str, room_id: str) -> None:
+        for listener in self._room_listeners:
+            try:
+                listener(tenant_id, room_id, [])
+            except Exception:
+                logger.exception("Room listener failed for room %s", room_id)
 
     def on_room_agents_changed(
         self, listener: Callable[[str, str], Awaitable[None]]
@@ -794,6 +808,7 @@ class RoomService:
                 failed_attachments,
             )
 
+        self._room_changed(room.tenant_id, room.id)
         return RoomCreateResult(room=room, failed_attachments=failed_attachments)
 
     async def _seed_aliases(
@@ -1031,6 +1046,7 @@ class RoomService:
 
         logger.info("Added %d agents to room %s", len(agent_ids), room_id)
         await self.room_agents_changed(room.tenant_id, room.id)
+        self._room_changed(room.tenant_id, room.id)
 
         emit_safely(
             self._telemetry,
@@ -1073,6 +1089,7 @@ class RoomService:
 
         logger.info("Removed %d agents from room %s", len(agent_ids), room_id)
         await self.room_agents_changed(room.tenant_id, room.id)
+        self._room_changed(room.tenant_id, room.id)
 
         emit_safely(
             self._telemetry,
@@ -1183,6 +1200,7 @@ class RoomService:
         async with tenant_session(self._session_factory, room.tenant_id) as session:
             await self._room_store.set_archived(session, room_id, archived)
             await session.commit()
+        self._room_changed(room.tenant_id, room_id)
 
         if not archived or self._telemetry is None:
             return

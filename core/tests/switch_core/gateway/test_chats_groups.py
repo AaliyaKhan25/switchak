@@ -20,6 +20,8 @@ from switch_core.bridges.agent.registration_bootstrap import (
 from switch_core.chats.service import ChatError, ChatService
 from switch_core.db.models import Agent, Client, Message, Room, User, room_agents
 from switch_core.gateway import chats as chats_module
+from switch_core.room_changes import RoomChanges
+from switch_core.user_changes import ROOM
 from tests.switch_core.gateway.conftest import (
     _chat_service,
     _FakeActivityListener,
@@ -1231,3 +1233,56 @@ async def test_one_request_id_with_two_payloads_on_two_processes_is_one_request(
         f"/chats/{rooms[0].id}/members", headers=chats.as_user(chats.alice)
     )
     assert len({m["userId"] for m in members.json()["members"]}) == 2
+
+
+# ── Room change notices ──────────────────────────────────────────────────────
+
+
+class _Published:
+    def __init__(self) -> None:
+        self.notices: list[tuple[str, str, str]] = []
+
+    def publish(self, tenant_id: str, user_id: str, kind: str, id: str) -> None:
+        self.notices.append((user_id, kind, id))
+
+
+async def test_people_are_told_when_a_room_of_theirs_changes(chats: _Harness) -> None:
+    published = _Published()
+    changes = RoomChanges(session_factory=chats.factory, publisher=published)
+    chats.room_service.on_room_changed(changes.room_changed)
+    chats.service._provisioning.on_membership_changed(changes.room_changed)  # type: ignore[attr-defined]
+
+    async def told() -> set[str]:
+        await asyncio.gather(*changes._tasks)
+        users = {user_id for user_id, kind, _ in published.notices if kind == ROOM}
+        published.notices.clear()
+        return users
+
+    mine = await chats.agent("mine", owner=chats.alice)
+    admins = await chats.agent("admins", owner=chats.admin)
+    room_id = await chats.new_chat(chats.alice, mine, "c1")
+    assert await told() == {chats.alice.id}
+
+    assert (await chats.invite(chats.alice, room_id, chats.bob)).status_code == 200
+    assert await told() == {chats.alice.id, chats.bob.id}
+
+    assert (await _add_agent(chats, chats.alice.id, room_id, admins)).status_code == 200
+    assert chats.admin.id in await told()
+
+    removed = await chats.client.delete(
+        f"/chats/{room_id}/agents/{admins.id}", headers=chats.as_user(chats.alice)
+    )
+    assert removed.status_code == 204
+    assert chats.admin.id in await told()
+
+    left = await chats.client.delete(
+        f"/chats/{room_id}/members/{chats.bob.id}", headers=chats.as_user(chats.bob)
+    )
+    assert left.status_code == 204
+    assert chats.bob.id in await told()
+
+    archived = await chats.client.post(
+        f"/chats/{room_id}/archive", headers=chats.as_user(chats.alice)
+    )
+    assert archived.status_code == 204
+    assert await told() == {chats.alice.id}

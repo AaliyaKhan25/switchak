@@ -18,6 +18,7 @@ from switch_core.db.models import (
     room_agents,
 )
 from switch_core.db.stores.room_store import RoomStore
+from switch_core.room_changes import people_concerned
 from tests.switch_core.gateway.agent_route_harness import add_agent
 
 
@@ -102,3 +103,10 @@ async def test_a_person_reads_the_rooms_they_take_part_in_and_no_other(
             await store.involved_room_ids(session, alice.id, [*expected, unrelated.id])
             == expected
         )
+        assert await people_concerned(session, discord.id, []) == [alice.id]
+        assert set(await people_concerned(session, with_agent.id, [])) == {
+            alice.id,
+            bob.id,
+        }
+        # Someone who just left is named by the client they left with.
+        assert alice.id in await people_concerned(session, unrelated.id, [member.id])
