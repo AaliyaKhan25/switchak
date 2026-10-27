@@ -70,9 +70,18 @@ export function allReadableRooms(
   readable: RemoteRoomSummary[]
 ): RemoteRoomSummary[] {
   const listed = new Set(yours.map((room) => room.id));
-  const more = readable.filter(
-    (room) => !listed.has(room.id) && (room.bridgeType !== null || room.viewerIsMember)
-  );
+  const more = readable.filter((room) => !listed.has(room.id) && !isConsoleChatYouAreNotIn(room));
   if (more.length === 0) return yours;
   return [...yours, ...more].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** A Switch Console chat (unbridged, direct or private) the signed-in user is not in: they cannot open it. */
+export function isConsoleChatYouAreNotIn(
+  room: Pick<RemoteRoomSummary, 'bridgeType' | 'channelType' | 'viewerIsMember'>
+): boolean {
+  return (
+    room.bridgeType === null &&
+    (room.channelType === 'direct' || room.channelType === 'channel_private') &&
+    !room.viewerIsMember
+  );
 }

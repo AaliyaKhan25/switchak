@@ -88,8 +88,9 @@ let root: Root;
 beforeEach(() => {
   rooms.list = observable({
     all: [
-      room('bobs-chat', { viewerIsMember: true }),
-      room('strangers-chat', {}),
+      room('bobs-chat', { viewerIsMember: true, channelType: 'channel_private' }),
+      room('strangers-chat', { channelType: 'channel_private' }),
+      room('public-room', { channelType: 'channel_public' }),
       room('public-slack', { bridgeType: 'slack', bridgeDisplayName: 'Slack' }),
     ],
   });
@@ -123,9 +124,9 @@ it('lists your rooms by default, and drops a chat once you are removed from it',
 it('offers All rooms to someone who can read more: bridged rooms, never chats they are not in', async () => {
   await render();
   await act(async () => toggle('All rooms')!.click());
-  expect(names()).toEqual(['#public-slack', 'bobs-chat']);
+  expect(names()).toEqual(['#public-slack', 'bobs-chat', 'public-room']);
   await act(async () => runInAction(() => (rooms.list.all[0].viewerIsMember = false)));
-  expect(names()).toEqual(['#public-slack']);
+  expect(names()).toEqual(['#public-slack', 'public-room']);
 });
 
 it('offers no choice to someone who can read only their own rooms', async () => {

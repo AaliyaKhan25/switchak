@@ -84,6 +84,12 @@ describe('listed rooms', () => {
             room('mine', 'user-of-srv-a'),
             room('someone-elses', 'user-of-someone-else'),
             room('gone', 'user-of-srv-a', { archived: true }),
+            // A Switch Console chat they are not in: the server will not open it to them.
+            room('not-my-chat', 'user-of-someone-else', { channelType: 'channel_private' }),
+            room('my-chat', 'user-of-someone-else', {
+              channelType: 'channel_private',
+              viewerIsMember: true,
+            }),
           ]
         : []
     );
@@ -91,7 +97,11 @@ describe('listed rooms', () => {
     const store = new SwitchRoomsStore();
     await store.loadRoomNames();
 
-    expect(store.listedRoomsInActiveScope.map((r) => r.id)).toEqual(['mine', 'someone-elses']);
+    expect(store.listedRoomsInActiveScope.map((r) => r.id)).toEqual([
+      'mine',
+      'my-chat',
+      'someone-elses',
+    ]);
   });
 
   it('lists only rooms owned by that server’s signed-in user, excluding archived ones', async () => {
