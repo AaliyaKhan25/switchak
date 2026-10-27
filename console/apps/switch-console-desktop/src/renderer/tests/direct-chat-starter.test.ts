@@ -82,3 +82,16 @@ describe('DirectChatStarter', () => {
     expect(deps.opened).not.toHaveBeenCalled();
   });
 });
+
+describe('DirectChatStarter while a chat is being made', () => {
+  it('says it is starting until the create answers, so other composers wait', async () => {
+    let finish: (value: ChatSummary) => void = () => {};
+    const { starter } = setup(() => new Promise((resolve) => (finish = resolve)));
+    expect(starter.starting).toBe(false);
+    const started = starter.start('s1', 'a1');
+    expect(starter.starting).toBe(true);
+    finish(chat);
+    await started;
+    expect(starter.starting).toBe(false);
+  });
+});

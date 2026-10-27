@@ -1,3 +1,4 @@
+import { observable } from 'mobx';
 import type { ChatSummary } from '@shared/core/chats/chats';
 import { chatFailure } from './chat-errors';
 
@@ -27,10 +28,15 @@ export type DirectChatStarterDeps = {
  * rather than making another.
  */
 export class DirectChatStarter {
-  private readonly inFlight = new Set<string>();
+  private readonly inFlight = observable.set<string>();
   private readonly retryIds = new Map<string, string>();
 
   constructor(private readonly deps: DirectChatStarterDeps) {}
+
+  /** A new chat is being made: until it opens, a message typed now has no right room to go to. */
+  get starting(): boolean {
+    return this.inFlight.size > 0;
+  }
 
   async start(serverId: string, agentId: string): Promise<ChatSummary | null> {
     const existing = this.deps.findEmpty(agentId);

@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 // Geometry is the subject, so the real utility classes must be present.
 import '@renderer/index.css';
 import { ChatComposer } from '@renderer/features/chats/components/chat-composer';
+import { composerBlocked } from '@renderer/features/chats/components/chat-panel';
 import {
   ChatTimeline,
   type TimelineApi,
@@ -194,5 +195,46 @@ describe('ChatComposer on a server without group chats', () => {
     } finally {
       flags.group_chats = true;
     }
+  });
+});
+
+describe('ChatComposer while a new chat is being made', () => {
+  it('sends nothing to the chat being left, and keeps the draft', async () => {
+    const send = vi.fn();
+    const timeline = new ChatTimeline('room-old', {} as TimelineApi);
+    timeline.send = send;
+    const composer = (disabled: string | null) => (
+      <QueryClientProvider client={new QueryClient()}>
+        <ChatComposer
+          serverId="s"
+          timeline={timeline}
+          agents={[agent]}
+          people={[]}
+          groupName={null}
+          activity={null}
+          replyTo={null}
+          onClearReply={() => {}}
+          disabled={disabled}
+        />
+      </QueryClientProvider>
+    );
+    const textarea = await render(composer(null));
+    await act(async () => {
+      textarea.focus();
+      document.execCommand('insertText', false, 'for the old chat?');
+    });
+    // The new chat is being made: the composer waits.
+    await act(async () =>
+      root!.render(composer(composerBlocked({ offline: false, startingNewChat: true })))
+    );
+    const waiting = container!.querySelector('textarea')!;
+    expect(waiting.disabled).toBe(true);
+    expect(waiting.placeholder).toBe('Starting a new chat…');
+    await act(async () => {
+      waiting.form?.requestSubmit();
+    });
+    expect(send).not.toHaveBeenCalled();
+    // The draft is the old chat's still, not sent anywhere.
+    expect(waiting.value).toBe('for the old chat?');
   });
 });

@@ -6,6 +6,7 @@ import { SERVER_TOO_OLD_FOR_ACTIVITY } from '@shared/core/chats/activity';
 import type { ChatMessage, ChatSummary } from '@shared/core/chats/chats';
 import { useChatPeople } from '../chat-people';
 import { readThroughSeq } from '../read-progress';
+import { directChats } from '../start-direct-chat';
 import { agentActivities } from '../stores/activities';
 import type { AgentActivity } from '../stores/chat-activity-store';
 import type { ChatTimeline } from '../stores/chat-timeline-store';
@@ -194,11 +195,10 @@ export const ChatPanel = observer(function ChatPanel({
         activity={activities[0] ?? null}
         replyTo={replyTo}
         onClearReply={() => setReplyTo(null)}
-        disabled={
-          chatsStore.streamState === 'offline' && !timeline.loaded
-            ? 'Switch cannot be reached right now.'
-            : null
-        }
+        disabled={composerBlocked({
+          offline: chatsStore.streamState === 'offline' && !timeline.loaded,
+          startingNewChat: directChats.starting,
+        })}
       />
     </div>
   );
@@ -262,6 +262,20 @@ const ReadWhileFollowing = observer(function ReadWhileFollowing({
   }, [roomId, seq]);
   return null;
 });
+
+/**
+ * Why the composer takes nothing now, or null. While a new chat is being
+ * made, this one's composer waits: a quick send would land here, in the chat
+ * being left, just before the new one opens.
+ */
+export function composerBlocked(state: {
+  offline: boolean;
+  startingNewChat: boolean;
+}): string | null {
+  if (state.startingNewChat) return 'Starting a new chat…';
+  if (state.offline) return 'Switch cannot be reached right now.';
+  return null;
+}
 
 /**
  * Sending from here jumps to the end and resumes following, wherever the
