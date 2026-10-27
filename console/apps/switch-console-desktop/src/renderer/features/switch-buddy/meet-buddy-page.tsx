@@ -4,7 +4,6 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useManagedAgents } from '@renderer/features/managed-agents/use-managed-agents';
 import { onboardingStore } from '@renderer/features/onboarding/onboarding-store';
 import { AgentIcon } from '@renderer/lib/components/agent-icon';
-import { failureText } from '@renderer/lib/errors/describe-failure';
 import { report } from '@renderer/lib/telemetry/report';
 import { Button } from '@renderer/lib/ui/button';
 import { Spinner } from '@renderer/lib/ui/spinner';
@@ -15,9 +14,9 @@ import { findBuddy, firstNameOf } from './buddy-identity';
 import { buddyPerson } from './buddy-person';
 import { buddyProviders, startButtons } from './buddy-providers';
 import { reportBuddyStep } from './buddy-telemetry';
-import { createBuddy } from './create-buddy';
 import { MeetBuddyIntro } from './meet-buddy-intro';
 import { ProviderSetup } from './provider-setup';
+import { useStartBuddy } from './use-start-buddy';
 import { useThisComputer } from './use-this-computer';
 
 /**
@@ -87,10 +86,14 @@ export const MeetBuddyPage = observer(function MeetBuddyPage({
     [firstDecided, providers]
   );
   const existing = findBuddy(useManagedAgents(serverId).data);
-  const [starting, setStarting] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const person = buddyPerson(serverId);
-  const firstName = firstNameOf(person.name);
+  const { starting, error, start } = useStartBuddy({
+    serverId,
+    workspaceId,
+    computer,
+    entryPoint: 'onboarding',
+    onCreated,
+  });
+  const firstName = firstNameOf(buddyPerson(serverId).name);
   // The opening plays once: back from setting up a provider, it is at rest.
   const introPlayed = useRef(false);
 
@@ -104,48 +107,6 @@ export const MeetBuddyPage = observer(function MeetBuddyPage({
     report('onboarding_page', { page: 'provider_setup', path: onboardingStore.via });
     setSettingUp(true);
   };
-
-  // A provider chosen before this computer's controller is up: started once it is.
-  const [waitingToStart, setWaitingToStart] = useState<string | null>(null);
-  useEffect(() => {
-    if (waitingToStart === null) return;
-    if (computer.kind === 'failed') {
-      setWaitingToStart(null);
-      setStarting(null);
-      return;
-    }
-    if (computer.kind !== 'ready') return;
-    const providerId = waitingToStart;
-    setWaitingToStart(null);
-    void startWithRef.current(providerId);
-  }, [computer, waitingToStart]);
-
-  const startWith = async (providerId: string) => {
-    setStarting(providerId);
-    if (computer.kind !== 'ready') {
-      setWaitingToStart(providerId);
-      return;
-    }
-    reportBuddyStep('start', providerId);
-    setError(null);
-    try {
-      onCreated(
-        await createBuddy({
-          serverId,
-          workspaceId,
-          machineId: computer.machine.id,
-          provider: providerId,
-          person,
-          entryPoint: 'onboarding',
-        })
-      );
-    } catch (cause) {
-      setError(failureText(cause, 'Could not create switch-buddy.'));
-      setStarting(null);
-    }
-  };
-  const startWithRef = useRef(startWith);
-  startWithRef.current = startWith;
 
   const header = (
     <div className="flex flex-col items-center gap-2 text-center">
@@ -201,7 +162,7 @@ export const MeetBuddyPage = observer(function MeetBuddyPage({
             checking={computer.kind !== 'failed' && !checked}
             ready={ready}
             starting={starting}
-            onStart={(providerId) => void startWith(providerId)}
+            onStart={start}
             onSetUp={openSetup}
             onSkip={skip}
           />

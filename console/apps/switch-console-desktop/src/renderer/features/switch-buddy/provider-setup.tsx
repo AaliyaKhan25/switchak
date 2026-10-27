@@ -14,11 +14,10 @@ import { agentProviders, requireProvider } from '@shared/core/providers/agent-pr
 import { linksIn } from '@shared/core/providers/provider-login';
 import type { UiEntryPoint } from '@shared/core/telemetry/reporting';
 import { providerLoginExitChannel, providerLoginLineChannel } from '@shared/events/appEvents';
-import { buddyPerson } from './buddy-person';
 import { type BuddyProvider, buddyProviders } from './buddy-providers';
 import { reportBuddyStep } from './buddy-telemetry';
-import { createBuddy } from './create-buddy';
 import { installOutputSummary } from './install-output-summary';
+import { useStartBuddy } from './use-start-buddy';
 import { type ThisComputer, useThisComputer } from './use-this-computer';
 
 /** How many lines of a sign-in command's output are kept on screen. */
@@ -66,15 +65,28 @@ export const ProviderSetup = observer(function ProviderSetup({
     providers.find((p) => p.state === 'sign-in') ??
     null;
 
-  const [busy, setBusy] = useState<'install' | 'check' | 'create' | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [working, setWorking] = useState<'install' | 'check' | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const started = useStartBuddy({ serverId, workspaceId, computer, entryPoint, onCreated });
+  const busy = working ?? (started.starting !== null ? 'create' : null);
+  // One error at a time, as each action clears what the last one said.
+  const error = actionError ?? started.error;
+  const { clearError } = started;
+  const setError = useCallback(
+    (message: string | null) => {
+      setActionError(message);
+      clearError();
+    },
+    [clearError]
+  );
+
   const [login, setLogin] = useState<Login | null>(null);
   /** What the last Check again found, when it found nothing new: said, not left blank. */
   const [checked, setChecked] = useState<string | null>(null);
 
   const checkAgain = useCallback(async () => {
     reportBuddyStep('check_again', null);
-    setBusy('check');
+    setWorking('check');
     setError(null);
     setChecked(null);
     try {
@@ -82,9 +94,9 @@ export const ProviderSetup = observer(function ProviderSetup({
     } catch (cause) {
       setError(failureText(cause, 'Could not check this computer again.'));
     } finally {
-      setBusy(null);
+      setWorking(null);
     }
-  }, [recheck]);
+  }, [recheck, setError]);
 
   useEffect(() => {
     const offLine = events.on(providerLoginLineChannel, ({ attemptId, line }) =>
@@ -124,7 +136,7 @@ export const ProviderSetup = observer(function ProviderSetup({
 
   const install = async (provider: BuddyProvider) => {
     reportBuddyStep('install', provider.id);
-    setBusy('install');
+    setWorking('install');
     setError(null);
     try {
       const result = await rpc.providers.install(provider.id);
@@ -133,30 +145,14 @@ export const ProviderSetup = observer(function ProviderSetup({
     } catch (cause) {
       setError(failureText(cause, `Could not install ${provider.name}.`));
     } finally {
-      setBusy(null);
+      setWorking(null);
     }
   };
 
-  const start = async (provider: BuddyProvider) => {
+  const start = (provider: BuddyProvider) => {
     if (computer.kind !== 'ready') return;
-    reportBuddyStep('start', provider.id);
-    setBusy('create');
-    setError(null);
-    try {
-      onCreated(
-        await createBuddy({
-          serverId,
-          workspaceId,
-          machineId: computer.machine.id,
-          provider: provider.id,
-          person: buddyPerson(serverId),
-          entryPoint,
-        })
-      );
-    } catch (cause) {
-      setError(failureText(cause, 'Could not create switch-buddy.'));
-      setBusy(null);
-    }
+    setActionError(null);
+    started.start(provider.id);
   };
 
   return (
@@ -181,7 +177,7 @@ export const ProviderSetup = observer(function ProviderSetup({
             provider={selected}
             login={login?.providerId === selected.id ? login : null}
             busy={busy}
-            onStart={() => void start(selected)}
+            onStart={() => start(selected)}
             onSignIn={() => void signIn(selected)}
             onCancelSignIn={() => {
               void rpc.providers.cancelLogin();
