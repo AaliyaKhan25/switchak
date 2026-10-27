@@ -92,8 +92,9 @@ vi.mock('@main/core/switch-servers/gateway-client', () => ({
   },
 }));
 vi.mock('@main/core/workspaces/workspace-session', () => ({
-  withWorkspaceSession: (_workspaceId: string, fn: (server: { id: string }) => unknown) =>
-    fn({ id: 'srv-1' }),
+  withWorkspaceSession: vi.fn((_workspaceId: string, fn: (server: { id: string }) => unknown) =>
+    fn({ id: 'srv-1' })
+  ),
 }));
 vi.mock('@main/core/view-state/view-state-service', () => ({
   viewStateService: { del: vi.fn(async () => {}) },
@@ -123,6 +124,7 @@ const { stopSharedAgentSessions } = await import('./stop-shared-agent-sessions')
 const { deleteAgent: gatewayDeleteAgent, GatewayError } =
   await import('@main/core/switch-servers/gateway-client');
 const { forgetManagedAgent } = await import('@main/core/agent-migration/managed-agents-store');
+const { withWorkspaceSession } = await import('@main/core/workspaces/workspace-session');
 
 const CREDS = JSON.stringify({
   env: { SWITCH_API_ENDPOINT: 'https://s', SWITCH_API_TOKEN: 'tok-123', SWITCH_AGENT_ID: 'sw-1' },
@@ -521,6 +523,18 @@ describe('deleteAgent', () => {
 
       expect(h.deleteRow).toHaveBeenCalledTimes(1);
       expect(await h.state.fs.exists('.claude/switch-subagents/cc-hoot.settings.json')).toBe(false);
+    });
+
+    it('does not take a 404 from reaching the workspace for the agent being gone', async () => {
+      vi.mocked(withWorkspaceSession).mockRejectedValueOnce(
+        new GatewayError('http', '404 Not Found', 404)
+      );
+      await expect(deleteAgent('agent-1', full)).rejects.toThrow('404');
+
+      expect(gatewayDeleteAgent).not.toHaveBeenCalled();
+      expect(autoSessionWatcher.stopForAgent).not.toHaveBeenCalled();
+      expect(h.deleteRow).not.toHaveBeenCalled();
+      expect(await h.state.fs.exists('.claude/switch-subagents/cc-hoot.settings.json')).toBe(true);
     });
 
     it('surfaces any other refusal and leaves the agent, and its controller, untouched', async () => {

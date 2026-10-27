@@ -107,19 +107,21 @@ async function deleteAgentInSwitch(agent: Agent): Promise<void> {
     );
   }
 
-  try {
-    await withWorkspaceSession(workspaceId, (server) => gatewayDeleteAgent(server, switchAgentId));
-  } catch (error) {
-    // Already gone on the server (an old identity, or a server since reset): the
-    // local delete still has to happen, or the agent can never be removed.
-    if (!(error instanceof GatewayError && error.kind === 'http' && error.status === 404)) {
-      throw error;
+  await withWorkspaceSession(workspaceId, async (server) => {
+    try {
+      await gatewayDeleteAgent(server, switchAgentId);
+    } catch (error) {
+      // Already gone on the server (an old identity, or a server since reset): the
+      // local delete still has to happen, or the agent can never be removed.
+      if (!(error instanceof GatewayError && error.kind === 'http' && error.status === 404)) {
+        throw error;
+      }
+      log.warn('deleteAgent: the Switch identity was already gone', {
+        agentId: agent.id,
+        switchAgentId,
+      });
     }
-    log.warn('deleteAgent: the Switch identity was already gone', {
-      agentId: agent.id,
-      switchAgentId,
-    });
-  }
+  });
 }
 
 /**
