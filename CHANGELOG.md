@@ -81,6 +81,13 @@ version of their own to them without also giving them a release of their own.
   itself up, its rules with the people, agents and rooms they name. So an
   agent can tell someone who may answer its questions and approvals instead
   of guessing. Another agent sees only the kind.
+- **Console hears when your managed agents or machines change.** A signed-in
+  user's Console opens one WebSocket per workspace (`/gateway/changes/ws`), and
+  switch-core tells it when one of their managed agents or machines changed, so
+  Console reads it again instead of polling. A notice names a kind and an id
+  and carries nothing else. Notices travel between replicas on the signal bus,
+  so a change made through one pod reaches a Console connected to another
+  (#717).
 - **The Airtable connection.** A person connects Airtable from Switch Console,
   choosing at Airtable's consent screen which bases and workspaces to share,
   and a granted agent reads and updates records and comments in them, as that
@@ -122,6 +129,14 @@ version of their own to them without also giving them a release of their own.
   `status` and `list` report `instance_type_allowed` for each machine. A
   database bound before this release is accepted and rebound on first start,
   as long as `allowed_instance_types` has not changed in the same deploy.
+- **Agents and controllers are pinged every 10 seconds instead of every 2.**
+  A connection is now declared dead after 30 seconds without a beat, up from
+  6, so a client that goes away holds its room slot and shows online for up to
+  30 seconds. The interval is advertised on every open, so clients follow it
+  without an update. The agent auth cache now gives each entry a random 80 to
+  120% of `AGENT_AUTH_CACHE_TTL_SECONDS`, so entries filled together after a
+  restart do not all expire together, and that setting must stay below 25
+  seconds (the 30 second heartbeat TTL, less the jitter) or startup refuses it.
 - **Following the conversation is described the same way everywhere, and the
   chart can turn it on.** The feature added in 0.31.0 is off unless
   `follow_the_conversation` is among the enabled feature flags
@@ -147,6 +162,31 @@ version of their own to them without also giving them a release of their own.
   Existing duplicates are left as they are and can be reached by id.
 
 #### Fixed
+- **The agent HTTP API answers a refused or malformed request with a 4xx, not
+  a 500.** Inviting an agent to a room the caller may not change answered 500
+  instead of 403, and so did looking up a room the agent is not in. A room
+  history request whose `since` or `before` is not an ISO 8601 timestamp
+  answered 500 instead of 400; it now says which parameter was wrong, and so
+  does `read_context` (#1045). One whose offset moves it outside the years 1
+  to 9999 in UTC is refused the same way instead of answering 404, and a time
+  in the last millisecond of 9999 is no longer refused at all.
+- **Every way of setting a password now applies the same rules.** Signup
+  already required 8 characters and at most 72 bytes. Changing your own
+  password checked only the 8 characters, and an admin creating a user checked
+  nothing, so a short or empty password went through, and a long passphrase
+  was saved as just its first 72 bytes, the most bcrypt reads. Both now refuse
+  what signup refuses, saying why. Creating a user also trims, lowercases and
+  checks the email the way signup does, so the same address with a stray
+  space no longer makes a second account, and an address with no dot in its
+  domain is refused. A script that creates users through `POST /users` gets a
+  422 for either. Passwords already saved still work (#1035).
+- **Full garbage collections no longer stall the server for hundreds of
+  milliseconds.** Once boot has built what lasts for the life of the process
+  (modules, the ORM's mappers, the app's routes), the server freezes it out of
+  garbage collection, so a full pass walks only what was made since. The
+  clients and bridges started after that stay collectable, since replicas hand
+  them to one another. The dashboard's pause chart now shows the average pause
+  next to p99, as Datadog keeps the average for longer.
 - **Agents no longer read offline while their replica shuts down.** With several
   replicas, a stopping replica released its lease before its 5 s drain, so for
   up to about 6 s the other replicas counted its connected agents as gone: `@role`
@@ -1971,6 +2011,10 @@ version of their own to them without also giving them a release of their own.
   `GATEWAY_PUBLIC_URL`, and everyone else whom to ask.
 
 #### Changed
+- **Managed agents and machines update when the server says they changed.**
+  Against a server that pushes change notices, Console reads those lists
+  again when told to, and otherwise only every five minutes instead of every
+  15 to 30 seconds; against one that does not, it polls as before (#717).
 - **One name for the controller.** Console, the Gateway and the docs say
   "agent controller" everywhere, matching the `switch-agent-controller`
   package, instead of a mix of "agent controller" and "agents controller".
@@ -1979,6 +2023,10 @@ version of their own to them without also giving them a release of their own.
   agent"; it was the only place Console showed that name.
 
 #### Fixed
+- **Settings → Agent providers keeps this computer's report current.** It
+  prefers the report from the server Console is on, rereads it while open and
+  after the controller reports again, and the install section says so when
+  Console's own check disagrees with the controller's.
 - **The local Switch server starts on Intel Macs without Homebrew.**
   cryptography publishes no wheel for Intel Macs, so the Intel build of
   Console compiled its own against the build machine's Homebrew OpenSSL, and
@@ -2008,6 +2056,18 @@ version of their own to them without also giving them a release of their own.
   skill said a request card needed the owner's linked identity and room
   membership. Its addressing policy decides, and agents now read theirs with
   `get_agent_detail` and name the people who can answer.
+- **A Codex session explains why a keyring login is not available to it.**
+  Each session runs in its own Codex home, which receives the machine's
+  `auth.json` but not a login stored in the OS keyring, so a machine signed in
+  with keyring storage (`cli_auth_credentials_store = "keyring"` or `"auto"`)
+  failed with only "Sign in on the execution machine with codex login" while
+  `codex login status` said it was signed in. The error now says that sessions
+  cannot use a keyring login, and gives the workaround for a machine whose
+  organization does not enforce the keyring: switch Codex to file storage,
+  which keeps the login in plaintext, sign in again and start a new session.
+  Giving this computer's Codex login to a machine says the same instead of
+  "This computer is not signed in to codex". Keyring logins are still not
+  supported in Switch sessions (#1048).
 
 ### [0.40.1] - 2026-10-21
 
@@ -3994,9 +4054,10 @@ tags; see RELEASING.md.
   signed in.** `claude auth status` only says a login or key is present, so a
   key left by an old install read as signed in while every session failed.
   When setting up, on a recheck, and whenever a login was not yet known to
-  work, the controller now sends Claude Code one short test prompt and reports
-  what it said if it fails. A Claude Code too old to have `auth status` is
-  reported as such instead of as a check that never finished.
+  work, the controller now sends Claude Code one short test prompt, with the
+  person's hooks off and stdin closed, and reports what it said if it fails,
+  from its result, its `errors` or its stderr. A Claude Code too old to have
+  `auth status` is reported as such instead of as a check that never finished.
 - **A controller updates to the release Switch names while sessions sit idle.**
   It waited until no session existed on the machine, and a session connected to
   a room counted even with nothing to do, so a machine with long-lived sessions
