@@ -189,6 +189,16 @@ version of their own to them without also giving them a release of their own.
   does `read_context` (#1045). One whose offset moves it outside the years 1
   to 9999 in UTC is refused the same way instead of answering 404, and a time
   in the last millisecond of 9999 is no longer refused at all.
+- **Creating a user refuses a role the server does not understand.** An
+  account is a user or an admin, and only the exact role `admin` grants
+  operator rights. `POST /users` accepted any role string, so `Admin` or
+  `owner` created an account that was shown with that role, was stored with
+  it, and had no operator rights. Anything other than `user` or `admin` is now
+  a 422 and creates nothing. The Add User dialog offers only those two, so
+  only scripts calling the API were affected. Accounts already stored with
+  another role are left as they are, still listed with that role and still
+  treated as ordinary users; `SELECT id, email, role FROM users WHERE role
+  NOT IN ('user', 'admin')` finds them.
 - **Every way of setting a password now applies the same rules.** Signup
   already required 8 characters and at most 72 bytes. Changing your own
   password checked only the 8 characters, and an admin creating a user checked
