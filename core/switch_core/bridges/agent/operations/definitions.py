@@ -1463,31 +1463,50 @@ async def add_users_to_room(room_id: str, user_names: list[str]) -> dict[str, An
 
 
 @operation
-async def list_all_rooms(include_archived: bool = False) -> list[dict[str, Any]]:
+async def list_all_rooms(
+    include_archived: bool = False,
+    name_contains: str | None = None,
+    limit: int = 100,
+    cursor: str | None = None,
+) -> dict[str, Any]:
     """List every room on this Switch instance (not just rooms this agent
-    is a member of). Use `list_rooms` instead to see only the rooms this
-    agent is assigned to.
+    is a member of), a page at a time, oldest first. Use `list_rooms` instead
+    to see only the rooms this agent is assigned to.
 
     Args:
         include_archived: When false (default), archived rooms are omitted.
             Set true to also include archived rooms (each carries
             `archived: true`).
+        name_contains: Only rooms whose name contains this text, in any case.
+        limit: Rooms per page, 1 to 500 (default 100).
+        cursor: The `next_cursor` of the previous page, to read the next one.
+            Pass the same `include_archived` and `name_contains` with it.
 
     Returns:
-        List of {room_id, name, description, archived} dicts.
+        `{"rooms": [{room_id, name, description, archived}, ...],
+        "next_cursor"}`; `next_cursor` is null on the last page.
     """
     agent_id = get_agent_id()
     protocol = get_protocol()
-    rooms = await protocol.list_all_rooms(agent_id, include_archived=include_archived)
-    return [
-        {
-            "room_id": r.id,
-            "name": r.name,
-            "description": r.description,
-            "archived": r.archived_at is not None,
-        }
-        for r in rooms
-    ]
+    rooms, next_cursor = await protocol.list_all_rooms(
+        agent_id,
+        include_archived=include_archived,
+        name_contains=name_contains,
+        limit=limit,
+        cursor=cursor,
+    )
+    return {
+        "rooms": [
+            {
+                "room_id": r.id,
+                "name": r.name,
+                "description": r.description,
+                "archived": r.archived_at is not None,
+            }
+            for r in rooms
+        ],
+        "next_cursor": next_cursor,
+    }
 
 
 @operation

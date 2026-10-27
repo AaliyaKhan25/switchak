@@ -2,8 +2,18 @@ from collections.abc import Collection
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import ColumnElement, delete, exists, insert, or_, select, update
+from sqlalchemy import (
+    ColumnElement,
+    delete,
+    exists,
+    insert,
+    literal,
+    or_,
+    select,
+    update,
+)
 from sqlalchemy import func as sa_func
+from sqlalchemy import tuple_ as sa_tuple
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -228,6 +238,30 @@ class RoomStore:
             stmt = stmt.where(Room.archived_at.is_(None))
         result = await session.execute(stmt)
         return list(result.scalars().all())
+
+    async def page_all(
+        self,
+        session: AsyncSession,
+        *,
+        include_archived: bool,
+        name_contains: str | None,
+        limit: int,
+        after: tuple[datetime, str] | None,
+    ) -> list[Room]:
+        """Up to `limit` rooms after the `(created_at, id)` position `after`,
+        oldest first, whose name contains `name_contains` (any case)."""
+        stmt = select(Room)
+        if not include_archived:
+            stmt = stmt.where(Room.archived_at.is_(None))
+        if name_contains:
+            stmt = stmt.where(Room.name.icontains(name_contains, autoescape=True))
+        if after is not None:
+            stmt = stmt.where(
+                sa_tuple(Room.created_at, Room.id)
+                > sa_tuple(literal(after[0]), literal(after[1]))
+            )
+        stmt = stmt.order_by(Room.created_at, Room.id).limit(limit)
+        return list((await session.execute(stmt)).scalars().all())
 
     async def list_readable(
         self,
