@@ -224,3 +224,20 @@ def test_switch_buddy_declares_the_inputs_switch_console_fills():
         (_PACKAGED / "switch-buddy" / "template.yaml").read_text(encoding="utf-8")
     )
     assert {"agent_name", "provider", "machine"} <= set(template["params"])
+
+
+def test_switch_buddy_s_icon_is_in_the_repository_where_its_link_points():
+    """Every buddy any release ever created carries this link, and the chat
+    apps load the picture from it: the file it names on the main branch must
+    stay where it is, or every buddy's face breaks for every release at once."""
+    template = yaml.safe_load(
+        (_PACKAGED / "switch-buddy" / "template.yaml").read_text(encoding="utf-8")
+    )
+    prefix = "https://raw.githubusercontent.com/sandbox-quantum/switch/main/"
+    icon_url = template["resources"]["buddy"]["icon_url"]
+    assert icon_url.startswith(prefix), icon_url
+    path = _REPO / icon_url.removeprefix(prefix)
+    assert path.is_file(), (
+        f"{path.relative_to(_REPO)} is gone, and every switch-buddy's icon links "
+        "to it there. Put it back: older releases go on creating buddies with this link."
+    )
