@@ -2899,6 +2899,7 @@ type RoomSummaryJson = {
   bridge_type?: string | null;
   external_channel_url?: string | null;
   owner_id?: string | null;
+  viewer_is_member?: boolean;
   archived: boolean;
   created_at: string;
 };
@@ -2914,6 +2915,7 @@ function mapRoomSummary(r: RoomSummaryJson): RemoteRoomSummary {
     bridgeType: r.bridge_type ?? null,
     externalChannelUrl: r.external_channel_url ?? null,
     ownerId: r.owner_id ?? null,
+    viewerIsMember: r.viewer_is_member ?? false,
     archived: r.archived,
     createdAt: r.created_at,
   };

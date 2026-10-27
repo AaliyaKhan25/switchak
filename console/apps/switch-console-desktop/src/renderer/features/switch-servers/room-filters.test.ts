@@ -102,6 +102,7 @@ describe('withConsoleGroupChats', () => {
     bridgeType: null,
     externalChannelUrl: null,
     ownerId: 'u',
+    viewerIsMember: false,
     archived: false,
     createdAt: '',
   });

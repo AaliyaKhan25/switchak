@@ -1,14 +1,17 @@
 import { agentsStore } from '@renderer/features/locations/stores/agents-store';
 import type { LocationStore } from '@renderer/features/locations/stores/location';
+import { MANAGED_AGENTS_KEY } from '@renderer/features/managed-agents/use-managed-agents-key';
 import type { SessionStore } from '@renderer/features/sessions/stores/session-store';
 import { serverAvailability } from '@renderer/features/switch-servers/server-availability';
 import { switchRoomsStore } from '@renderer/features/switch-servers/switch-rooms-store';
 import { workspacesStore } from '@renderer/features/workspaces/workspaces-store';
 import { toast } from '@renderer/lib/hooks/use-toast';
 import { rpc } from '@renderer/lib/ipc';
+import { queryClient } from '@renderer/lib/query-client';
 import { sidebarStore } from '@renderer/lib/stores/app-state';
 import { log } from '@renderer/utils/logger';
 import type { Agent } from '@shared/core/agents/agents';
+import type { ManagedAgentView } from '@shared/core/managed-agents/managed-agents';
 import type { AgentIconBackfill } from '@shared/core/switch-servers/switch-servers';
 
 /**
@@ -107,6 +110,17 @@ export function switchIdentities(): { workspaceId: string; switchAgentId: string
 }
 
 /**
+ * The user's managed agents, as the shared list last read them: their rooms
+ * belong in the sidebar too, wherever the agents run.
+ */
+export function managedIdentities(): { workspaceId: string; switchAgentId: string }[] {
+  return queryClient
+    .getQueriesData<ManagedAgentView[] | null>({ queryKey: [MANAGED_AGENTS_KEY] })
+    .flatMap(([, agents]) => (Array.isArray(agents) ? agents : []))
+    .map((agent) => ({ workspaceId: agent.workspaceId, switchAgentId: agent.agentId }));
+}
+
+/**
  * Re-read everything the sidebar's trees are built from: this install's agents,
  * their room membership, and the room catalogue.
  *
@@ -123,7 +137,9 @@ export function switchIdentities(): { workspaceId: string; switchAgentId: string
 export async function refreshSidebarRoomState(force: boolean): Promise<void> {
   await agentsStore.load();
   await Promise.all([
-    switchRoomsStore.ensureMembershipsFor(switchIdentities(), { force }),
+    switchRoomsStore.ensureMembershipsFor([...switchIdentities(), ...managedIdentities()], {
+      force,
+    }),
     switchRoomsStore.loadRoomNames(),
   ]);
   void giveExistingAgentsAnIcon();

@@ -331,6 +331,8 @@ export type RemoteRoomSummary = {
    * Rooms the signed-in user owns stay listed in the sidebar even with no live
    * session, so a room you just made never vanishes on you. */
   ownerId: string | null;
+  /** The signed-in user is a member of the room. False from a server that does not say. */
+  viewerIsMember: boolean;
   archived: boolean;
   createdAt: string;
 };
