@@ -917,8 +917,9 @@ async def create_room(
         name: Display name for the room.
         description: Free-text description shown to participants.
         agent_names: Names of agents to add to the room at creation. The
-            calling agent is not added automatically — include its name here
-            if it should join. Names must already exist in the registry.
+            calling agent is not a member unless listed here — include your
+            own name if you should join (`caller_is_member` in the result
+            says whether you did). Names must already exist in the registry.
         user_names: Optional list of people to add, each named by their
             username on the room's messaging app, or by the e-mail address of
             their account there (not on Discord, which never shares e-mail
@@ -977,7 +978,8 @@ async def create_room(
             with an agent's real name, a room role, or another alias.
 
     Returns:
-        `{"id", "name", "matrix_room_id", "failed_attachments": [...]}`.
+        `{"id", "name", "matrix_room_id", "caller_is_member",
+        "failed_attachments": [...]}`.
         `failed_attachments` is empty on full success; otherwise it lists
         `{kind, id, error}` for each attachment that could not be applied
         after the room was created (race-time failures only; predictable
@@ -1010,12 +1012,17 @@ async def create_room(
             aliases=aliases,
             from_room_id=await connected_room(),
         )
+    async with protocol.session_factory() as session:
+        caller_is_member = agent_id in await protocol.room_store.get_agent_ids(
+            session, result.room.id
+        )
     return {
         "id": result.room.id,
         "name": result.room.name,
         "transport_room_id": result.room.transport_room_id,
         # Deprecated alias, carried for the connector compatibility window.
         "matrix_room_id": result.room.transport_room_id,
+        "caller_is_member": caller_is_member,
         "failed_attachments": result.failed_attachments,
     }
 

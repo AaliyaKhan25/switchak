@@ -521,8 +521,9 @@ carrying a display name addresses no one.
   (`"channel_public"`, `"channel_private"`, `"direct"`), `user_names`,
   `instructions`, `group_name`, `aliases`, `reference_ids`, `package_ids`,
   `linked_rooms`, `join_event_listeners` (the subset of `agent_names` that
-  should receive `room_join` events — off by default). Returns
-  `{id, name, transport_room_id, failed_attachments}`.
+  should receive `room_join` events — off by default). You are not a member
+  unless your own name is in `agent_names`. Returns
+  `{id, name, transport_room_id, caller_is_member, failed_attachments}`.
 - **`update_room`** — change an existing room, including its `aliases` map.
 - **`invite_agent_to_room`** — add an existing agent to an existing room by
   name. Humans and agents can do the same from inside a room with the
