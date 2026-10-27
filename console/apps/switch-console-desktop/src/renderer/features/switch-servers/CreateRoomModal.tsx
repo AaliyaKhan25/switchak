@@ -35,7 +35,12 @@ import { Input } from '@renderer/lib/ui/input';
 import { Textarea } from '@renderer/lib/ui/textarea';
 import { knownAgentTypeDisplayName } from '@shared/core/providers/agent-provider-registry';
 import { MessagingAppSelector, SWITCH_CONSOLE } from './messaging-app-selector';
-import { CreateRequestIds, canCreate, roomCreateRequest } from './room-create-request';
+import {
+  CreateRequestIds,
+  canCreate,
+  roomCreateRequest,
+  startingAgentResolution,
+} from './room-create-request';
 import { RoomNameInput } from './room-name-input';
 import { switchServersStore } from './switch-servers-store';
 
@@ -142,21 +147,40 @@ export const CreateRoomModal = observer(function CreateRoomModal({
       personParticipant
     ),
   ];
-  // The agent the room is made from starts picked, once the agents are read.
-  const [seeded, setSeeded] = useState(startingAgentId === undefined);
-  if (!seeded) {
-    const start = candidates.find((each) => each.kind === 'agent' && each.id === startingAgentId);
-    if (start) {
-      setSeeded(true);
-      setPicked((current) => [start, ...current.filter((each) => each.id !== start.id)]);
-    }
-  }
-  const agentIds = picked.filter((each) => each.kind === 'agent').map((each) => each.id);
-  const memberUserIds = picked.filter((each) => each.kind === 'person').map((each) => each.id);
+  // The agent the room is made from shows picked once the agents are read, until the
+  // picks are changed by hand (removing it then leaves it out).
+  const [touched, setTouched] = useState(false);
+  const startChip =
+    startingAgentId === undefined || touched
+      ? null
+      : (candidates.find((each) => each.kind === 'agent' && each.id === startingAgentId) ?? null);
+  const shownPicked = startChip
+    ? [startChip, ...picked.filter((each) => each.id !== startChip.id)]
+    : picked;
+  const changePicks = (next: Participant[]) => {
+    setTouched(true);
+    setPicked(next);
+  };
+  const agentIds = shownPicked.filter((each) => each.kind === 'agent').map((each) => each.id);
+  const memberUserIds = shownPicked.filter((each) => each.kind === 'person').map((each) => each.id);
 
   const trimmedName = name.trim();
+  // The agent the room is made from must be applied, or known not to be, before creating:
+  // a quick Create would otherwise make the room without it.
+  const startingAgentState = startingAgentResolution({
+    startingAgentId,
+    applied: touched || startChip !== null,
+    failed: agentsQuery.isError || (!selectedBridge && allowedQuery.isError),
+    loaded:
+      agentsQuery.isSuccess &&
+      !agentsQuery.isFetching &&
+      (selectedBridge !== null || (allowedQuery.isSuccess && !allowedQuery.isFetching)),
+  });
+  const startingAgentName =
+    (agentsQuery.data ?? []).find((agent) => agent.id === startingAgentId)?.name ?? 'This agent';
   const canSubmit =
     workspaceId !== null &&
+    startingAgentState !== 'pending' &&
     !nowhere &&
     canCreate({ bridgeId: selectedBridge?.id ?? null, name, description }) &&
     !isSubmitting;
@@ -269,8 +293,8 @@ export const CreateRoomModal = observer(function CreateRoomModal({
               busy={isSubmitting}
               overlay={false}
               candidates={candidates}
-              picked={picked}
-              onChange={setPicked}
+              picked={shownPicked}
+              onChange={changePicks}
               serverId={serverId || null}
               loading={
                 agentsQuery.isLoading ||
@@ -321,6 +345,20 @@ export const CreateRoomModal = observer(function CreateRoomModal({
               can create a channel, so there is nowhere to create a room.
             </p>
           )}
+          {startingAgentState === 'failed' && (
+            <p className="text-xs text-destructive">
+              {startingAgentName} can&apos;t be added to the new room:{' '}
+              {failureText(
+                agentsQuery.error ?? allowedQuery.error,
+                'the agents could not be loaded.'
+              )}
+            </p>
+          )}
+          {startingAgentState === 'unavailable' && (
+            <p className="text-xs text-destructive">
+              {startingAgentName} can&apos;t be added to this room: it is not one you can add here.
+            </p>
+          )}
           {bridgesQuery.isError && (
             <p className="text-xs text-destructive">
               {failureText(bridgesQuery.error, 'Could not load messaging apps.')}
@@ -339,7 +377,7 @@ export const CreateRoomModal = observer(function CreateRoomModal({
             setError(null);
             // A bridged room starts with agents only.
             if (next !== SWITCH_CONSOLE)
-              setPicked((current) => current.filter((each) => each.kind === 'agent'));
+              changePicks(shownPicked.filter((each) => each.kind === 'agent'));
           }}
         />
         <div className="ml-auto flex items-center gap-2">

@@ -2,6 +2,7 @@ import { AlertTriangle } from 'lucide-react';
 import { reaction } from 'mobx';
 import { observer } from 'mobx-react-lite';
 import { useEffect, useRef } from 'react';
+import { agentsStore } from '@renderer/features/locations/stores/agents-store';
 import { ManagedAgentList } from '@renderer/features/managed-agents/managed-agent-list';
 import { useManagedAgents } from '@renderer/features/managed-agents/use-managed-agents';
 import { hostReachabilityStore } from '@renderer/features/remote-hosts/host-reachability-store';
@@ -115,7 +116,9 @@ export const SidebarGroupedList = observer(function SidebarGroupedList() {
   if (managementMode) {
     const managedIds = new Set((managedAgents.data ?? []).map((agent) => agent.agentId));
     const legacyCount = agentsInActiveScope().filter(
-      (entry) => entry.agent.switchAgentId === null || !managedIds.has(entry.agent.switchAgentId)
+      (entry) =>
+        !agentsStore.isMoved(entry.agent.id) &&
+        (entry.agent.switchAgentId === null || !managedIds.has(entry.agent.switchAgentId))
     ).length;
     return (
       <div

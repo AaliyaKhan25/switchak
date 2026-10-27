@@ -8,6 +8,12 @@ const flags = vi.hoisted(() => ({ group_chats: true }));
 vi.mock('@renderer/lib/hooks/useFeatureFlags', () => ({ useFeatureFlags: () => flags }));
 vi.mock('@renderer/lib/ipc', () => ({ events: { on: vi.fn() }, rpc: {} }));
 vi.mock('@renderer/features/chats/stores/chats', () => ({ chatsStore: {} }));
+vi.mock('@renderer/features/workspaces/workspaces-store', () => ({
+  workspacesStore: {
+    workspaces: [{ id: 'ws', tenantId: null }],
+    idOnServerInScope: (serverId: string | null) => (serverId ? 'ws' : null),
+  },
+}));
 vi.mock('@renderer/lib/modal/modal-provider', () => ({
   useModalContext: () => ({ setCloseGuard: () => {} }),
 }));
@@ -53,5 +59,29 @@ describe('CreateRoomModal', () => {
     } finally {
       flags.group_chats = true;
     }
+  });
+
+  const render = (client: QueryClient) =>
+    renderToStaticMarkup(
+      createElement(
+        QueryClientProvider,
+        { client },
+        createElement(CreateRoomModal, {
+          serverId: 'srv',
+          agentId: 'a1',
+          onSuccess: () => {},
+          onClose: () => {},
+        })
+      )
+    );
+
+  it('starts with the agent it is made from picked, once the agents are read', () => {
+    const client = new QueryClient();
+    client.setQueryData(
+      ['remote-agents', 'ws'],
+      [{ id: 'a1', name: 'agent-one', displayName: null, iconUrl: null, knownAgentType: null }]
+    );
+    client.setQueryData(['chat-agent-candidates', 'srv', 'ws', null], ['a1']);
+    expect(render(client)).toContain('aria-label="Remove agent-one"');
   });
 });

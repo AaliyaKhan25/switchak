@@ -106,3 +106,19 @@ export class CreateRequestIds {
     this.key = null;
   }
 }
+
+/**
+ * Where the agent a room is made from stands: no such agent or already picked
+ * (`resolved`), the agents still loading (`pending`, when Create waits), or it
+ * cannot be picked because the agents failed to load or it is not among them.
+ */
+export function startingAgentResolution(state: {
+  startingAgentId: string | undefined;
+  applied: boolean;
+  failed: boolean;
+  loaded: boolean;
+}): 'resolved' | 'pending' | 'failed' | 'unavailable' {
+  if (state.startingAgentId === undefined || state.applied) return 'resolved';
+  if (state.failed) return 'failed';
+  return state.loaded ? 'unavailable' : 'pending';
+}

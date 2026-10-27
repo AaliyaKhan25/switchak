@@ -4,6 +4,7 @@ import { MANAGED_AGENTS_KEY } from '@renderer/features/managed-agents/use-manage
 import type { SessionStore } from '@renderer/features/sessions/stores/session-store';
 import { serverAvailability } from '@renderer/features/switch-servers/server-availability';
 import { switchRoomsStore } from '@renderer/features/switch-servers/switch-rooms-store';
+import { switchServersStore } from '@renderer/features/switch-servers/switch-servers-store';
 import { workspacesStore } from '@renderer/features/workspaces/workspaces-store';
 import { toast } from '@renderer/lib/hooks/use-toast';
 import { rpc } from '@renderer/lib/ipc';
@@ -111,13 +112,33 @@ export function switchIdentities(): { workspaceId: string; switchAgentId: string
 
 /**
  * The user's managed agents, as the shared list last read them: their rooms
- * belong in the sidebar too, wherever the agents run.
+ * belong in the sidebar too, wherever the agents run. Read from each server's
+ * current list only (the key `useManagedAgents` reads: server, the workspace
+ * in scope there, the signed-in user), so another account's or workspace's
+ * list left in the cache, or the machines kept under the same prefix, is not.
  */
 export function managedIdentities(): { workspaceId: string; switchAgentId: string }[] {
-  return queryClient
-    .getQueriesData<ManagedAgentView[] | null>({ queryKey: [MANAGED_AGENTS_KEY] })
-    .flatMap(([, agents]) => (Array.isArray(agents) ? agents : []))
-    .map((agent) => ({ workspaceId: agent.workspaceId, switchAgentId: agent.agentId }));
+  const identities = new Map<string, { workspaceId: string; switchAgentId: string }>();
+  for (const server of switchServersStore.servers) {
+    const userId = switchServersStore.statusFor(server.id)?.user?.id ?? null;
+    if (userId === null) continue;
+    const workspaceId = workspacesStore.idOnServerInScope(server.id);
+    const agents = queryClient.getQueryData<unknown>([
+      MANAGED_AGENTS_KEY,
+      server.id,
+      workspaceId,
+      userId,
+    ]);
+    if (!Array.isArray(agents)) continue;
+    for (const agent of agents as Partial<ManagedAgentView>[]) {
+      if (typeof agent?.agentId !== 'string' || typeof agent.workspaceId !== 'string') continue;
+      identities.set(`${agent.workspaceId}:${agent.agentId}`, {
+        workspaceId: agent.workspaceId,
+        switchAgentId: agent.agentId,
+      });
+    }
+  }
+  return [...identities.values()];
 }
 
 /**

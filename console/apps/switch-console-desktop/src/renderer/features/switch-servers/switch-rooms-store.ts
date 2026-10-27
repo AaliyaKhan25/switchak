@@ -445,7 +445,14 @@ export class SwitchRoomsStore {
    */
   get localMemberIdsByRoom(): Map<string, string[]> {
     const byRoom = new Map<string, string[]>();
+    // Only agents tracked or on screen now: a deleted agent's, or another
+    // account's, memberships stay in the cache but claim no room.
+    const current = new Set([
+      ...this.trackedIdentities.map((a) => key(a.workspaceId, a.switchAgentId)),
+      ...this.watchedIdentities.keys(),
+    ]);
     for (const [cacheKey, memberships] of this.roomsByAgent) {
+      if (!current.has(cacheKey)) continue;
       const switchAgentId = cacheKey.slice(cacheKey.indexOf(':') + 1);
       for (const membership of memberships) {
         if (membership.archived) continue;

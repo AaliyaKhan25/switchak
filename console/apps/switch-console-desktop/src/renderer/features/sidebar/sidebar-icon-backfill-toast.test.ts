@@ -43,6 +43,9 @@ vi.mock('@renderer/features/switch-servers/switch-rooms-store', () => ({
   },
 }));
 const availability = vi.hoisted(() => ({ value: 'available' }));
+vi.mock('@renderer/features/switch-servers/switch-servers-store', () => ({
+  switchServersStore: { servers: [], statusFor: () => null },
+}));
 vi.mock('@renderer/features/switch-servers/server-availability', () => ({
   serverAvailability: () => availability.value,
 }));

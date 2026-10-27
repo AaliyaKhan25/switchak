@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { CreateRequestIds, canCreate, roomCreateRequest } from './room-create-request';
+import {
+  CreateRequestIds,
+  canCreate,
+  roomCreateRequest,
+  startingAgentResolution,
+} from './room-create-request';
 
 const form = {
   serverId: 's',
@@ -75,5 +80,20 @@ describe('CreateRequestIds', () => {
     expect(ids.for({ ...chatForm, name: 'Ship reviews', memberUserIds: ['u2'] })).toBe('id-3');
     ids.succeeded();
     expect(ids.for({ ...chatForm, name: 'Ship reviews', memberUserIds: ['u2'] })).toBe('id-4');
+  });
+});
+
+describe('startingAgentResolution', () => {
+  const base = { startingAgentId: 'a1', applied: false, failed: false, loaded: false };
+
+  it('keeps Create waiting while the agents load, then is resolved once the agent is picked', () => {
+    expect(startingAgentResolution(base)).toBe('pending');
+    expect(startingAgentResolution({ ...base, loaded: true, applied: true })).toBe('resolved');
+    expect(startingAgentResolution({ ...base, startingAgentId: undefined })).toBe('resolved');
+  });
+
+  it('says why the agent is left out when the agents fail to load or it is not among them', () => {
+    expect(startingAgentResolution({ ...base, failed: true })).toBe('failed');
+    expect(startingAgentResolution({ ...base, loaded: true })).toBe('unavailable');
   });
 });

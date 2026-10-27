@@ -159,6 +159,29 @@ describe('listed rooms', () => {
     expect(store.listedRoomsInActiveScope.map((r: { id: string }) => r.id)).toEqual([]);
   });
 
+  it('drops an agent’s rooms once it is no longer tracked, as after a delete or account switch', async () => {
+    listRooms.mockImplementation(async (workspaceId: string) =>
+      workspaceId === 'ws-a' ? [room('agents-room', 'user-of-someone-else')] : []
+    );
+    listAgentRooms.mockResolvedValue([
+      {
+        roomId: 'agents-room',
+        roomName: 'agents-room',
+        archived: false,
+        status: 'active',
+        roomRole: null,
+      },
+    ]);
+    const store = new SwitchRoomsStore();
+    await store.loadRoomNames();
+    await store.ensureMembershipsFor([{ workspaceId: 'ws-a', switchAgentId: 'gone' }]);
+    expect(store.listedRoomsInActiveScope.map((r: { id: string }) => r.id)).toEqual([
+      'agents-room',
+    ]);
+    await store.ensureMembershipsFor([]);
+    expect(store.listedRoomsInActiveScope.map((r: { id: string }) => r.id)).toEqual([]);
+  });
+
   it('shows only the active workspace’s rooms, not every connected one’s', async () => {
     listRooms.mockImplementation(async (workspaceId: string) => [
       room(`${workspaceId}-room`, `user-of-${workspaces.serverIdFor(workspaceId)}`),
