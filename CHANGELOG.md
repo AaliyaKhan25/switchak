@@ -68,6 +68,13 @@ version of their own to them without also giving them a release of their own.
   Atlassian, whose tokens cannot be asked for shorter.
 
 #### Added
+- **The `[CONN]` log lines say when a client fell back to the event stream.**
+  `/events` takes optional `fallback` and `fallback_close_code` parameters,
+  and the `[CONN] opened` and `[CONN] reattached` lines end with
+  `fallback=<reason>:<close code>` only when they are present, so a new agent
+  runtime whose WebSocket never opened is told apart from a client built
+  before the socket. Unknown reasons log as `other` and anything but a short
+  numeric close code is dropped.
 - **Templates carry packages.** A room in a template takes `packages:`, a list
   of packages that already exist, by `id` or by `name`, attached when the room
   is created. The person running the template must be able to attach each one
@@ -4124,6 +4131,13 @@ The Switch protocol client and MCP runtime
 (`console/packages/switch-agent-runtime/`). Version lives in its `package.json`.
 
 ### [Unreleased]
+
+#### Added
+- When the WebSocket never opens and the runtime asks for the event stream
+  instead, the request carries `fallback=socket_never_opened` and the
+  socket's close code as `fallback_close_code`, so the server's log can tell
+  it from a client built before the socket. Opening the event stream straight
+  away, against an old server, sends neither.
 
 ### [0.8.0] - 2026-09-25
 
