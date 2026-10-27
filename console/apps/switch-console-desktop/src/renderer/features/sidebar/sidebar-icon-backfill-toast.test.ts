@@ -27,6 +27,7 @@ const AGENT = {
 
 vi.mock('@renderer/lib/hooks/use-toast', () => ({ toast }));
 vi.mock('@renderer/lib/ipc', () => ({
+  events: { on: () => () => {} },
   rpc: { workspaces: { backfillAgentIcons } },
 }));
 vi.mock('@renderer/features/locations/stores/agents-store', () => ({
@@ -34,6 +35,7 @@ vi.mock('@renderer/features/locations/stores/agents-store', () => ({
     load: vi.fn().mockResolvedValue(undefined),
     byLocation: new Map([[LOCATION.id, [AGENT]]]),
     agentsInWorkspaceAtLocation: () => [AGENT],
+    isMoved: () => false,
   },
 }));
 vi.mock('@renderer/features/switch-servers/switch-rooms-store', () => ({

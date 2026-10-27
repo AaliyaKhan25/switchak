@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   CreateRequestIds,
   canCreate,
+  dropsStartingAgent,
   roomCreateRequest,
   startingAgentResolution,
 } from './room-create-request';
@@ -95,5 +96,30 @@ describe('startingAgentResolution', () => {
   it('says why the agent is left out when the agents fail to load or it is not among them', () => {
     expect(startingAgentResolution({ ...base, failed: true })).toBe('failed');
     expect(startingAgentResolution({ ...base, loaded: true })).toBe('unavailable');
+  });
+});
+
+describe('dropsStartingAgent', () => {
+  const agent = { kind: 'agent', id: 'a1' };
+  const person = { kind: 'person', id: 'u2' };
+
+  it('keeps the starting agent through edits made while it loads, then applies it', () => {
+    // Picking a person, or switching app, before the agent resolves: nothing is shown yet.
+    expect(dropsStartingAgent(null, [person])).toBe(false);
+    expect(dropsStartingAgent(null, [])).toBe(false);
+    const waiting = { startingAgentId: 'a1', applied: false, failed: false, loaded: false };
+    expect(startingAgentResolution(waiting)).toBe('pending');
+    // Resolved: its chip is shown, so it is applied.
+    expect(startingAgentResolution({ ...waiting, loaded: true, applied: true })).toBe('resolved');
+  });
+
+  it('keeps it when other picks change or a bridged app keeps only agents', () => {
+    expect(dropsStartingAgent(agent, [agent, person])).toBe(false);
+    expect(dropsStartingAgent(agent, [agent])).toBe(false);
+  });
+
+  it('leaves it out only when its chip is removed', () => {
+    expect(dropsStartingAgent(agent, [person])).toBe(true);
+    expect(dropsStartingAgent(agent, [{ kind: 'person', id: 'a1' }])).toBe(true);
   });
 });

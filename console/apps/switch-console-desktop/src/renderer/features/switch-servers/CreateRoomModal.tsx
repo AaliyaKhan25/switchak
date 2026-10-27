@@ -38,6 +38,7 @@ import { MessagingAppSelector, SWITCH_CONSOLE } from './messaging-app-selector';
 import {
   CreateRequestIds,
   canCreate,
+  dropsStartingAgent,
   roomCreateRequest,
   startingAgentResolution,
 } from './room-create-request';
@@ -147,18 +148,18 @@ export const CreateRoomModal = observer(function CreateRoomModal({
       personParticipant
     ),
   ];
-  // The agent the room is made from shows picked once the agents are read, until the
-  // picks are changed by hand (removing it then leaves it out).
-  const [touched, setTouched] = useState(false);
+  // The agent the room is made from shows picked once the agents are read, whatever
+  // else is edited meanwhile, until its chip is removed.
+  const [startDropped, setStartDropped] = useState(false);
   const startChip =
-    startingAgentId === undefined || touched
+    startingAgentId === undefined || startDropped
       ? null
       : (candidates.find((each) => each.kind === 'agent' && each.id === startingAgentId) ?? null);
   const shownPicked = startChip
     ? [startChip, ...picked.filter((each) => each.id !== startChip.id)]
     : picked;
   const changePicks = (next: Participant[]) => {
-    setTouched(true);
+    if (dropsStartingAgent(startChip, next)) setStartDropped(true);
     setPicked(next);
   };
   const agentIds = shownPicked.filter((each) => each.kind === 'agent').map((each) => each.id);
@@ -169,7 +170,7 @@ export const CreateRoomModal = observer(function CreateRoomModal({
   // a quick Create would otherwise make the room without it.
   const startingAgentState = startingAgentResolution({
     startingAgentId,
-    applied: touched || startChip !== null,
+    applied: startDropped || startChip !== null,
     failed: agentsQuery.isError || (!selectedBridge && allowedQuery.isError),
     loaded:
       agentsQuery.isSuccess &&

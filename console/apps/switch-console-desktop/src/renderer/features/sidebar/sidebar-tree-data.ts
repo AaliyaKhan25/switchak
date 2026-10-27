@@ -7,13 +7,14 @@ import { switchRoomsStore } from '@renderer/features/switch-servers/switch-rooms
 import { switchServersStore } from '@renderer/features/switch-servers/switch-servers-store';
 import { workspacesStore } from '@renderer/features/workspaces/workspaces-store';
 import { toast } from '@renderer/lib/hooks/use-toast';
-import { rpc } from '@renderer/lib/ipc';
+import { events, rpc } from '@renderer/lib/ipc';
 import { queryClient } from '@renderer/lib/query-client';
 import { sidebarStore } from '@renderer/lib/stores/app-state';
 import { log } from '@renderer/utils/logger';
 import type { Agent } from '@shared/core/agents/agents';
 import type { ManagedAgentView } from '@shared/core/managed-agents/managed-agents';
 import type { AgentIconBackfill } from '@shared/core/switch-servers/switch-servers';
+import { userChangesChannel } from '@shared/events/userChangesEvents';
 
 /**
  * What the two sidebar trees agree on: which agents are in scope and which
@@ -103,7 +104,8 @@ export function agentSessions(entry: AgentEntry): SessionStore[] {
 export function switchIdentities(): { workspaceId: string; switchAgentId: string }[] {
   const identities: { workspaceId: string; switchAgentId: string }[] = [];
   for (const { agent } of agentsInActiveScope()) {
-    if (agent.workspaceId && agent.switchAgentId) {
+    // A moved agent's rooms come from the managed list, which drops them once it is gone.
+    if (agent.workspaceId && agent.switchAgentId && !agentsStore.isMoved(agent.id)) {
       identities.push({ workspaceId: agent.workspaceId, switchAgentId: agent.switchAgentId });
     }
   }
@@ -164,6 +166,15 @@ export async function refreshSidebarRoomState(force: boolean): Promise<void> {
     switchRoomsStore.loadRoomNames(),
   ]);
   void giveExistingAgentsAnIcon();
+}
+
+/** Refresh as soon as a server says a room of this user's changed, ahead of the reconcile timer. */
+export function refreshSidebarOnRoomChanges(): () => void {
+  return events.on(userChangesChannel, (event) => {
+    if (event.type === 'changed' && event.changes.some((change) => change.kind === 'room')) {
+      void refreshSidebarRoomState(true);
+    }
+  });
 }
 
 /**

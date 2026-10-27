@@ -108,6 +108,17 @@ export class CreateRequestIds {
 }
 
 /**
+ * Whether a change to the picks removes the starting agent the dialog shows: only
+ * that leaves it out. Other edits, made before or after it resolves, keep it.
+ */
+export function dropsStartingAgent(
+  shown: { kind: string; id: string } | null,
+  next: { kind: string; id: string }[]
+): boolean {
+  return shown !== null && !next.some((each) => each.kind === shown.kind && each.id === shown.id);
+}
+
+/**
  * Where the agent a room is made from stands: no such agent or already picked
  * (`resolved`), the agents still loading (`pending`, when Create waits), or it
  * cannot be picked because the agents failed to load or it is not among them.

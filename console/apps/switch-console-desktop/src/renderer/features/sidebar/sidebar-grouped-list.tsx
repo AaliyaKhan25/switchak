@@ -23,7 +23,11 @@ import { SessionDiscoveryStatus } from './session-discovery-status';
 import { SessionsSectionHeader } from './sessions-section-header';
 import { useScrollSelectionIntoView } from './sidebar-auto-scroll';
 import { showsAgentsAndRooms, sidebarEmptyState } from './sidebar-empty-state';
-import { agentsInActiveScope, refreshSidebarRoomState } from './sidebar-tree-data';
+import {
+  agentsInActiveScope,
+  refreshSidebarOnRoomChanges,
+  refreshSidebarRoomState,
+} from './sidebar-tree-data';
 
 /**
  * How often the room state is reconciled against the servers while the window
@@ -90,8 +94,11 @@ export const SidebarGroupedList = observer(function SidebarGroupedList() {
       void loadSidebarState(true);
     }, ROOM_STATE_RECONCILE_MS);
 
+    const stopRoomChanges = refreshSidebarOnRoomChanges();
+
     return () => {
       window.removeEventListener('focus', onFocus);
+      stopRoomChanges();
       stopWatchingServers();
       clearInterval(reconcile);
     };

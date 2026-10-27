@@ -27,6 +27,7 @@ vi.mock('@renderer/features/locations/stores/agents-store', () => ({
     loaded: true,
     load: async () => {},
     agentsOnServer: () => [{ switchAgentId: 'a' }, { switchAgentId: 'b' }],
+    isMoved: () => false,
   },
 }));
 
