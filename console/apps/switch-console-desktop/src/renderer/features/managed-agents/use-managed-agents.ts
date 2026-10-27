@@ -7,6 +7,7 @@ import { useFeatureFlags } from '@renderer/lib/hooks/useFeatureFlags';
 import { events, rpc } from '@renderer/lib/ipc';
 import { chatActivityChannel, chatMessageChannel } from '@shared/core/chats/chatEvents';
 import type { ManagedAgentView } from '@shared/core/managed-agents/managed-agents';
+import { workspacesChangedChannel } from '@shared/core/workspaces/workspaceEvents';
 import { agentMigrationChannel } from '@shared/events/agentMigrationEvents';
 import { MANAGED_AGENTS_KEY } from './use-managed-agents-key';
 import { useUserChangesLive } from './use-user-changes';
@@ -69,6 +70,15 @@ export function useManagedAgents(serverId: string | null) {
   const workspaceId = workspacesStore.idOnServerInScope(serverId);
   const pushed = useUserChangesLive(signedIn ? serverId : null);
   const managementOn = useFeatureFlags(serverId).agent_management;
+  // The startup workspace pass can change which workspace main reads the list
+  // for without changing the key here: read it again once it settles.
+  useEffect(
+    () =>
+      events.on(workspacesChangedChannel, () => {
+        void queryClient.invalidateQueries({ queryKey: [MANAGED_AGENTS_KEY, serverId] });
+      }),
+    [queryClient, serverId]
+  );
   useEffect(
     () =>
       events.on(agentMigrationChannel, (event) => {
