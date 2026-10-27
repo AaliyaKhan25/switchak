@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import replace
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -15,6 +16,7 @@ import pytest
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+import switch_core.official_templates as official_templates_package
 from switch_core.bridges.agent.operations import context as op_context
 from switch_core.bridges.agent.operations import template_status
 from switch_core.bridges.agent.operations.callctx import (
@@ -33,11 +35,13 @@ from switch_core.db.stores.agent_definition_store import DefinitionChanged
 from switch_core.db.stores.template_install_store import TemplateInstallStore
 from switch_core.gateway import dependencies as gw_deps
 from switch_core.gateway.rooms import router as rooms_router
+from switch_core.management import template_updates as template_updates_module
 from switch_core.management.template_updates import BUDDY_ID, TemplateUpdates
 from switch_core.official_templates import (
     OfficialTemplate,
     official_template,
     released_agent_fingerprints,
+    revisions,
 )
 from tests.switch_core.management.harness import (
     Harness,
@@ -81,6 +85,26 @@ def harness(session_factory: async_sessionmaker[AsyncSession]) -> Iterator[Harne
 async def client(harness: Harness) -> AsyncIterator[httpx.AsyncClient]:
     async with harness.client() as client:
         yield client
+
+
+_OFFICIAL = Path(official_templates_package.__file__).parent
+
+
+@pytest.fixture(autouse=True)
+def _released_as_served(monkeypatch: pytest.MonkeyPatch) -> None:
+    """As on a released server: the template's files are its last recorded
+    revision, even on a branch that changed them since."""
+    current = revisions.entry_for(_OFFICIAL / "switch-buddy")["agents"]
+    older = [
+        (revision, agents)
+        for revision, agents in released_agent_fingerprints("switch-buddy")
+        if revision != _buddy().version
+    ]
+    monkeypatch.setattr(
+        template_updates_module,
+        "released_agent_fingerprints",
+        lambda slug: [(_buddy().version, current), *older],
+    )
 
 
 def _buddy() -> OfficialTemplate:
@@ -296,7 +320,7 @@ async def test_an_old_buddy_is_recorded_as_the_revision_it_matches(
     assert resource.key == "buddy"
     assert (
         resource.fingerprints
-        == released_agent_fingerprints("switch-buddy")[0][1]["buddy"]
+        == revisions.entry_for(_OFFICIAL / "switch-buddy")["agents"]["buddy"]
     )
     assert await _updates(harness).record_existing_buddies(TENANT_ZERO_ID) == 0
 

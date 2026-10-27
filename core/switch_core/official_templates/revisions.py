@@ -8,12 +8,17 @@ were recorded are matched against the ``agents`` fingerprints of every
 revision, so an old buddy nobody changed is recognised as the revision it
 came from.
 
-When a template's files change, record a revision::
+Revisions are recorded when Switch is released, with the other versions
+(RELEASING.md), never by whoever changes a template: a revision is what a
+release shipped. Between releases, a changed template is served under its
+last recorded revision, and the agents it already made are not updated until
+a release records the next one. To record one for every template whose files
+changed::
 
-    python -m switch_core.official_templates.revisions record switch-buddy
+    just record-template-revisions
 
-and ``check`` (or the test that runs it) says whether every template's last
-revision is what its files serve now.
+``check`` says which templates changed since their last revision; the
+release workflow runs it on a release tag and stops the release when any did.
 """
 
 from __future__ import annotations
@@ -95,19 +100,40 @@ def write(slug: str, revisions: list[dict[str, Any]]) -> None:
     )
 
 
+def record_all() -> dict[str, int]:
+    """Record a revision for every official template whose files changed
+    since its last one; return the revision each one recorded."""
+    return {
+        shipped.slug: record(shipped.slug)
+        for shipped in _SHIPPED
+        if stale(shipped.slug)
+    }
+
+
 def main(argv: list[str]) -> int:
     if len(argv) == 2 and argv[0] == "record":
         print(f"{argv[1]}: revision {record(argv[1])}")
+        return 0
+    if argv == ["record-all"]:
+        recorded_now = record_all()
+        for slug, revision in recorded_now.items():
+            print(f"{slug}: recorded revision {revision}")
+        if not recorded_now:
+            print("No official template changed since its last revision.")
         return 0
     if argv == ["check"]:
         out = [shipped.slug for shipped in _SHIPPED if stale(shipped.slug)]
         for slug in out:
             print(
                 f"{slug} changed since its last revision: run "
-                f"python -m switch_core.official_templates.revisions record {slug}"
+                "`just record-template-revisions` and commit the result with "
+                "the release's version bump (RELEASING.md)"
             )
         return 1 if out else 0
-    print("usage: revisions record <slug> | revisions check", file=sys.stderr)
+    print(
+        "usage: revisions record-all | revisions record <slug> | revisions check",
+        file=sys.stderr,
+    )
     return 2
 
 

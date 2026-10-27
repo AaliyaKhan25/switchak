@@ -21,9 +21,9 @@ Each also has ``revisions.json``: every revision of it released, numbered
 from 1, with a fingerprint of what each one served and set on its agents.
 The last is the revision this release serves (its ``version``), and agents
 created from an older one are brought up to it when the server starts
-(``management/template_updates.py``). Changing a template means adding a revision, which
-``python -m switch_core.official_templates.revisions record <slug>`` does; a
-test fails while the files and the last revision disagree.
+(``management/template_updates.py``). Revisions are recorded at release time,
+with the other versions (see ``revisions.py``); between releases a changed
+template is served under its last revision.
 """
 
 from __future__ import annotations

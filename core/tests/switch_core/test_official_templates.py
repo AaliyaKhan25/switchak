@@ -3,6 +3,7 @@ package, the document chosen by the agent_management flag, never changed."""
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 import yaml
@@ -136,15 +137,30 @@ def test_an_unknown_official_id_is_none():
     )
 
 
-def test_every_template_s_last_revision_is_what_its_files_serve():
-    """A change to an official template is a new revision: agents created
-    from an older one are brought up to it, and only a new revision tells
-    them there is something to bring."""
+def test_a_release_records_a_revision_for_each_template_that_changed(
+    tmp_path, monkeypatch
+):
+    """At release time, `record-all` adds a revision for each template whose
+    files changed since its last one, after the ones already there, and
+    leaves the others alone."""
     for shipped in _SHIPPED:
-        assert not revisions.stale(shipped.slug), (
-            f"{shipped.slug} changed since its last revision. Record one: "
-            f"python -m switch_core.official_templates.revisions record {shipped.slug}"
-        )
+        shutil.copytree(_PACKAGED / shipped.slug, tmp_path / shipped.slug)
+    monkeypatch.setattr(revisions, "_HERE", tmp_path)
+    revisions.record_all()
+    before = {s.slug: revisions.recorded(s.slug) for s in _SHIPPED}
+    assert not any(revisions.stale(s.slug) for s in _SHIPPED)
+
+    with (tmp_path / "switch-buddy" / "AGENT.md").open("a") as agent_md:
+        agent_md.write("\nOne more thing.\n")
+
+    assert revisions.stale("switch-buddy")
+    assert not revisions.stale("switch-expert")
+    assert revisions.record_all() == {"switch-buddy": len(before["switch-buddy"]) + 1}
+    after = revisions.recorded("switch-buddy")
+    assert after[:-1] == before["switch-buddy"]
+    assert after[-1]["agents"] != before["switch-buddy"][-1]["agents"]
+    assert revisions.recorded("switch-expert") == before["switch-expert"]
+    assert revisions.record_all() == {}
 
 
 def test_a_template_is_served_at_its_last_revision():

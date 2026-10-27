@@ -716,9 +716,11 @@ counts it in telemetry by operation and reason.
 A template's **revision** is its own edit count, not the language version
 (`version: 2`): a saved template's goes up each time its document is
 replaced, and an official template's is the last entry in its
-`revisions.json`, beside its files. Changing an official template means
-adding a revision (`python -m switch_core.official_templates.revisions record
-<slug>`); a test fails while its files and its last revision disagree.
+`revisions.json`, beside its files. Revisions are recorded when Switch is
+released, with the other versions (`just record-template-revisions`, see
+RELEASING.md), not by whoever changes a template: between releases a changed
+template is served under its last revision, and the release workflow refuses
+a release tag while a change is unrecorded.
 
 When the server runs a template whose source it can vouch for, it records
 the run as an **install**: the template's id and revision, the inputs it was

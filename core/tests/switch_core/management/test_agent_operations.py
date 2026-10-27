@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import secrets
 from collections.abc import AsyncIterator, Iterator
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -20,6 +21,7 @@ import pytest
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+import switch_core.official_templates as official_templates_package
 from switch_core.addressing import default_agent_policy, parse_policy
 from switch_core.bridges.agent.mcp.server import mcp
 from switch_core.bridges.agent.operations import all_operations, definitions
@@ -1541,6 +1543,9 @@ class TestTheConsoleRunsAVersion2Template:
         assert "claude is not signed in on laptop" in body["detail"]
 
 
+_OFFICIAL = Path(official_templates_package.__file__).parent
+
+
 async def _installs(harness: Harness, template_id: str) -> list[Any]:
     async with harness.session_factory() as session:
         installs = await TemplateInstallStore().of_template(session, template_id)
@@ -1612,7 +1617,7 @@ class TestARunOfAKnownTemplateIsRecorded:
         assert (resource.key, resource.agent_id) == ("buddy", created["agent_id"])
         assert (
             resource.fingerprints
-            == revisions.recorded("switch-buddy")[-1]["agents"]["buddy"]
+            == revisions.entry_for(_OFFICIAL / "switch-buddy")["agents"]["buddy"]
         )
 
     async def test_a_saved_template_named_by_id_is_recorded_at_its_version(
