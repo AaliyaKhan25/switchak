@@ -52,7 +52,8 @@ export const MeetBuddyPage = observer(function MeetBuddyPage({
 }) {
   const exit = useWizardExit();
   const [settingUp, setSettingUp] = useState(false);
-  const { state: computer, earlyProviders } = useThisComputer(serverId, workspaceId);
+  const thisComputer = useThisComputer(serverId, workspaceId);
+  const { state: computer, earlyProviders } = thisComputer;
   // What this computer's controller reports, or until it does, what Console
   // found checking the providers as onboarding opened.
   const reported = useMemo(
@@ -137,6 +138,7 @@ export const MeetBuddyPage = observer(function MeetBuddyPage({
           workspaceId={workspaceId}
           entryPoint="onboarding"
           onCreated={onCreated}
+          thisComputer={thisComputer}
         />
       </OnboardingSurface>
     );

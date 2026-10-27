@@ -25,13 +25,6 @@ const state = vi.hoisted(() => ({
   onCreated: vi.fn(),
 }));
 
-vi.mock('@renderer/features/switch-buddy/use-this-computer', () => ({
-  useThisComputer: () => ({
-    state: { kind: 'ready', machine: { id: 'm-1', providers: state.providers } },
-    recheck: state.recheck,
-    earlyProviders: null,
-  }),
-}));
 vi.mock('@renderer/features/switch-buddy/create-buddy', () => ({
   createBuddy: state.createBuddy,
 }));
@@ -95,6 +88,10 @@ async function render() {
         workspaceId="ws-1"
         entryPoint="switch_buddy"
         onCreated={state.onCreated}
+        thisComputer={{
+          state: { kind: 'ready', machine: { id: 'm-1', providers: state.providers } as never },
+          recheck: state.recheck,
+        }}
       />
     )
   );
