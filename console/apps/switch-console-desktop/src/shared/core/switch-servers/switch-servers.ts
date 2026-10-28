@@ -381,6 +381,7 @@ export type RetireOutcome = {
 export type UpdateRoomParams = {
   workspaceId: string;
   roomId: string;
+  name?: string;
   description?: string;
   instructions?: string;
 };

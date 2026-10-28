@@ -2982,7 +2982,7 @@ export async function fetchRoomAgentIds(server: SwitchServer, roomId: string): P
 export async function updateRoom(
   server: SwitchServer,
   roomId: string,
-  changes: { description?: string; instructions?: string }
+  changes: { name?: string; description?: string; instructions?: string }
 ): Promise<RemoteRoomDetail> {
   const res = await gatewayFetch(server, `/rooms/${encodeURIComponent(roomId)}`, {
     authenticated: true,

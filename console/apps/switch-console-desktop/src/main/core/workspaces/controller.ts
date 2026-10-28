@@ -891,6 +891,7 @@ export const workspacesController = createRPCController({
   updateRoom: (params: UpdateRoomParams): Promise<RemoteRoomDetail> =>
     withReachableWorkspaceSession(params.workspaceId, (server) =>
       updateRoom(server, params.roomId, {
+        name: params.name,
         description: params.description,
         instructions: params.instructions,
       })

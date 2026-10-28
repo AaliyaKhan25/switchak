@@ -8,6 +8,7 @@ import { opensAsConsoleChat } from '@renderer/features/chats/console-chat-redire
 import { chatFailure } from '@renderer/features/chats/stores/chat-errors';
 import { chatsStore } from '@renderer/features/chats/stores/chats';
 import { agentsStore } from '@renderer/features/locations/stores/agents-store';
+import { refreshSidebarRoomState } from '@renderer/features/sidebar/sidebar-tree-data';
 import { isConsoleGroupChatSummary } from '@renderer/features/switch-servers/room-filters';
 import { switchRoomsStore } from '@renderer/features/switch-servers/switch-rooms-store';
 import { switchServersStore } from '@renderer/features/switch-servers/switch-servers-store';
@@ -620,13 +621,16 @@ type SaveState = { phase: 'idle' | 'saving' | 'saved' } | { phase: 'failed'; mes
  */
 function GeneralSection({ workspaceId, room }: { workspaceId: string; room: RemoteRoomDetail }) {
   const queryClient = useQueryClient();
+  const savedName = room.name;
   const savedDescription = room.description;
   const savedInstructions = room.instructions ?? '';
+  const [name, setName] = useState(savedName);
   const [description, setDescription] = useState(savedDescription);
   const [instructions, setInstructions] = useState(savedInstructions);
   const [state, setState] = useState<SaveState>({ phase: 'idle' });
 
-  const dirty = description !== savedDescription || instructions !== savedInstructions;
+  const renamed = name.trim() !== savedName;
+  const dirty = renamed || description !== savedDescription || instructions !== savedInstructions;
 
   async function save() {
     setState({ phase: 'saving' });
@@ -634,11 +638,18 @@ function GeneralSection({ workspaceId, room }: { workspaceId: string; room: Remo
       const updated = await rpc.workspaces.updateRoom({
         workspaceId,
         roomId: room.id,
+        ...(renamed ? { name: name.trim() } : {}),
         description,
         instructions,
       });
       queryClient.setQueryData(roomDetailKey(workspaceId, room.id), updated);
+      setName(updated.name);
       setState({ phase: 'saved' });
+      // The name shows in the sidebar, the room lists and the chat's title.
+      if (renamed) {
+        void refreshSidebarRoomState(true);
+        void chatsStore.refreshSummaries();
+      }
     } catch (cause) {
       setState({ phase: 'failed', message: failureText(cause, 'Could not save the change.') });
     }
@@ -647,6 +658,18 @@ function GeneralSection({ workspaceId, room }: { workspaceId: string; room: Remo
   return (
     <section className="flex flex-col gap-4">
       <h2 className="text-sm font-semibold text-foreground">General</h2>
+
+      <Field label="Name" hint="What everyone in the room sees it called.">
+        <Input
+          className="h-9"
+          aria-label="Name"
+          value={name}
+          onChange={(e) => {
+            setName(e.target.value);
+            setState({ phase: 'idle' });
+          }}
+        />
+      </Field>
 
       <Field
         label="Description"
@@ -682,7 +705,7 @@ function GeneralSection({ workspaceId, room }: { workspaceId: string; room: Remo
         <Button
           type="button"
           size="sm"
-          disabled={!dirty || state.phase === 'saving'}
+          disabled={!dirty || name.trim() === '' || state.phase === 'saving'}
           onClick={() => void save()}
         >
           {state.phase === 'saving' ? 'Saving…' : 'Save'}

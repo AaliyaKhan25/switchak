@@ -44,6 +44,13 @@ vi.mock('@renderer/features/switch-servers/switch-rooms-store', () => ({
   },
 }));
 
+const refreshSidebarRoomState = vi.hoisted(() => vi.fn(async () => {}));
+vi.mock('@renderer/features/sidebar/sidebar-tree-data', () => ({
+  refreshSidebarRoomState,
+  refreshSidebarRoomStateAfterOnboarding: vi.fn(),
+}));
+
+import { chatsStore } from '@renderer/features/chats/stores/chats';
 import { RoomConfigurationPanel } from '@renderer/features/switch-rooms/room-configuration-panel';
 
 const ROOM = {
@@ -186,5 +193,30 @@ describe('a room’s description and instructions', () => {
     expect(el.textContent).toContain('room is archived');
     // Still offered, because the edit is still there and still unwritten.
     expect(saveButton(el).disabled).toBe(false);
+  });
+  it('renames the room, and reads its name again wherever it shows', async () => {
+    const refreshSummaries = vi.spyOn(chatsStore, 'refreshSummaries').mockResolvedValue();
+    const el = await renderPanel();
+    await type(el.querySelector<HTMLInputElement>('input[aria-label="Name"]')!, ' Ship review ');
+
+    await act(async () => saveButton(el).click());
+    for (let i = 0; i < 5; i++) await act(async () => await Promise.resolve());
+
+    expect(updateRoom).toHaveBeenCalledWith({
+      workspaceId: 'ws-1',
+      roomId: 'room-1',
+      name: 'Ship review',
+      description: 'The original description',
+      instructions: 'The original instructions',
+    });
+    expect(refreshSidebarRoomState).toHaveBeenCalledWith(true);
+    expect(refreshSummaries).toHaveBeenCalled();
+    expect(el.textContent).toContain('Saved.');
+  });
+
+  it('does not save an empty name', async () => {
+    const el = await renderPanel();
+    await type(el.querySelector<HTMLInputElement>('input[aria-label="Name"]')!, '  ');
+    expect(saveButton(el).disabled).toBe(true);
   });
 });
