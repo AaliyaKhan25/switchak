@@ -1353,6 +1353,113 @@ class Template(TenantScoped, Base):
     )
 
 
+class TemplateInstall(TenantScoped, Base):
+    """One run of a template whose source the server vouches for: which
+    template, at which revision, and what it was run with.
+
+    ``source`` is ``official`` for a template that comes with Switch
+    (``template_id`` is its ``official:`` id, which nobody can save under) or
+    ``saved`` for a stored template (``template_id`` is its row's id, kept
+    after the row is deleted). ``inputs`` and ``builtins`` are what the
+    document was rendered with, so a later revision can be rendered the same
+    way to see what it would set. Written only by the server, when it runs a
+    template; nothing a caller sends names one.
+    """
+
+    __tablename__ = "template_installs"
+    __table_args__ = (
+        UniqueConstraint("id", "tenant_id", name="uq_template_installs_id_tenant"),
+        CheckConstraint(
+            "source IN ('official', 'saved')", name="ck_template_installs_source"
+        ),
+        Index("ix_template_installs_tenant_template", "tenant_id", "template_id"),
+    )
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True, default=_uuid)
+    # Goes with its owner, whose agents it created go too.
+    owner_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    source: Mapped[str] = mapped_column(Text, nullable=False)
+    template_id: Mapped[str] = mapped_column(Text, nullable=False)
+    template_name: Mapped[str] = mapped_column(Text, nullable=False)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    inputs: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    builtins: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
+class TemplateInstallResource(TenantScoped, Base):
+    """An agent or room a template install created, under the key the
+    template gives it, with a fingerprint of each value the template set.
+
+    A fingerprint still equal to the value's own is a value nobody has
+    changed since the template set it, which an update may replace; one that
+    differs was changed by someone, and is left as they made it. Exactly one
+    of ``agent_id`` and ``room_id`` is set, and the row goes with it.
+    """
+
+    __tablename__ = "template_install_resources"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "install_id"],
+            ["template_installs.tenant_id", "template_installs.id"],
+            name="fk_template_install_resources_install",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "agent_id"],
+            ["agents.tenant_id", "agents.id"],
+            name="fk_template_install_resources_agent",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "room_id"],
+            ["rooms.tenant_id", "rooms.id"],
+            name="fk_template_install_resources_room",
+            ondelete="CASCADE",
+        ),
+        CheckConstraint(
+            "(agent_id IS NULL) <> (room_id IS NULL)",
+            name="ck_template_install_resources_one_resource",
+        ),
+        Index(
+            "uq_template_install_resources_agent",
+            "tenant_id",
+            "agent_id",
+            unique=True,
+            postgresql_where=text("agent_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_template_install_resources_room",
+            "tenant_id",
+            "room_id",
+            unique=True,
+            postgresql_where=text("room_id IS NOT NULL"),
+        ),
+        Index("ix_template_install_resources_install", "tenant_id", "install_id"),
+    )
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True, default=_uuid)
+    install_id: Mapped[str] = mapped_column(Text, nullable=False)
+    key: Mapped[str] = mapped_column(Text, nullable=False)
+    agent_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    room_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    fingerprints: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    # What Switch has to tell the agent about its template, until it reads
+    # how it differs from it (``get_template_status``): a newer revision it
+    # was not brought fully up to. Null when there is nothing to tell.
+    notice: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
 # ── Packages ──────────────────────────────────────────────────────────────────
 
 

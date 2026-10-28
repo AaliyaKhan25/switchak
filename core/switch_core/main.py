@@ -169,11 +169,13 @@ from switch_core.db.tenant_lookup import all_tenant_ids
 from switch_core.delivery.conversation import ConversationRules, ConversationSettings
 from switch_core.delivery.recipient import RecipientServices
 from switch_core.delivery.router import GROUP_SWEEP_SECONDS, MessageRouter
+from switch_core.feature_flags import AGENT_MANAGEMENT, SWITCH_BUDDY
 from switch_core.gateway.app import create_gateway_app
 from switch_core.gateway.auth import hash_password
 from switch_core.gateway.invite_mail import SmtpInviteMailer
 from switch_core.gateway.ui import GatewayUi
 from switch_core.logging_config import configure_logging
+from switch_core.management.template_updates import TemplateUpdates
 from switch_core.management.wiring import Management, create_management
 from switch_core.messages.notify import MessageListener
 from switch_core.observability.bootstrap import (
@@ -1385,6 +1387,23 @@ async def run(config: SwitchConfig, process_id: str) -> None:
                 if management is not None
                 else None
             )
+            # Once per start, in the background: a new release may bring a
+            # new revision of an official template, and the agents an older
+            # one created are brought up to it (`template_updates`).
+            template_updates_task = (
+                asyncio.create_task(
+                    TemplateUpdates(
+                        engine=engine,
+                        session_factory=session_factory,
+                        management=management.service,
+                        protocol=protocol,
+                        agent_management=config.feature_flags[AGENT_MANAGEMENT],
+                        switch_buddy=config.feature_flags[SWITCH_BUDDY],
+                    ).run(tenant_ids)
+                )
+                if management is not None
+                else None
+            )
             # Only when telemetry is on: the chart tells a customer that off
             # means nothing is collected, and the fan-out is not free.
             snapshot_task = (
@@ -1411,6 +1430,8 @@ async def run(config: SwitchConfig, process_id: str) -> None:
                 shared_connections_task.cancel()
                 if management_task is not None:
                     management_task.cancel()
+                if template_updates_task is not None:
+                    template_updates_task.cancel()
                 ownership_task.cancel()
                 # The lease goes on being renewed while the owned work is
                 # handed over, which can take a few seconds: it must not lapse

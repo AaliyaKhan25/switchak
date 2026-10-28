@@ -60,6 +60,7 @@ from switch_core.db.stores.template_store import TemplateStore
 from switch_core.feature_flags import AGENT_MANAGEMENT, SWITCH_BUDDY
 from switch_core.rooms_yaml import GroupSpec, template_json_schema
 from switch_core.template_guide import TEMPLATE_GUIDE
+from switch_core.template_installs import InstallSource, record_install, source_of
 from switch_core.template_runs import (
     LISTEN_TIMEOUT_SECONDS,
     AgentsNotCreated,
@@ -1599,7 +1600,9 @@ async def create_room_from_yaml(
     """
     async with _refusals_reported("create_room_from_yaml"):
         if is_v2_text(yaml):
-            return await _run_document(yaml, inputs, {}, template_name=None)
+            return await _run_document(
+                yaml, inputs, {}, template_name=None, source=None
+            )
         return await _provision_as_agent(
             yaml, inputs, template_name=None, new_agents=[], room_addressing={}
         )
@@ -1934,7 +1937,13 @@ async def run_template(
         async with protocol.session_factory() as session:
             template = await _agent_templates().load(session, acting, template_id)
             content, name = template.content, template.name
-        return await _run_document(content, inputs, agents or {}, template_name=name)
+        return await _run_document(
+            content,
+            inputs,
+            agents or {},
+            template_name=name,
+            source=source_of(template),
+        )
 
 
 async def _run_document(
@@ -1943,9 +1952,11 @@ async def _run_document(
     filled: dict[str, str],
     *,
     template_name: str | None,
+    source: InstallSource | None,
 ) -> dict[str, Any]:
     """Work a template's agents and rooms out of its document and create
-    them, as the calling agent."""
+    them, as the calling agent. With a `source`, the agents it creates are
+    recorded as that template's install, to be updated from it."""
     protocol = get_protocol()
     acting = await _acting_for()
     rooms_yaml = protocol.room_yaml_service()
@@ -1967,13 +1978,26 @@ async def _run_document(
         builtins=builtins,
         machines=await _owners_machines(),
     )
-    return await _provision_as_agent(
+    result = await _provision_as_agent(
         plan.document,
         plan.inputs or None,
         template_name=template_name,
         new_agents=plan.new_agents,
         room_addressing=plan.room_addressing,
     )
+    if source is not None:
+        await record_install(
+            protocol.session_factory,
+            require_tenant_id(),
+            owner_id=acting.owner.id,
+            source=source,
+            document=content,
+            inputs=inputs or {},
+            builtins=builtins,
+            plans=plan.new_agents,
+            created=result.get("created_agents") or [],
+        )
+    return result
 
 
 async def _owners_machines() -> list[dict[str, Any]] | None:

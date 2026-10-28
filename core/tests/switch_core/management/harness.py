@@ -60,6 +60,7 @@ from switch_core.db.stores.api_key_store import ApiKeyStore
 from switch_core.db.stores.room_role_store import RoomRoleStore
 from switch_core.db.stores.room_store import RoomStore
 from switch_core.db.stores.switch_core_process_store import SwitchCoreProcessStore
+from switch_core.db.stores.template_store import TemplateStore
 from switch_core.db.stores.user_store import UserStore
 from switch_core.gateway import dependencies as gw_deps
 from switch_core.gateway.auth import create_jwt
@@ -291,10 +292,14 @@ def build_harness(
     )
     gateway_app.dependency_overrides[gw_deps.get_user_store] = lambda: UserStore()
     gateway_app.dependency_overrides[gw_deps.get_protocol] = lambda: protocol
+    gateway_app.dependency_overrides[gw_deps.get_template_store] = lambda: (
+        TemplateStore()
+    )
     gateway_app.dependency_overrides[gw_deps.get_config] = lambda: SimpleNamespace(
         keyring=TEST_KEYRING,
         gateway_tenant_choice_enabled=False,
         third_party_avatars_enabled=third_party_avatars,
+        feature_flags={"agent_management": True, "switch_buddy": True},
     )
     agent_app.mount("/gateway", gateway_app)
     agent_app.add_middleware(

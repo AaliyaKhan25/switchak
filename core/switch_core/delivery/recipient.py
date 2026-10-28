@@ -191,6 +191,15 @@ class RecipientServices:
     message_telemetry: MessageTelemetry
 
 
+class SwitchNotices(Protocol):
+    """What Switch has to tell each agent of a room before its next message,
+    read once for every agent in the room."""
+
+    async def switch_notice(
+        self, session: AsyncSession, agent_id: str
+    ) -> str | None: ...
+
+
 class ClientNames(Protocol):
     """Who a member of a room is, by the id they post under: the one read an
     arrival's own event needs, which the router makes once for every agent in
@@ -481,6 +490,7 @@ class AgentRecipient:
         addressing: AddressingResolver,
         budget_guard: BudgetGuard,
         clients: ClientNames,
+        notices: SwitchNotices,
         cloud_waking_notices: set[tuple[str, int]],
     ) -> None:
         self.actor = actor
@@ -510,6 +520,7 @@ class AgentRecipient:
         self._addressing = addressing
         self._budget_guard = budget_guard
         self._clients = clients
+        self._notices = notices
         # The "machine is waking" notices this process has posted for the
         # agent, by room and machine start, so the messages that follow the
         # first one wait with it instead of each saying so again.
@@ -592,8 +603,9 @@ class AgentRecipient:
             if addressed
             else None
         )
+        notice = await self._switch_notice(session) if addressed else None
         own_event = _message_own_event(
-            meta, event, thread_id, self.agent.id, sender_role
+            meta, event, thread_id, self.agent.id, sender_role, notice
         )
 
         async def after(row: InboundEvent) -> None:
@@ -662,9 +674,10 @@ class AgentRecipient:
             await self._after_follow_up(row)
 
         sender_role = await self._sender_role(session, event.sender, event.content)
+        notice = await self._switch_notice(session)
         return Delivery(
             own_event=_message_own_event(
-                meta, event, event.thread_root_id, self.agent.id, sender_role
+                meta, event, event.thread_root_id, self.agent.id, sender_role, notice
             ),
             after=after,
         )
@@ -825,6 +838,7 @@ class AgentRecipient:
             if gate.addressed
             else None
         )
+        switch_notice = await self._switch_notice(session) if gate.addressed else None
 
         def own_event(row: InboundEvent) -> OwnEvent:
             parts = written(row)
@@ -851,6 +865,7 @@ class AgentRecipient:
                 ],
                 opening_message=opening,
                 sender_role=sender_role,
+                switch_notice=switch_notice,
             )
             if logger.isEnabledFor(logging.DEBUG):
                 logger.debug(
@@ -1709,6 +1724,13 @@ class AgentRecipient:
             message=IncomingMessage(sender="", body=text),
         )
 
+    async def _switch_notice(self, session: AsyncSession) -> str | None:
+        """What Switch has to tell the agent before its next message: that
+        its template has a revision it was not brought fully up to
+        (`management/template_updates.py`). Told with every message until the
+        agent reads how it differs (`get_template_status`)."""
+        return await self._notices.switch_notice(session, self.agent.id)
+
     async def _sender_role(
         self, session: AsyncSession, sender: str, content: Mapping[str, object]
     ) -> str | None:
@@ -1782,6 +1804,7 @@ def _message_own_event(
     thread_id: str | None,
     agent_id: str,
     sender_role: str | None,
+    switch_notice: str | None,
 ) -> Callable[[InboundEvent], OwnEvent]:
     """How an agent's own event for a message is built once the message is
     written."""
@@ -1806,6 +1829,7 @@ def _message_own_event(
             thread_id=thread_id,
             opening_message=opening_message_for(meta, agent_id),
             sender_role=sender_role,
+            switch_notice=switch_notice,
         )
         # Serialising runs once per agent per message, so only when it will
         # be seen.

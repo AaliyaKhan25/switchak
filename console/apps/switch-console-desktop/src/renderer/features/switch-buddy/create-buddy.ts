@@ -59,6 +59,7 @@ async function createBuddyAgent(input: {
       inputs: { agent_name: name, provider: input.provider, machine: input.machineId },
       filled: {},
       templateName: template.name,
+      templateId: BUDDY_TEMPLATE_ID,
       entryPoint: input.entryPoint,
     });
     if (result.kind === 'created') {

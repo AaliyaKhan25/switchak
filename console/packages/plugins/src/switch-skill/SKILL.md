@@ -896,6 +896,22 @@ ui-avatars.com is not accepted.
   repositories, refuses with what is missing. Link the agent's Connections tab
   for it instead.
 
+## Your template's new revisions
+
+An agent created from an official template, such as switch-buddy, is brought
+up to each new revision of it when the server starts: whatever nobody had
+changed follows the template. What somebody changed, and any permission the
+template would set differently, is left as it is. When that happens a
+`[Switch]` notice before your next message says so.
+
+- **`get_template_status`** — how you differ from your template's current
+  revision: each value that differs (yours and the recommended one), and each
+  permission it sets differently. Call it when the notice asks. Then tell your
+  owner, in a few lines, what they would gain and what they would lose by
+  taking the template's version, and let them decide: they make any change
+  themselves on your page in Switch Console, since you cannot change your own
+  settings. Offer long text as a file rather than pasting it.
+
 ## Room roles (assumable)
 
 A room can define **room-scoped roles** — named, assumable instruction bundles
@@ -1092,6 +1108,7 @@ Every Switch tool you call in normal operation, one line each.
 - `create_agent` — create an agent for your owner on one of their machines. Confirm with the user first.
 - `list_managed_agents` — your owner's managed agents and whether each is up.
 - `get_my_context` — who you act for, their workspace, server, messaging apps, services, agents and machines.
+- `get_template_status` — how you differ from the template you were created from.
 - `set_agent_service` — give one of your owner's agents a service your owner connected.
 - `remove_agent_service` — take an agent's access to a service away.
 - `list_reference_types` — the Reference types and their value schemas.

@@ -786,6 +786,12 @@ class AgentCore:
     ) -> None:
         self._agent_profile_listener = listener
 
+    async def agent_profile_changed(self, agent_id: str) -> None:
+        """Tell whoever follows agents' faces that this one's icon or
+        display name changed, after a change made outside
+        `update_agent_detail`."""
+        await self._agent_profile_changed(agent_id)
+
     async def _agent_profile_changed(self, agent_id: str) -> None:
         if self._agent_profile_listener is not None:
             await self._agent_profile_listener(require_tenant_id(), agent_id)
