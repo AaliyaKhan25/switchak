@@ -209,4 +209,71 @@ describe('chat drafts', () => {
     expect(textarea.value).toBe('typed while starting');
     expect(readChatDraft(key('user-a', 'ws-1', 'room-1'))?.text).toBe('typed while starting');
   });
+  it('keeps a send the window lost before the answer under its request id', async () => {
+    const textarea = await mount(
+      new ChatTimeline('room-1', api(vi.fn(() => new Promise<never>(() => {}))))
+    );
+    await type(textarea, 'in flight');
+    await pressEnter(textarea);
+    expect(textarea.value).toBe('');
+    expect(readChatDraft(key('user-a', 'ws-1', 'room-1'))).toEqual({
+      text: 'in flight',
+      mentions: [],
+      pendingRequestId: 'id-1',
+    });
+  });
+
+  it('drops the draft after a reload when that send did land', async () => {
+    localStorage.setItem(
+      key('user-a', 'ws-1', 'room-1'),
+      JSON.stringify({ text: 'in flight', mentions: [], pendingRequestId: 'req-1' })
+    );
+    const timeline = new ChatTimeline('room-1', api(vi.fn()));
+    timeline.apply({
+      messageId: 'm1',
+      seq: 1,
+      roomId: 'room-1',
+      sentAt: '2026-01-01T00:00:00Z',
+      sender: { clientId: 'c', name: 'Ada', kind: 'human', agentId: null, userId: 'user-a' },
+      source: 'console',
+      body: 'in flight',
+      format: null,
+      threadRootId: null,
+      attachments: [],
+      clientTxn: 'req-1:0',
+      namedAgentIds: [],
+      namedUserIds: [],
+      mentions: [],
+      threadReplyCount: 0,
+      threadLastReplySeq: null,
+    } as never);
+    const textarea = await mount(timeline);
+    expect(textarea.value).toBe('');
+    expect(localStorage.getItem(key('user-a', 'ws-1', 'room-1'))).toBeNull();
+  });
+
+  it('restores it when that send did not land, and sends it again under the same request id', async () => {
+    localStorage.setItem(
+      key('user-a', 'ws-1', 'room-1'),
+      JSON.stringify({ text: 'in flight', mentions: [], pendingRequestId: 'req-1' })
+    );
+    const send = vi.fn(async () => []);
+    const textarea = await mount(new ChatTimeline('room-1', api(send)));
+    expect(textarea.value).toBe('in flight');
+    await pressEnter(textarea);
+    await act(async () => {});
+    expect(send).toHaveBeenCalledWith('room-1', expect.objectContaining({ requestId: 'req-1' }));
+  });
+  it('sends an edited restored draft under a new request id', async () => {
+    localStorage.setItem(
+      key('user-a', 'ws-1', 'room-1'),
+      JSON.stringify({ text: 'in flight', mentions: [], pendingRequestId: 'req-1' })
+    );
+    const send = vi.fn(async () => []);
+    const textarea = await mount(new ChatTimeline('room-1', api(send)));
+    await type(textarea, 'in flight, edited');
+    await pressEnter(textarea);
+    await act(async () => {});
+    expect(send).toHaveBeenCalledWith('room-1', expect.objectContaining({ requestId: 'id-1' }));
+  });
 });

@@ -64,6 +64,8 @@ export type SendInput = {
   /** Each picked or matched mention's stretch of the body and whom it names. */
   mentionSpans: ChatMentionSpan[];
   files: ChatFile[];
+  /** The request id an earlier send of this same message used, when it may have landed; null for a new one. */
+  requestId: string | null;
 };
 
 export type TimelineApi = {
@@ -208,7 +210,7 @@ export class ChatTimeline {
   /** Send a message; returns its request id. */
   send(input: SendInput): string {
     const send: PendingSend = {
-      requestId: this.api.newId(),
+      requestId: input.requestId ?? this.api.newId(),
       body: input.body,
       threadRootId: input.threadRootId,
       mentionAgentIds: input.mentionAgentIds,

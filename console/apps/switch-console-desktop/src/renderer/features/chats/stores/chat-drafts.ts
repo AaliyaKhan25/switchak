@@ -1,7 +1,13 @@
 import type { MentionToken } from '../mentions';
 
-/** An unsent message: its text and the mentions picked in it, with who each names. */
-export type ChatDraft = { text: string; mentions: MentionToken[] };
+/**
+ * An unsent message: its text and the mentions picked in it, with who each names.
+ * `pendingRequestId` is the request id it was sent under when the window went
+ * before the server answered: the message may have landed, so the draft is
+ * dropped if it did, and sent again under that id if not, which the server
+ * takes once.
+ */
+export type ChatDraft = { text: string; mentions: MentionToken[]; pendingRequestId: string | null };
 
 const PREFIX = 'chat-draft:';
 
@@ -46,10 +52,11 @@ export function readChatDraft(key: string): ChatDraft | null {
     return null;
   }
   if (typeof parsed !== 'object' || parsed === null) return null;
-  const { text, mentions } = parsed as Record<string, unknown>;
+  const { text, mentions, pendingRequestId } = parsed as Record<string, unknown>;
   if (typeof text !== 'string' || !Array.isArray(mentions)) return null;
   return {
     text,
+    pendingRequestId: typeof pendingRequestId === 'string' ? pendingRequestId : null,
     mentions: mentions.filter(
       (mention): mention is MentionToken => isMention(mention) && mention.end <= text.length
     ),

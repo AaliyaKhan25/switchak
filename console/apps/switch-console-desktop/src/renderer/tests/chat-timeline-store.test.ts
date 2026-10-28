@@ -84,6 +84,7 @@ const input = (files: ChatFile[] = []) => ({
   mentionUserIds: [],
   mentionSpans: [],
   files,
+  requestId: null,
 });
 
 describe('ChatTimeline', () => {

@@ -12,7 +12,12 @@ import { Button } from '@renderer/lib/ui/button';
 import { Popover, PopoverContent, PopoverTitle, PopoverTrigger } from '@renderer/lib/ui/popover';
 import { cn } from '@renderer/utils/utils';
 import { agentInitials } from '@shared/core/agents/agent-avatar';
-import { type ChatAgent, type ChatMessage, chatAgentLabel } from '@shared/core/chats/chats';
+import {
+  type ChatAgent,
+  type ChatMessage,
+  chatAgentLabel,
+  requestIdOfClientTxn,
+} from '@shared/core/chats/chats';
 import { snippetOf } from '../chat-threads';
 import {
   agentTargets,
@@ -33,7 +38,7 @@ import {
 } from '../mentions';
 import { isInterruptAck } from '../stop-rows';
 import type { AgentActivity, ControlRequest } from '../stores/chat-activity-store';
-import { chatDraftKey, readChatDraft, writeChatDraft } from '../stores/chat-drafts';
+import { type ChatDraft, chatDraftKey, readChatDraft, writeChatDraft } from '../stores/chat-drafts';
 import type { ChatFile, ChatTimeline } from '../stores/chat-timeline-store';
 import { chatTitler } from '../stores/chats';
 import {
@@ -63,6 +68,30 @@ type Suggestion =
 
 /** Chats just created here, whose composer takes focus when it first shows. */
 const focusOnOpen = new Set<string>();
+/** A send of a draft made before a reload, which may have landed: its id, and the draft as sent. */
+type PendingResend = { requestId: string; text: string; mentions: MentionToken[] };
+
+function pendingOf(draft: ChatDraft | null): PendingResend | null {
+  return draft?.pendingRequestId
+    ? { requestId: draft.pendingRequestId, text: draft.text, mentions: draft.mentions }
+    : null;
+}
+
+/** Whether the draft is still exactly what was sent before, so it may go again under the same id. */
+function unchangedSince(
+  resend: PendingResend | null,
+  text: string,
+  mentions: MentionToken[],
+  files: number
+): resend is PendingResend {
+  return (
+    resend !== null &&
+    files === 0 &&
+    resend.text === text &&
+    JSON.stringify(resend.mentions) === JSON.stringify(mentions)
+  );
+}
+
 /** Composers on screen by chat; a chat's stream event can open it before its create returns. */
 const mountedFocus = new Map<string, () => void>();
 
@@ -194,6 +223,10 @@ export const ChatComposer = observer(function ChatComposer({
   );
   /** The send that emptied the composer: its text stays kept until the server has taken it. */
   const [sending, setSending] = useState<string | null>(null);
+  /** A send of the draft on screen made before a reload, which may have landed: its id and text. */
+  const [resend, setResend] = useState<PendingResend | null>(() =>
+    pendingOf(readChatDraft(draftKey))
+  );
   const sendState =
     sending === null
       ? null
@@ -212,13 +245,29 @@ export const ChatComposer = observer(function ChatComposer({
       setDraft(kept?.text ?? '');
       setPicked(kept?.mentions ?? []);
       setSending(null);
+      setResend(pendingOf(kept));
     }
+  }
+  // The send before the reload did land: its draft is done with.
+  const landed =
+    unchangedSince(resend, draft, picked, 0) &&
+    timeline.messages.some(
+      (message) => requestIdOfClientTxn(message.clientTxn) === resend.requestId
+    );
+  if (landed) {
+    setDraft('');
+    setPicked([]);
+    setResend(null);
   }
   useEffect(() => {
     if (readFrom !== draftKey) return;
     if (draft === '' && sendState !== null && sendState !== 'sent') return;
-    writeChatDraft(draftKey, { text: draft, mentions: picked });
-  }, [draftKey, readFrom, draft, picked, sendState]);
+    writeChatDraft(draftKey, {
+      text: draft,
+      mentions: picked,
+      pendingRequestId: unchangedSince(resend, draft, picked, 0) ? resend.requestId : null,
+    });
+  }, [draftKey, readFrom, draft, picked, sendState, resend]);
   /** A pick the next edit inserts, placed once that edit has moved the others. */
   const pendingPick = useRef<MentionToken | null>(null);
   /** Picked mentions an edit removed, so undo and redo can bring them back with who they named. */
@@ -377,7 +426,13 @@ export const ChatComposer = observer(function ChatComposer({
       threadRootId: replyTo?.messageId ?? null,
       ...mentionPayload(sent, groupChats),
       files: files.map(({ file }) => chatFile(file)),
+      // The same message sent before a reload goes under the same id, so it lands once.
+      requestId: unchangedSince(resend, draft, picked, files.length) ? resend.requestId : null,
     });
+    // Kept under its request id until the server takes it: a reload meanwhile
+    // finds out whether it landed rather than offering it to be sent twice.
+    writeChatDraft(draftKey, { text: draft, mentions: picked, pendingRequestId: requestId });
+    setResend({ requestId, text: draft, mentions: picked });
     setSending(requestId);
     void chatTitler.sent(serverId, timeline.roomId, body);
     setDraft('');
