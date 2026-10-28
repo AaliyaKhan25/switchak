@@ -140,7 +140,7 @@ RemovalReason = Literal["access", "unlisted"]
 
 # Long enough for a welcome with tips; a greeting is not a document.
 GREETING_MAX_CHARS = 4000
-RoomControl = Literal["interrupt", "reset", "compact"]
+RoomControl = Literal["interrupt", "reset", "compact", "retry"]
 
 
 def _hash(payload: dict[str, object]) -> str:
@@ -1685,16 +1685,32 @@ class ChatService:
         request_id: str,
         agent_id: str,
         command: RoomControl,
+        message_id: str | None,
     ) -> str:
         """Post `!<command> @agent` as the user; the command's event id.
+
+        `retry` names the room message whose turn to run again (`message_id`):
+        one the agent took a turn for, sent by the caller or in a room the
+        caller manages. It is posted as `!retry @agent <message id>`.
 
         Written as the `com.switch.command` event a platform bridge writes for
         a typed `!interrupt`, so the agents' own command handling, addressing
         gate and in-room acknowledgement apply unchanged. The addressing check
         here only turns a refusal into an answer instead of a room message.
         """
+        if (command == "retry") != (message_id is not None):
+            raise ChatError(
+                422,
+                "INVALID_CONTROL",
+                "A retry names the message to run again, and only a retry does.",
+            )
         payload_hash = _hash(
-            {"roomId": room_id, "agentId": agent_id, "command": command}
+            {
+                "roomId": room_id,
+                "agentId": agent_id,
+                "command": command,
+                **({"messageId": message_id} if message_id is not None else {}),
+            }
         )
         async with tenant_session(self.session_factory, tenant_id) as session:
             room, client = await self.require_member(session, tenant_id, user, room_id)
@@ -1714,6 +1730,11 @@ class ChatService:
             )
             if not decision.allowed:
                 raise ChatError(403, "AGENT_NOT_ALLOWED", decision.refusal)
+            if command == "retry":
+                assert message_id is not None
+                await self._require_retryable(
+                    session, tenant_id, user, room, client, agent, message_id
+                )
             # `!interrupt` stops the agent's running turn wherever it runs; this check can race a turn change.
             if command == "interrupt":
                 turn = await self._activity_store.newest_running_turn(session, agent.id)
@@ -1754,7 +1775,8 @@ class ChatService:
                     event_type=COMMAND_EVENT_TYPE,
                     content={
                         "command": command,
-                        "args": f"@{agent.name}",
+                        "args": f"@{agent.name}"
+                        + (f" {message_id}" if message_id is not None else ""),
                         "user_id": client.transport_user_id,
                         "user_name": user.name,
                     },
@@ -1774,6 +1796,48 @@ class ChatService:
             await session.commit()
         routed.committed()
         return command_id
+
+    async def _require_retryable(
+        self,
+        session: AsyncSession,
+        tenant_id: str,
+        user: User,
+        room: Room,
+        client: Client,
+        agent: Agent,
+        message_id: str,
+    ) -> None:
+        """Refuse a retry of anything but a message of this room the agent took a
+        turn for, asked by whoever sent it or someone who manages the room."""
+        message = (
+            await session.execute(
+                select(Message).where(
+                    Message.room_id == room.id,
+                    Message.transport_event_id == message_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if message is None:
+            raise ChatError(
+                404, "MESSAGE_NOT_FOUND", "That message is not in this chat."
+            )
+        if message.sender_client_id != client.id and not await self.can_manage(
+            session, tenant_id, user, room
+        ):
+            raise ChatError(
+                403,
+                "NOT_YOUR_MESSAGE",
+                "Only whoever sent that message, or someone who manages the chat, can retry it.",
+            )
+        turn = await self._activity_store.turn_for_message(
+            session, agent.id, room.id, message_id
+        )
+        if turn is None:
+            raise ChatError(
+                409,
+                "NOTHING_TO_RETRY",
+                f"{agent.name} took no turn for that message, so there is nothing to retry.",
+            )
 
     async def warm(
         self, tenant_id: str, user: User, room_id: str, *, agent_id: str

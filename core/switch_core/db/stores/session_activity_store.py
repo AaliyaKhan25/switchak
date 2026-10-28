@@ -279,6 +279,23 @@ class AgentSessionActivityStore:
         )
         return list(result.scalars())
 
+    async def turn_for_message(
+        self, session: AsyncSession, agent_id: str, room_id: str, message_id: str
+    ) -> AgentSessionActivityItem | None:
+        """The agent's latest turn started by `message_id` in `room_id`, if it took one."""
+        result = await session.execute(
+            select(AgentSessionActivityItem)
+            .where(
+                AgentSessionActivityItem.agent_id == agent_id,
+                AgentSessionActivityItem.room_id == room_id,
+                AgentSessionActivityItem.message_id == message_id,
+                AgentSessionActivityItem.item_id == TURN_ITEM_ID,
+            )
+            .order_by(AgentSessionActivityItem.created_at.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
     async def newest_running_turn(
         self, session: AsyncSession, agent_id: str
     ) -> AgentSessionActivityItem | None:

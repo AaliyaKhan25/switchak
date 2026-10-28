@@ -1435,3 +1435,55 @@ it('reports the turn a fault ended, and the fault, before it stops', async () =>
   // The host stopped on its own, faulted, once the reports were out.
   expect(String(await host.stop())).toContain('HOST_FAULTED');
 });
+
+it('runs a room message again on a retry asked for there, and says so when it cannot', async () => {
+  const host = await start({ rooms: true });
+  const asks = () =>
+    host.parent.sent.filter(
+      (message): message is typeof message & { id: number; ask: Record<string, unknown> } =>
+        message.kind === 'ask' && message.ask?.type !== 'room-instructions'
+    );
+  const retry = (commandId: string): Command => ({
+    ...relayed('current', commandId, { type: 'message.retry', messageId: 'message-1' }),
+    origin: {
+      actorId: '@person:test',
+      surface: 'switch-web',
+      roomId: 'room',
+      threadId: 'thread',
+      messageId: 'retry-command',
+    },
+  });
+  try {
+    await host.parent.ask({ type: 'room', handoff: roomMessage(1, 'work on it') });
+    await until(() => expect(host.turns).toHaveLength(1));
+    // Still running: refused, and the room is told once, however often it is relayed.
+    expect(
+      await host.parent.ask({ type: 'command', command: retry('early'), requesterName: null })
+    ).toMatchObject({ ok: true, value: { status: 'rejected' } });
+    await until(() => expect(asks()).toHaveLength(1));
+    expect(asks()[0]!.ask).toMatchObject({
+      type: 'room-reply',
+      roomId: 'room',
+      threadId: 'thread',
+    });
+    await host.parent.ask({ type: 'command', command: retry('early'), requesterName: null });
+
+    host.emit({
+      type: 'turn.completed',
+      turnId: host.turns[0]!.turnId,
+      outcome: 'error',
+      message: 'model not supported',
+      usage: [],
+    });
+    await until(() => expect(asks()).toHaveLength(2)); // the host's "the turn failed" post
+    expect(
+      await host.parent.ask({ type: 'command', command: retry('again'), requesterName: null })
+    ).toMatchObject({ ok: true, value: { status: 'applied' } });
+    await until(() => expect(host.turns).toHaveLength(2));
+    expect(host.turns[1]!.text).toBe(host.turns[0]!.text);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(asks()).toHaveLength(2);
+  } finally {
+    await host.stop();
+  }
+}, 20000);

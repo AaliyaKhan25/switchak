@@ -138,6 +138,8 @@ export class HostedSession {
     private readonly events: Journal<ServerEvent>,
     private readonly inbox: Journal<RecordEntry>
   ) {
+    // Every host from this one on runs `message.retry`; one built before says nothing, meaning no.
+    config.session.capabilities.retry = true;
     const snapshot: Snapshot = {
       contractVersion: 1,
       throughSequence: 0,
@@ -693,10 +695,39 @@ export class HostedSession {
     return result;
   }
 
+  /**
+   * A retry as the room message it repeats: the message's turn run again, under
+   * the retry's own id and tied to the same message, so nothing is posted twice
+   * and the new turn shows where the failed one did. Only a turn that ended
+   * without an answer is run again.
+   */
+  private retried(command: Command): Command {
+    if (command.body.type !== 'message.retry') return command;
+    const { messageId } = command.body;
+    const original = [...this.commands.values()]
+      .filter(
+        (each) =>
+          each.body.type === 'message.send' &&
+          each.origin.messageId === messageId &&
+          each.commandId !== command.commandId
+      )
+      .at(-1);
+    if (!original || original.body.type !== 'message.send')
+      throw new Error('NOT_FOUND: this session has no turn for that message to run again.');
+    const turn = this.snapshot().turns.find((each) => each.turnId === original.commandId);
+    if (turn?.status !== 'error' && turn?.status !== 'interrupted')
+      throw new Error('SESSION_BUSY: only a turn that ended without an answer can run again.');
+    return { ...command, origin: original.origin, body: original.body };
+  }
+
   private async accept(command: Command): Promise<Snapshot['commandStatuses'][number]> {
     if (this.shuttingDown) throw new Error('HOST_STOPPING');
     const { session } = this.snapshot();
     if (command.sessionId !== session.sessionId) throw new Error('NOT_FOUND: session mismatch.');
+    // Asked again (a double press, a reconnect replaying it): the answer it already has.
+    if (command.body.type === 'message.retry' && this.commands.has(command.commandId))
+      return this.status(command.commandId);
+    command = this.retried(command);
     const previous = this.commands.get(command.commandId);
     if (previous) {
       if (!isDeepStrictEqual(previous, command)) throw new Error('IDEMPOTENCY_CONFLICT');

@@ -29,6 +29,8 @@ export const agentActivities = new AgentActivities(
     roomActivity: (serverId, roomId) => rpc.chats.roomActivity(serverId, roomId),
     roomMessages: (serverId, roomId) => chatsStore.timelines.peek(serverId, roomId)?.messages ?? [],
     control: (input) => rpc.chats.control(input),
+    retrySupport: (hostAgentKey, sessionId) =>
+      rpc.sdkHost.sessionRetrySupport(hostAgentKey, sessionId),
     answerApproval: (input) => rpc.chats.answerApproval(input),
   },
   sessionStorage

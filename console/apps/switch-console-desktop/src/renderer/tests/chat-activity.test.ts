@@ -407,6 +407,7 @@ function fakeApi(snapshots: RoomActivity[], messages: ChatMessage[] = []) {
       return snapshots.shift() ?? { items: [], approvals: [] };
     },
     roomMessages: () => messages,
+    retrySupport: async () => 'yes' as const,
     control: async (input) => {
       controls.push(input);
       return 'cmd-1';
@@ -475,6 +476,64 @@ describe('AgentActivities', () => {
     const activity = activities.acquire('server', 'tenant', 'room-1', 'agent-a');
     await vi.waitFor(() => expect(activity.turns().size).toBe(1));
     expect(activity.working).toBe(true);
+    activities.release(activity);
+  });
+
+  it('asks for a retry of a failed turn once, however often it is pressed', async () => {
+    const { api, controls } = fakeApi([
+      { items: [row('t1', 'turn', { status: 'error' })], approvals: [] },
+    ]);
+    let answer: (commandId: string) => void = () => {};
+    api.control = (input) => {
+      controls.push(input);
+      return new Promise((resolve) => (answer = resolve));
+    };
+    const activities = new AgentActivities(api, memoryStorage());
+    const activity = activities.acquire('server', 'tenant', 'room-1', 'agent-a');
+    await vi.waitFor(() => expect(activity.turns().size).toBe(1));
+    const turn = activity.turns().get('m-t1')!;
+
+    const first = activity.retry(turn);
+    void activity.retry(turn);
+    expect(activity.retries.get('t1')?.state).toBe('sending');
+    answer('cmd-retry');
+    await first;
+    void activity.retry(turn);
+    expect(controls).toEqual([
+      expect.objectContaining({ command: 'retry', messageId: 'm-t1', agentId: 'agent-a' }),
+    ]);
+    expect(activity.retries.get('t1')).toMatchObject({ state: 'requested', error: null });
+    activities.release(activity);
+  });
+
+  it('sends a retry whose answer was lost again under the same request id, and says why one failed', async () => {
+    const { api, controls } = fakeApi([
+      { items: [row('t1', 'turn', { status: 'error' })], approvals: [] },
+    ]);
+    const outcomes = [
+      () => Promise.reject(rpcError('GatewayError', 'socket hang up', { kind: 'network' })),
+      () =>
+        Promise.reject(
+          rpcError('ChatApiError', 'helper took no turn for that message.', {
+            status: 409,
+            code: 'NOTHING_TO_RETRY',
+          })
+        ),
+    ];
+    api.control = (input) => {
+      controls.push(input);
+      return outcomes.shift()!();
+    };
+    const activities = new AgentActivities(api, memoryStorage());
+    const activity = activities.acquire('server', 'tenant', 'room-1', 'agent-a');
+    await vi.waitFor(() => expect(activity.turns().size).toBe(1));
+    const turn = activity.turns().get('m-t1')!;
+    await activity.retry(turn);
+    await activity.retry(turn);
+    const [lost, again] = controls as { requestId: string }[];
+    expect(again!.requestId).toBe(lost!.requestId);
+    expect(activity.retries.get('t1')?.state).toBe('failed');
+    expect(activity.retries.get('t1')?.error).toBeTruthy();
     activities.release(activity);
   });
 
@@ -562,6 +621,7 @@ describe('AgentActivities', () => {
         requestId: activity.controls[0].requestId,
         agentId: 'agent-a',
         command: 'interrupt',
+        messageId: null,
       },
     ]);
     expect(activity.controls[0]).toMatchObject({ state: 'requested', commandId: 'cmd-1' });

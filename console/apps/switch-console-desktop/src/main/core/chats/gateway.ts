@@ -289,12 +289,23 @@ export async function fetchRoomActivity(
 export async function sendChatControl(
   server: SwitchServer,
   roomId: string,
-  input: { requestId: string; agentId: string; command: ChatControlCommand }
+  input: {
+    requestId: string;
+    agentId: string;
+    command: ChatControlCommand;
+    /** The message a `retry` runs again; null for every other control. */
+    messageId: string | null;
+  }
 ): Promise<string> {
   return (
     await json(server, `${room(roomId)}/controls`, chatControlAcceptedSchema, {
       method: 'POST',
-      body: input,
+      body: {
+        requestId: input.requestId,
+        agentId: input.agentId,
+        command: input.command,
+        ...(input.messageId !== null ? { messageId: input.messageId } : {}),
+      },
     })
   ).commandId;
 }

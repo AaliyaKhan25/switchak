@@ -13,6 +13,7 @@ import { agentHasOwnUser } from './host-permissions';
 import { Redactions } from './redaction';
 import {
   followupCommandId,
+  retryRefusal,
   roomControlFollowup,
   roomControlRefusal,
 } from './room-control-followup';
@@ -753,6 +754,27 @@ export async function runSharedHost(
           .catch((error: unknown) =>
             console.warn(
               `Could not tell room ${owed.roomId} that its ${owed.action} was refused: ${String(error)}`
+            )
+          );
+      // A retry asked for from a room that cannot run is answered there, where it was asked.
+      if (
+        command.body.type === 'message.retry' &&
+        status?.status === 'rejected' &&
+        !repeated &&
+        parentChannel &&
+        options.roomConnection &&
+        command.origin.roomId
+      )
+        void parentChannel
+          .ask({
+            type: 'room-reply',
+            roomId: command.origin.roomId,
+            threadId: command.origin.threadId,
+            body: retryRefusal(status.message),
+          })
+          .catch((error: unknown) =>
+            console.warn(
+              `Could not tell room ${command.origin.roomId} that its retry was refused: ${String(error)}`
             )
           );
       // A fresh conversation starts with the instructions this host was given,

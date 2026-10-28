@@ -287,12 +287,14 @@ export const chatsController = createRPCController({
     requestId: string;
     agentId: string;
     command: ChatControlCommand;
+    messageId: string | null;
   }): Promise<string> =>
     onServer(params.serverId, (server) =>
       sendChatControl(server, params.roomId, {
         requestId: params.requestId,
         agentId: params.agentId,
         command: params.command,
+        messageId: params.messageId,
       })
     ),
   answerApproval: (params: {

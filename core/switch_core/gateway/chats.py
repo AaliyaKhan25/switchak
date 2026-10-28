@@ -141,6 +141,8 @@ class ControlRequest(CamelModel):
     request_id: str
     agent_id: str
     command: RoomControl
+    # The message whose turn a `retry` runs again; absent for every other control.
+    message_id: str | None = None
 
 
 class ControlAccepted(CamelModel):
@@ -460,6 +462,7 @@ async def send_control(
         request_id=req.request_id,
         agent_id=req.agent_id,
         command=req.command,
+        message_id=req.message_id,
     )
     return ControlAccepted(command_id=command_id)
 
