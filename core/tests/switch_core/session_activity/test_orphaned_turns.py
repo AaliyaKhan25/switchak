@@ -12,12 +12,13 @@ from sqlalchemy import update
 from switch_core.db.models import (
     AgentConnectionRecord,
     AgentSessionActivityItem,
+    AgentSessionPlacement,
     SwitchCoreProcess,
 )
 from switch_core.session_activity.maintenance import end_orphaned_turns_once
 from switch_core.session_activity.service import ORPHANED_TURN_TEXT
 
-from .conftest import AGENT
+from .conftest import AGENT, make_room
 
 
 async def _turn(service, session_id: str, status: str) -> None:
@@ -40,13 +41,35 @@ async def _turn(service, session_id: str, status: str) -> None:
     )
 
 
-async def _quiet(session_factory, session_id: str) -> None:
+async def _quiet(session_factory, session_id: str, minutes: int = 40) -> None:
     async with session_factory() as db, db.begin():
         await db.execute(
             update(AgentSessionActivityItem)
             .where(AgentSessionActivityItem.session_id == session_id)
-            .values(updated_at=datetime.now(UTC) - timedelta(minutes=30))
+            .values(updated_at=datetime.now(UTC) - timedelta(minutes=minutes))
         )
+
+
+async def _connect(session_factory) -> str:
+    """A live connection for the agent, on a process holding its lease."""
+    process_id = f"proc-{uuid.uuid4().hex[:8]}"
+    connection_id = f"conn-{uuid.uuid4().hex[:8]}"
+    async with session_factory() as db, db.begin():
+        db.add(SwitchCoreProcess(id=process_id))
+        await db.flush()
+        db.add(
+            AgentConnectionRecord(
+                id=connection_id,
+                agent_id=AGENT,
+                process_id=process_id,
+                incarnation=1,
+                scope="all",
+                delivery_filter="addressed",
+                spawn_capable=False,
+                transport="sse",
+            )
+        )
+    return connection_id
 
 
 async def _status(service, session_id: str) -> tuple[str, int, str]:
@@ -67,27 +90,36 @@ async def test_an_offline_agents_quiet_turn_is_ended(service, session_factory) -
     assert (await _status(service, "done"))[0] == "completed"
 
 
-async def test_a_connected_agents_turn_is_left_running(
+async def test_a_connected_agent_keeps_a_turn_its_session_is_still_on(
     service, session_factory
 ) -> None:
-    await _turn(service, "live", "running")
-    await _quiet(session_factory, "live")
-    process_id = f"proc-{uuid.uuid4().hex[:8]}"
+    connection_id = await _connect(session_factory)
     async with session_factory() as db, db.begin():
-        db.add(SwitchCoreProcess(id=process_id))
-        await db.flush()
+        room_id = await make_room(db, member=AGENT)
         db.add(
-            AgentConnectionRecord(
-                id=f"conn-{uuid.uuid4().hex[:8]}",
+            AgentSessionPlacement(
                 agent_id=AGENT,
-                process_id=process_id,
-                incarnation=1,
-                scope="all",
-                delivery_filter="addressed",
-                spawn_capable=False,
-                transport="sse",
+                session_id="placed",
+                room_id=room_id,
+                connection_id=connection_id,
             )
         )
+    await _turn(service, "placed", "running")
+    await _turn(service, "recent", "running")
+    await _quiet(session_factory, "placed")
+    await _quiet(session_factory, "recent", minutes=20)
 
     await end_orphaned_turns_once(session_factory)
-    assert (await _status(service, "live"))[0] == "running"
+    assert (await _status(service, "placed"))[0] == "running"
+    assert (await _status(service, "recent"))[0] == "running"
+
+
+async def test_a_connected_agents_dead_session_has_its_turn_ended(
+    service, session_factory
+) -> None:
+    await _connect(session_factory)
+    await _turn(service, "faulted", "running")
+    await _quiet(session_factory, "faulted")
+
+    await end_orphaned_turns_once(session_factory)
+    assert (await _status(service, "faulted"))[0] == "interrupted"

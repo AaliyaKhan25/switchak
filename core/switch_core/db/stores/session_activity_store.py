@@ -7,9 +7,19 @@ transaction, and the bound tenant scopes every read through row-level security.
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import delete, exists, func, literal, or_, select, update
+from sqlalchemy import (
+    ColumnElement,
+    and_,
+    delete,
+    exists,
+    func,
+    literal,
+    or_,
+    select,
+    update,
+)
 from sqlalchemy.dialects.postgresql import insert
 
 from switch_core.db.models import (
@@ -17,6 +27,7 @@ from switch_core.db.models import (
     AgentConnectionRecord,
     AgentSession,
     AgentSessionActivityItem,
+    AgentSessionPlacement,
     ApprovalRequest,
     SwitchCoreProcess,
 )
@@ -151,31 +162,63 @@ class AgentSessionActivityStore:
         self,
         session: AsyncSession,
         *,
-        quiet_for: timedelta,
+        offline_quiet: timedelta,
+        session_quiet: timedelta,
         lease_ttl: timedelta,
         heartbeat_ttl: timedelta,
         text: str,
     ) -> list[tuple[str, str, str]]:
-        """End, as interrupted, the turns still queued or running that no
-        host can finish: nothing in the turn has moved for `quiet_for`, and
-        its agent has no live connection (open, on a process holding its
-        lease) and no fresh heartbeat. The revision moves on, so the change is
-        announced like a host's. Returns (agent, session, turn) of each."""
+        """End, as interrupted, the turns still queued or running that their
+        session can no longer finish, keyed on the session rather than the
+        agent:
+
+        - its session is live when it is placed (`AgentSessionPlacement`) over
+          a connection whose process holds its lease, or when a heartbeat for
+          the turn's room is fresh. A live session's turn is never ended;
+        - otherwise the turn is ended once nothing in it has moved for
+          `offline_quiet` if the agent has no live connection and no fresh
+          heartbeat at all, or for the longer `session_quiet` if the agent is
+          still connected (its controller, or another session, is up while
+          this session went quiet).
+
+        The revision moves on, so the change is announced like a host's, and a
+        host that was in fact still working overrides it with its next report.
+        Returns (agent, session, turn) of each."""
         other = AgentSessionActivityItem.__table__.alias("other")
         turn = AgentSessionActivityItem
-        quiet = ~exists().where(
-            other.c.tenant_id == turn.tenant_id,
-            other.c.agent_id == turn.agent_id,
-            other.c.session_id == turn.session_id,
-            other.c.turn_id == turn.turn_id,
-            other.c.updated_at > func.now() - literal(quiet_for),
+
+        def quiet(for_: timedelta) -> ColumnElement[bool]:
+            return ~exists().where(
+                other.c.tenant_id == turn.tenant_id,
+                other.c.agent_id == turn.agent_id,
+                other.c.session_id == turn.session_id,
+                other.c.turn_id == turn.turn_id,
+                other.c.updated_at > func.now() - literal(for_),
+            )
+
+        def held(process_id: Any) -> ColumnElement[bool]:
+            return exists().where(
+                SwitchCoreProcess.id == process_id,
+                SwitchCoreProcess.stopped_at.is_(None),
+                SwitchCoreProcess.beat_at > func.now() - literal(lease_ttl),
+            )
+
+        placed = exists().where(
+            AgentSessionPlacement.agent_id == turn.agent_id,
+            AgentSessionPlacement.session_id == turn.session_id,
+            AgentConnectionRecord.id == AgentSessionPlacement.connection_id,
+            held(AgentConnectionRecord.process_id),
+        )
+        beating_here = exists().where(
+            AgentSession.agent_id == turn.agent_id,
+            AgentSession.room_id == turn.room_id,
+            AgentSession.lifecycle == "heartbeat",
+            AgentSession.last_seen_at > func.now() - literal(heartbeat_ttl),
         )
         connected = exists().where(
             AgentConnectionRecord.agent_id == turn.agent_id,
             AgentConnectionRecord.closed_at.is_(None),
-            SwitchCoreProcess.id == AgentConnectionRecord.process_id,
-            SwitchCoreProcess.stopped_at.is_(None),
-            SwitchCoreProcess.beat_at > func.now() - literal(lease_ttl),
+            held(AgentConnectionRecord.process_id),
         )
         beating = exists().where(
             AgentSession.agent_id == turn.agent_id,
@@ -187,9 +230,12 @@ class AgentSessionActivityStore:
             .where(
                 turn.item_id == TURN_ITEM_ID,
                 turn.status.in_(("queued", "running")),
-                quiet,
-                ~connected,
-                ~beating,
+                ~placed,
+                ~beating_here,
+                or_(
+                    and_(quiet(offline_quiet), ~connected, ~beating),
+                    quiet(session_quiet),
+                ),
             )
             .values(
                 status="interrupted",

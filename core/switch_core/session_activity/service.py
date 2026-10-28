@@ -78,6 +78,9 @@ NOTICE_PREFIX = "notice:"
 # offline and nothing in it has moved for this long, so no one is shown it as
 # still working. A live session's turn is never ended here.
 ORPHANED_TURN_QUIET = timedelta(minutes=10)
+# Longer when the agent is still connected and only the turn's own session
+# went quiet: a tool can run that long without a step to report.
+ORPHANED_SESSION_QUIET = timedelta(minutes=30)
 ORPHANED_TURN_TEXT = (
     "Ended by Switch: the agent's session went away before this turn finished."
 )
@@ -560,16 +563,16 @@ class AgentSessionActivityService:
             return row
 
     async def end_orphaned_turns(self) -> list[tuple[str, str, str]]:
-        """End the bound tenant's turns whose agent is gone and that nothing
-        has moved for `ORPHANED_TURN_QUIET` (`end_orphaned_turns` on the
-        store). Run on a timer."""
+        """End the bound tenant's turns whose session is gone
+        (`end_orphaned_turns` on the store). Run on a timer."""
         async with (
             tenant_session(self._sessions, require_tenant_id()) as db,
             db.begin(),
         ):
             return await self._activity.end_orphaned_turns(
                 db,
-                quiet_for=ORPHANED_TURN_QUIET,
+                offline_quiet=ORPHANED_TURN_QUIET,
+                session_quiet=ORPHANED_SESSION_QUIET,
                 lease_ttl=LEASE_TTL,
                 heartbeat_ttl=AgentSessionStore.ALWAYS_ON_TTL,
                 text=ORPHANED_TURN_TEXT,
