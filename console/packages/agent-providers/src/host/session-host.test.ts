@@ -1734,6 +1734,36 @@ describe('retrying a room message', () => {
     await until(() => expect(next.adapter.sendTurn).toHaveBeenCalledTimes(1));
   });
 
+  it('runs a message again after its retry failed too, going by its latest turn', async () => {
+    const { host, emit, adapter } = await start('codex');
+    await host.command(roomMessage('first'));
+    await until(() => expect(host.snapshot().turns[0]?.status).toBe('running'));
+    emit({
+      type: 'turn.completed',
+      turnId: 'first',
+      outcome: 'error',
+      message: 'model',
+      usage: [],
+    });
+    await until(() => expect(host.snapshot().turns[0]?.status).toBe('error'));
+    expect((await host.command(retry('again'))).status).toBe('applied');
+    await until(() => expect(host.snapshot().turns[1]?.status).toBe('running'));
+    // While the retry runs, another is refused: its latest turn has not ended.
+    await expect(host.command(retry('too-soon'))).rejects.toThrow('SESSION_BUSY');
+    emit({
+      type: 'turn.completed',
+      turnId: 'again',
+      outcome: 'error',
+      message: 'model',
+      usage: [],
+    });
+    await until(() => expect(host.snapshot().turns[1]?.status).toBe('error'));
+
+    expect((await host.command(retry('third'))).status).toBe('applied');
+    await until(() => expect(adapter.sendTurn).toHaveBeenCalledTimes(3));
+    expect(host.snapshot().turns.map((turn) => turn.turnId)).toEqual(['first', 'again', 'third']);
+  });
+
   it('refuses to run again a turn still going, or a message it never worked on', async () => {
     const { host } = await start('codex');
     await expect(host.command(retry('nothing'))).rejects.toThrow('NOT_FOUND');
