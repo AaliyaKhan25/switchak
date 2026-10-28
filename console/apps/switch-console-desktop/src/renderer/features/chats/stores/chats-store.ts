@@ -218,6 +218,28 @@ export class ChatsStore {
       });
   }
 
+  /**
+   * Read every chat's summary again. What a summary says of its agents, such
+   * as a name, can change with no message or summary on the feed (an agent
+   * renamed), and the participants and mention suggestions are read from it.
+   */
+  async refreshSummaries(): Promise<void> {
+    const serverId = this.serverId;
+    if (!serverId) return;
+    try {
+      const chats = await this.api.list(serverId);
+      if (serverId !== this.serverId) return;
+      runInAction(() => {
+        for (const chat of chats) this.upsert(chat);
+      });
+    } catch (error) {
+      if (serverId !== this.serverId) return;
+      runInAction(() => {
+        this.listError = failureText(error, 'Your chats could not be listed.');
+      });
+    }
+  }
+
   private relisting = false;
 
   private async relist(serverId: string): Promise<void> {

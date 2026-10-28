@@ -105,6 +105,20 @@ function setup(
 }
 
 describe('ChatsStore', () => {
+  it('reads every summary again, so a renamed agent shows its new name', async () => {
+    let name = 'ada';
+    const { store } = setup(async () => {
+      const chat = summary('r1', 1);
+      return [{ ...chat, agents: [{ ...chat.agents[0], name }] }];
+    });
+    await store.connect('s1');
+    expect(store.chats.get('r1')?.agents[0].name).toBe('ada');
+
+    name = 'blair';
+    await store.refreshSummaries();
+    expect(store.chats.get('r1')?.agents[0].name).toBe('blair');
+  });
+
   it('stops the feed of the server it no longer follows', async () => {
     const { store, api } = setup(async () => []);
     await store.connect('s1');

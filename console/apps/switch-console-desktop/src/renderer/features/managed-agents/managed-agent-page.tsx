@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Plus } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { AgentIdentityActions } from '@renderer/features/agent-identity/agent-identity-actions';
+import { agentNamesChanged } from '@renderer/features/agent-identity/agent-names-changed';
 import { LocalDirectorySelector } from '@renderer/features/locations/components/add-agent-modal/local-directory-selector';
 import type {
   FormState,
@@ -155,6 +156,7 @@ function ManagedAgentPageContent({
       if (edit.displayName !== undefined) {
         await rpc.workspaces.updateAgentDisplayName({ ...target, displayName: edit.displayName });
         done.push('its display name');
+        agentNamesChanged();
       }
       if (edit.description !== undefined) {
         await rpc.workspaces.updateAgentDescription({ ...target, description: edit.description });
