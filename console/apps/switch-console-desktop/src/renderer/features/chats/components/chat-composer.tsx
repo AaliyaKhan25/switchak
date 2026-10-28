@@ -69,24 +69,32 @@ type Suggestion =
 /** Chats just created here, whose composer takes focus when it first shows. */
 const focusOnOpen = new Set<string>();
 /** A send of a draft made before a reload, which may have landed: its id, and the draft as sent. */
-type PendingResend = { requestId: string; text: string; mentions: MentionToken[] };
+type PendingResend = {
+  requestId: string;
+  text: string;
+  mentions: MentionToken[];
+  threadRootId: string | null;
+};
 
 function pendingOf(draft: ChatDraft | null): PendingResend | null {
   return draft?.pendingRequestId
-    ? { requestId: draft.pendingRequestId, text: draft.text, mentions: draft.mentions }
+    ? {
+        requestId: draft.pendingRequestId,
+        text: draft.text,
+        mentions: draft.mentions,
+        threadRootId: draft.pendingThreadRootId,
+      }
     : null;
 }
 
-/** Whether the draft is still exactly what was sent before, so it may go again under the same id. */
+/** Whether the draft is still exactly what was sent before the reload (text and mentions). */
 function unchangedSince(
   resend: PendingResend | null,
   text: string,
-  mentions: MentionToken[],
-  files: number
+  mentions: MentionToken[]
 ): resend is PendingResend {
   return (
     resend !== null &&
-    files === 0 &&
     resend.text === text &&
     JSON.stringify(resend.mentions) === JSON.stringify(mentions)
   );
@@ -223,7 +231,10 @@ export const ChatComposer = observer(function ChatComposer({
   );
   /** The send that emptied the composer: its text stays kept until the server has taken it. */
   const [sending, setSending] = useState<string | null>(null);
-  /** A send of the draft on screen made before a reload, which may have landed: its id and text. */
+  /**
+   * A send of the restored draft made before a reload, which may have landed:
+   * read from storage only, and gone once that draft is sent again or edited away.
+   */
   const [resend, setResend] = useState<PendingResend | null>(() =>
     pendingOf(readChatDraft(draftKey))
   );
@@ -250,7 +261,7 @@ export const ChatComposer = observer(function ChatComposer({
   }
   // The send before the reload did land: its draft is done with.
   const landed =
-    unchangedSince(resend, draft, picked, 0) &&
+    unchangedSince(resend, draft, picked) &&
     timeline.messages.some(
       (message) => requestIdOfClientTxn(message.clientTxn) === resend.requestId
     );
@@ -265,7 +276,8 @@ export const ChatComposer = observer(function ChatComposer({
     writeChatDraft(draftKey, {
       text: draft,
       mentions: picked,
-      pendingRequestId: unchangedSince(resend, draft, picked, 0) ? resend.requestId : null,
+      pendingRequestId: unchangedSince(resend, draft, picked) ? resend.requestId : null,
+      pendingThreadRootId: unchangedSince(resend, draft, picked) ? resend.threadRootId : null,
     });
   }, [draftKey, readFrom, draft, picked, sendState, resend]);
   /** A pick the next edit inserts, placed once that edit has moved the others. */
@@ -421,18 +433,30 @@ export const ChatComposer = observer(function ChatComposer({
         timeline.pending.length
     );
     const sent = allowed(composeMentions(body, shiftMentions(draft, body, picked), targets));
+    const threadRootId = replyTo?.messageId ?? null;
     const requestId = timeline.send({
       body,
-      threadRootId: replyTo?.messageId ?? null,
+      threadRootId,
       ...mentionPayload(sent, groupChats),
       files: files.map(({ file }) => chatFile(file)),
-      // The same message sent before a reload goes under the same id, so it lands once.
-      requestId: unchangedSince(resend, draft, picked, files.length) ? resend.requestId : null,
+      // The restored draft of a send made before a reload, sent again exactly as it
+      // was, goes under the same id, so it lands once; anything else is a new message.
+      requestId:
+        unchangedSince(resend, draft, picked) &&
+        files.length === 0 &&
+        resend.threadRootId === threadRootId
+          ? resend.requestId
+          : null,
     });
     // Kept under its request id until the server takes it: a reload meanwhile
     // finds out whether it landed rather than offering it to be sent twice.
-    writeChatDraft(draftKey, { text: draft, mentions: picked, pendingRequestId: requestId });
-    setResend({ requestId, text: draft, mentions: picked });
+    writeChatDraft(draftKey, {
+      text: draft,
+      mentions: picked,
+      pendingRequestId: requestId,
+      pendingThreadRootId: threadRootId,
+    });
+    setResend(null);
     setSending(requestId);
     void chatTitler.sent(serverId, timeline.roomId, body);
     setDraft('');

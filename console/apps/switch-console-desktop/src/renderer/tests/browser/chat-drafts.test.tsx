@@ -220,6 +220,7 @@ describe('chat drafts', () => {
       text: 'in flight',
       mentions: [],
       pendingRequestId: 'id-1',
+      pendingThreadRootId: null,
     });
   });
 
@@ -272,6 +273,67 @@ describe('chat drafts', () => {
     const send = vi.fn(async () => []);
     const textarea = await mount(new ChatTimeline('room-1', api(send)));
     await type(textarea, 'in flight, edited');
+    await pressEnter(textarea);
+    await act(async () => {});
+    expect(send).toHaveBeenCalledWith('room-1', expect.objectContaining({ requestId: 'id-1' }));
+  });
+  it('sends the same text twice as two messages, under two request ids', async () => {
+    const send = vi.fn(async (_room: string, _input: { requestId: string }) => []);
+    const textarea = await mount(new ChatTimeline('room-1', api(send as never)));
+    for (let i = 0; i < 2; i++) {
+      await type(textarea, 'ok');
+      await pressEnter(textarea);
+      await act(async () => {});
+    }
+    expect(send.mock.calls.map(([, input]) => (input as { requestId: string }).requestId)).toEqual([
+      'id-1',
+      'id-2',
+    ]);
+  });
+
+  it('leaves the same text alone when it is typed again after a send landed', async () => {
+    const send = vi.fn(async (_room: string, input: { requestId: string }) => [
+      {
+        messageId: 'm1',
+        seq: 1,
+        roomId: 'room-1',
+        sentAt: '2026-01-01T00:00:00Z',
+        sender: { clientId: 'c', name: 'Ada', kind: 'human', agentId: null, userId: 'user-a' },
+        source: 'console',
+        body: 'ok',
+        format: null,
+        threadRootId: null,
+        attachments: [],
+        clientTxn: `${input.requestId}:0`,
+        namedAgentIds: [],
+        namedUserIds: [],
+        mentions: [],
+        threadReplyCount: 0,
+        threadLastReplySeq: null,
+      },
+    ]);
+    const textarea = await mount(new ChatTimeline('room-1', api(send as never)));
+    await type(textarea, 'ok');
+    await pressEnter(textarea);
+    await act(async () => {});
+    await type(textarea, 'ok');
+    await act(async () => {});
+    expect(textarea.value).toBe('ok');
+  });
+
+  it('sends a restored draft from another thread under a new request id', async () => {
+    localStorage.setItem(
+      key('user-a', 'ws-1', 'room-1'),
+      JSON.stringify({
+        text: 'in flight',
+        mentions: [],
+        pendingRequestId: 'req-1',
+        pendingThreadRootId: 'root-1',
+      })
+    );
+    const send = vi.fn(async () => []);
+    const textarea = await mount(new ChatTimeline('room-1', api(send)));
+    expect(textarea.value).toBe('in flight');
     await pressEnter(textarea);
     await act(async () => {});
     expect(send).toHaveBeenCalledWith('room-1', expect.objectContaining({ requestId: 'id-1' }));

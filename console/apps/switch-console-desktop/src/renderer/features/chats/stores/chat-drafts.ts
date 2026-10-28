@@ -7,7 +7,13 @@ import type { MentionToken } from '../mentions';
  * dropped if it did, and sent again under that id if not, which the server
  * takes once.
  */
-export type ChatDraft = { text: string; mentions: MentionToken[]; pendingRequestId: string | null };
+export type ChatDraft = {
+  text: string;
+  mentions: MentionToken[];
+  pendingRequestId: string | null;
+  /** The thread that send replied in; null for the room itself. */
+  pendingThreadRootId: string | null;
+};
 
 const PREFIX = 'chat-draft:';
 
@@ -52,11 +58,15 @@ export function readChatDraft(key: string): ChatDraft | null {
     return null;
   }
   if (typeof parsed !== 'object' || parsed === null) return null;
-  const { text, mentions, pendingRequestId } = parsed as Record<string, unknown>;
+  const { text, mentions, pendingRequestId, pendingThreadRootId } = parsed as Record<
+    string,
+    unknown
+  >;
   if (typeof text !== 'string' || !Array.isArray(mentions)) return null;
   return {
     text,
     pendingRequestId: typeof pendingRequestId === 'string' ? pendingRequestId : null,
+    pendingThreadRootId: typeof pendingThreadRootId === 'string' ? pendingThreadRootId : null,
     mentions: mentions.filter(
       (mention): mention is MentionToken => isMention(mention) && mention.end <= text.length
     ),
