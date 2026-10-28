@@ -2103,6 +2103,11 @@ version of their own to them without also giving them a release of their own.
   agent"; it was the only place Console showed that name.
 
 #### Fixed
+- **Giving a machine a Vertex AI login no longer pre-fills a project.** The
+  Google Cloud project field started out filled with one organisation's own
+  project, so anyone else who kept it got a sign-in failure with nothing to
+  say why. It now starts empty, with a placeholder; the region still starts
+  at `global`.
 - **Two agent hosts starting at once on Windows no longer crash each other.**
   A host reading another host's ownership ticket while that host replaced or
   deleted it got `EPERM` from Windows and exited. It now tries the read again
