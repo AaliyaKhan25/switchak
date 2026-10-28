@@ -491,6 +491,10 @@ async def test_a_controller_backed_agent_is_relayed_a_retry_of_the_message(
     client = _client(reply, command_level="unsupported", enqueue=[])
     client._connections = registry
 
+    async def _retryable(*_a: Any) -> None:
+        return None
+
+    monkeypatch.setattr(commands, "_retry_refusal", _retryable)
     event = _event("retry")
     event.args = "@agent $m1"
     await _cmd_retry(client, SimpleNamespace(room_id="!m:server"), event, False)

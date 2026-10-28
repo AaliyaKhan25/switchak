@@ -85,6 +85,7 @@ from switch_core.db.stores.message_store import MessageStore
 from switch_core.db.stores.room_role_store import RoomRoleStore
 from switch_core.db.stores.room_store import RoomStore
 from switch_core.db.stores.session_activity_store import (
+    RETRYABLE_TURN_STATUSES,
     AgentSessionActivityStore,
     ApprovalRequestStore,
 )
@@ -1837,6 +1838,13 @@ class ChatService:
                 409,
                 "NOTHING_TO_RETRY",
                 f"{agent.name} took no turn for that message, so there is nothing to retry.",
+            )
+        if turn.status not in RETRYABLE_TURN_STATUSES:
+            raise ChatError(
+                409,
+                "NOTHING_TO_RETRY",
+                f"{agent.name}'s turn for that message did not fail and was not "
+                "interrupted, so there is nothing to retry.",
             )
 
     async def warm(

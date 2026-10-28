@@ -274,3 +274,25 @@ async def test_a_retry_is_for_the_sender_or_a_manager_and_posts_once(
     other = await _retry(chats, chats.alice, room_id, agent, "k2", "$other")
     assert other.status_code == 409
     assert _code(other) == "REQUEST_REUSED"
+
+
+async def test_only_a_failed_or_interrupted_turn_is_retried(chats: _Harness) -> None:
+    agent = await chats.agent("helper", owner=chats.alice)
+    room_id = await chats.new_chat(chats.alice, agent, "c1")
+    sent = await chats.send(chats.alice, room_id, "m1", "@helper plan a picnic")
+    message_id = sent.json()["messages"][0]["messageId"]
+    await _turn_for(chats, agent, room_id, message_id)
+    for index, status in enumerate(("running", "completed")):
+        async with chats.factory() as session:
+            await session.execute(
+                update(AgentSessionActivityItem)
+                .where(AgentSessionActivityItem.turn_id == "t1")
+                .values(status=status)
+            )
+            await session.commit()
+        refused = await _retry(
+            chats, chats.alice, room_id, agent, f"k{index}", message_id
+        )
+        assert refused.status_code == 409
+        assert _code(refused) == "NOTHING_TO_RETRY"
+    assert await _commands(chats, room_id) == []

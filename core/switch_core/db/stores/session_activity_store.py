@@ -25,6 +25,8 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
 TURN_ITEM_ID = "turn"
+# The ends a turn can be run again from: it failed, or it was stopped.
+RETRYABLE_TURN_STATUSES = frozenset({"error", "interrupted"})
 
 
 class ApprovalRequestStore:
