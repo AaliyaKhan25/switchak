@@ -859,7 +859,8 @@ async def chat_activity_events(
     async def on_resync() -> None:
         resync()
 
-    def on_memberships() -> None:
+    def on_memberships(_room_ids: list[str] | None) -> None:
+        # Whichever rooms changed, the readable set is read again.
         put(_MEMBERSHIPS)
 
     service.watch_memberships(tenant_id, user.id, on_memberships)
