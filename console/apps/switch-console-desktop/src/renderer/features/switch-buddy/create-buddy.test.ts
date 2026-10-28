@@ -59,6 +59,7 @@ describe('createBuddy', () => {
       inputs: { agent_name: 'switch-buddy-max-tam', provider: 'claude', machine: 'm-1' },
       filled: {},
       templateName: 'switch-buddy',
+      templateId: 'official:switch-buddy',
       entryPoint: 'onboarding',
     });
     expect(report).toHaveBeenCalledWith('buddy_step', { action: 'created', provider: 'claude' });
