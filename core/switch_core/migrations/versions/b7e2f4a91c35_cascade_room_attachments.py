@@ -8,7 +8,7 @@ did.
 from alembic import op
 
 revision: str = "b7e2f4a91c35"
-down_revision = "f68b679599ab"
+down_revision = "a4c1e7b93d20"
 branch_labels = None
 depends_on = None
 
