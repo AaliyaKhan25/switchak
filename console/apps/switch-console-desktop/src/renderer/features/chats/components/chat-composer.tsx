@@ -2,6 +2,8 @@ import { ChevronDown, Minimize2, Plus, RotateCcw, RotateCw, X } from 'lucide-rea
 import { observer } from 'mobx-react-lite';
 import { type KeyboardEvent as ReactKeyboardEvent, useEffect, useRef, useState } from 'react';
 import { reportBuddyMessage } from '@renderer/features/switch-buddy/buddy-telemetry';
+import { switchServersStore } from '@renderer/features/switch-servers/switch-servers-store';
+import { workspacesStore } from '@renderer/features/workspaces/workspaces-store';
 import { AgentAvatar } from '@renderer/lib/components/agent-avatar';
 import { isEditableTarget } from '@renderer/lib/hooks/use-arrow-key-navigation';
 import { useFeatureFlags } from '@renderer/lib/hooks/useFeatureFlags';
@@ -31,6 +33,7 @@ import {
 } from '../mentions';
 import { isInterruptAck } from '../stop-rows';
 import type { AgentActivity, ControlRequest } from '../stores/chat-activity-store';
+import { chatDraftKey, readChatDraft, writeChatDraft } from '../stores/chat-drafts';
 import type { ChatFile, ChatTimeline } from '../stores/chat-timeline-store';
 import { chatTitler } from '../stores/chats';
 import {
@@ -57,9 +60,6 @@ function chatFile(file: File): ChatFile {
 type Suggestion =
   | { kind: 'agent'; id: string; agent: ChatAgent }
   | { kind: 'person'; id: string; person: MentionPerson & { email: string | null } };
-
-/** Drafts by chat, so a draft outlives navigating away. */
-const drafts = new Map<string, { text: string; mentions: MentionToken[] }>();
 
 /** Chats just created here, whose composer takes focus when it first shows. */
 const focusOnOpen = new Set<string>();
@@ -180,13 +180,39 @@ export const ChatComposer = observer(function ChatComposer({
   onClearReply: () => void;
   disabled: string | null;
 }) {
-  const draftKey = `${serverId}\u0000${timeline.roomId}`;
-  const [draft, setDraft] = useState(() => drafts.get(draftKey)?.text ?? '');
+  // Kept across reloads and restarts, per account, workspace and room.
+  const draftKey = chatDraftKey({
+    serverId,
+    userId: switchServersStore.statusFor(serverId)?.user?.id ?? null,
+    workspaceId: workspacesStore.idOnServerInScope(serverId),
+    roomId: timeline.roomId,
+  });
+  const [draft, setDraft] = useState(() => readChatDraft(draftKey)?.text ?? '');
   /** The mentions picked from the list, each with who it names, kept with the draft. */
-  const [picked, setPicked] = useState<MentionToken[]>(() => drafts.get(draftKey)?.mentions ?? []);
+  const [picked, setPicked] = useState<MentionToken[]>(
+    () => readChatDraft(draftKey)?.mentions ?? []
+  );
+  // The account or workspace became known: what was kept for it wins over what is on screen.
+  const [readFrom, setReadFrom] = useState(draftKey);
+  if (readFrom !== draftKey) {
+    setReadFrom(draftKey);
+    const kept = readChatDraft(draftKey);
+    if (kept) {
+      setDraft(kept.text);
+      setPicked(kept.mentions);
+    }
+  }
+  /** The send that emptied the composer: its text stays kept until the server has taken it. */
+  const [sending, setSending] = useState<string | null>(null);
+  const sendState =
+    sending === null
+      ? null
+      : (timeline.pending.find((send) => send.requestId === sending)?.state ?? 'sent');
   useEffect(() => {
-    drafts.set(draftKey, { text: draft, mentions: picked });
-  }, [draftKey, draft, picked]);
+    if (readFrom !== draftKey) return;
+    if (draft === '' && sendState !== null && sendState !== 'sent') return;
+    writeChatDraft(draftKey, { text: draft, mentions: picked });
+  }, [draftKey, readFrom, draft, picked, sendState]);
   /** A pick the next edit inserts, placed once that edit has moved the others. */
   const pendingPick = useRef<MentionToken | null>(null);
   /** Picked mentions an edit removed, so undo and redo can bring them back with who they named. */
@@ -340,12 +366,13 @@ export const ChatComposer = observer(function ChatComposer({
         timeline.pending.length
     );
     const sent = allowed(composeMentions(body, shiftMentions(draft, body, picked), targets));
-    timeline.send({
+    const requestId = timeline.send({
       body,
       threadRootId: replyTo?.messageId ?? null,
       ...mentionPayload(sent, groupChats),
       files: files.map(({ file }) => chatFile(file)),
     });
+    setSending(requestId);
     void chatTitler.sent(serverId, timeline.roomId, body);
     setDraft('');
     setPicked([]);

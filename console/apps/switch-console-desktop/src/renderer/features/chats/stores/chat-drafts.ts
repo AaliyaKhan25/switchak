@@ -1,0 +1,66 @@
+import type { MentionToken } from '../mentions';
+
+/** An unsent message: its text and the mentions picked in it, with who each names. */
+export type ChatDraft = { text: string; mentions: MentionToken[] };
+
+const PREFIX = 'chat-draft:';
+
+/** Drafts whose account or workspace is not known yet: kept for this session only. */
+const unscoped = new Map<string, ChatDraft>();
+
+/**
+ * Where a room's draft is kept: one per account, workspace and room, so a draft
+ * never shows up in another account's or workspace's chat. Until the account and
+ * workspace are known it is kept in memory only, by server and room.
+ */
+export function chatDraftKey(scope: {
+  serverId: string;
+  userId: string | null;
+  workspaceId: string | null;
+  roomId: string;
+}): string {
+  if (scope.userId === null || scope.workspaceId === null) {
+    return JSON.stringify([scope.serverId, scope.roomId]);
+  }
+  return `${PREFIX}${JSON.stringify([scope.serverId, scope.userId, scope.workspaceId, scope.roomId])}`;
+}
+
+function isMention(value: unknown): value is MentionToken {
+  if (typeof value !== 'object' || value === null) return false;
+  const mention = value as Record<string, unknown>;
+  return (
+    (mention.kind === 'agent' || mention.kind === 'person') &&
+    typeof mention.id === 'string' &&
+    Number.isInteger(mention.start) &&
+    Number.isInteger(mention.end)
+  );
+}
+
+/** The draft kept under `key` (across reloads and restarts once scoped); null when there is none or it is unreadable. */
+export function readChatDraft(key: string): ChatDraft | null {
+  if (!key.startsWith(PREFIX)) return unscoped.get(key) ?? null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(localStorage.getItem(key) ?? 'null');
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== 'object' || parsed === null) return null;
+  const { text, mentions } = parsed as Record<string, unknown>;
+  if (typeof text !== 'string' || !Array.isArray(mentions)) return null;
+  return {
+    text,
+    mentions: mentions.filter(
+      (mention): mention is MentionToken => isMention(mention) && mention.end <= text.length
+    ),
+  };
+}
+
+/** Keep `draft` under `key`; an empty one is forgotten. */
+export function writeChatDraft(key: string, draft: ChatDraft): void {
+  if (!key.startsWith(PREFIX)) {
+    if (draft.text === '') unscoped.delete(key);
+    else unscoped.set(key, draft);
+  } else if (draft.text === '') localStorage.removeItem(key);
+  else localStorage.setItem(key, JSON.stringify(draft));
+}
