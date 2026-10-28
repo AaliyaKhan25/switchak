@@ -1286,3 +1286,31 @@ async def test_people_are_told_when_a_room_of_theirs_changes(chats: _Harness) ->
     )
     assert archived.status_code == 204
     assert await told() == {chats.alice.id}
+
+
+async def test_renaming_an_agent_tells_everyone_who_sees_its_rooms(
+    chats: _Harness,
+) -> None:
+    published = _Published()
+    changes = RoomChanges(session_factory=chats.factory, publisher=published)
+    chats.service.on_agent_room_changed(changes.room_changed)
+    agent = await chats.agent("renamed", owner=chats.admin)
+    room_id = await chats.new_chat(chats.alice, agent, "c1")
+    assert (await chats.invite(chats.alice, room_id, chats.bob)).status_code == 200
+    events = _stream(chats, chats.bob, {}, recheck=60.0)
+    assert await events.until("ready") == {}
+
+    async with chats.factory() as session:
+        row = await session.get(Agent, agent.id)
+        assert row is not None
+        row.display_name = "QA Blair"
+        await session.commit()
+    await chats.service.agent_changed("00000000-0000-0000-0000-000000000000", agent.id)
+    await asyncio.gather(*changes._tasks)
+    assert {(user, kind, id) for user, kind, id in published.notices} == {
+        (user, ROOM, room_id) for user in (chats.alice.id, chats.bob.id, chats.admin.id)
+    }
+    name, summary = await events.next()
+    assert (name, summary["roomId"]) == ("chat", room_id)
+    assert summary["agents"][0]["displayName"] == "QA Blair"
+    await events.stream.aclose()  # type: ignore[attr-defined]

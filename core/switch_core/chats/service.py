@@ -200,6 +200,9 @@ class ChatService:
             weakref.WeakValueDictionary()
         )
         self._membership_watchers: dict[tuple[str, str], set[MembershipWatcher]] = {}
+        self._agent_room_listeners: tuple[
+            Callable[[str, str, list[str]], None], ...
+        ] = ()
         # Where a change to people's chats made here is announced to the
         # other processes, once wired (`use_signals`).
         self._signals: ChatSignals | None = None
@@ -560,9 +563,34 @@ class ChatService:
             [room_id],
         )
 
+    def on_agent_room_changed(
+        self, listener: Callable[[str, str, list[str]], None]
+    ) -> None:
+        """Call `listener(tenant_id, room_id, [])` for each room an agent is in
+        when its name, display name or icon changes (`room_changes`), so
+        whoever shows the room reads it again. It must not block."""
+        self._agent_room_listeners = (*self._agent_room_listeners, listener)
+
     async def agent_changed(self, tenant_id: str, agent_id: str) -> None:
-        """Wake the streams of everyone in a chat with this agent, so they
-        re-send its summaries. Does nothing with `agent_chats` off."""
+        """Tell everyone who sees a room with this agent that it changed, and
+        with `agent_chats` on, wake the streams of everyone in a chat with it
+        so they re-send its summaries."""
+        async with tenant_session(self.session_factory, tenant_id) as session:
+            room_ids = list(
+                (
+                    await session.execute(
+                        select(room_agents.c.room_id).where(
+                            room_agents.c.agent_id == agent_id
+                        )
+                    )
+                ).scalars()
+            )
+        for room_id in room_ids:
+            for listener in self._agent_room_listeners:
+                try:
+                    listener(tenant_id, room_id, [])
+                except Exception:
+                    logger.exception("Agent room listener failed for room %s", room_id)
         if not self.agent_chats_enabled:
             return
         async with tenant_session(self.session_factory, tenant_id) as session:
@@ -580,15 +608,6 @@ class ChatService:
                 )
             ).scalars()
             user_ids = sorted(user_id for user_id in members if user_id is not None)
-            room_ids = list(
-                (
-                    await session.execute(
-                        select(room_agents.c.room_id).where(
-                            room_agents.c.agent_id == agent_id
-                        )
-                    )
-                ).scalars()
-            )
         self._memberships_changed(tenant_id, user_ids, room_ids)
 
     async def _make_lasting(self, tenant_id: str, user_id: str, room_id: str) -> None:
