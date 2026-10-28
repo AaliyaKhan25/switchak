@@ -208,6 +208,21 @@ describe('CodexAdapter', () => {
       expect(eventsOf(events, 'runtime.warning').map((event) => event.message)).toEqual([
         expect.stringContaining('cannot use gpt-6.1-sol'),
       ]);
+      // Said again once the first turn runs, where the chat shows it, and only then.
+      for (const [turnId, native] of [
+        ['first', 'native-1'],
+        ['second', 'native-2'],
+      ] as const) {
+        server.reply('turn/start', { turn: { id: native, status: 'inProgress' } });
+        await adapter.sendTurn({ sessionId: 'inherits', turnId, text: 'hi' });
+        server.notify('turn/started', turnNotification(native, 'inProgress'));
+        server.notify('turn/completed', turnNotification(native, 'completed'));
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      const kinds = events
+        .filter((event) => event.type === 'turn.started' || event.type === 'runtime.warning')
+        .map((event) => event.type);
+      expect(kinds.slice(1)).toEqual(['turn.started', 'runtime.warning', 'turn.started']);
       await adapter.stopAll();
     } finally {
       await rm(home, { recursive: true, force: true });

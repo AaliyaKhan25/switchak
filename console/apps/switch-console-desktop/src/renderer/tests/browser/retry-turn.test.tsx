@@ -51,7 +51,8 @@ const failedTurn: ChatActivityItem = {
 
 async function render(
   support: 'yes' | 'no' | 'unknown',
-  control: ActivityApi['control']
+  control: ActivityApi['control'],
+  items: ChatActivityItem[] = [failedTurn]
 ): Promise<HTMLDivElement> {
   const api: ActivityApi = {
     resolve: async () => ({
@@ -62,7 +63,7 @@ async function render(
     }),
     reasoning: async () => null,
     watchPlacements: () => () => {},
-    roomActivity: async () => ({ items: [failedTurn], approvals: [] }),
+    roomActivity: async () => ({ items, approvals: [] }),
     roomMessages: () => [],
     control,
     retrySupport: async () => support,
@@ -145,4 +146,21 @@ it('says the server’s refusal and offers Retry again', async () => {
   for (let i = 0; i < 3; i++) await act(async () => await Promise.resolve());
   expect(el.querySelector('[role="alert"]')?.textContent).toContain('took no turn');
   expect(retryButton(el)!.disabled).toBe(false);
+});
+
+it('shows the host’s warning in the turn, such as a model this sign-in cannot use', async () => {
+  const warning =
+    'This Codex sign-in cannot use gpt-6.1-sol, the model its configuration names, so this session runs gpt-6-astra.';
+  const el = await render('yes', vi.fn(), [
+    { ...failedTurn, status: 'running' },
+    {
+      ...failedTurn,
+      itemId: 'notice:12',
+      kind: 'notice',
+      status: 'warning',
+      title: warning,
+      text: warning,
+    },
+  ]);
+  expect(el.textContent).toContain('cannot use gpt-6.1-sol');
 });

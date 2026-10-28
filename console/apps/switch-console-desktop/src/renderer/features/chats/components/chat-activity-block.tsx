@@ -129,6 +129,11 @@ export function AgentRow({
   );
 }
 
+/** The host's warnings during a turn (a model it could not use, say), which the work log shows. */
+export function turnWarnings(turn: TurnActivity): ChatActivityItem[] {
+  return turn.items.filter((item) => item.kind === 'notice' && item.status === 'warning');
+}
+
 /** Whether a turn has anything to show in its work log. */
 export function turnShown(activity: AgentActivity, turn: TurnActivity): boolean {
   const running = turn.status === 'queued' || turn.status === 'running';
@@ -140,7 +145,8 @@ export function turnShown(activity: AgentActivity, turn: TurnActivity): boolean 
     isThinking(turn) ||
     turn.status === 'interrupted' ||
     turn.status === 'error' ||
-    turn.requests.length > 0
+    turn.requests.length > 0 ||
+    turnWarnings(turn).length > 0
   );
 }
 
@@ -198,6 +204,15 @@ export const ChatActivityBlock = observer(function ChatActivityBlock({
       ) : (
         <ToolRows items={work} turn={turn} activity={activity} />
       )}
+      {turnWarnings(turn).map((notice) => (
+        <WorkLogRow
+          key={notice.itemId}
+          icon={<FailedIcon />}
+          label={notice.title}
+          title={notice.text}
+          tone="passive"
+        />
+      ))}
       {thinking && (
         <WorkLogRow
           icon={<ThinkingIcon />}

@@ -129,6 +129,8 @@ interface CodexSessionState {
   client: StdioJsonRpcClient;
   model?: string;
   effort?: string;
+  /** A warning about the session's setup to say again once its first turn is running. */
+  firstTurnNotice?: string;
   compaction?: { resolve: () => void; reject: (error: Error) => void };
   activeNativeTurnId?: string;
   /** Caller turn ids handed to `turn/start` but not yet bound to a native id. */
@@ -503,6 +505,7 @@ export class CodexAdapter implements ProviderAdapter {
       if (fallback) {
         state.model = fallback.model;
         modelWarning = fallback.warning;
+        state.firstTurnNotice = fallback.warning;
       }
       if (sandbox !== configured)
         sandboxWarning = `Auto mode runs Codex in the ${sandbox} sandbox instead of the configured ${configured}: unsandboxed, nothing would reach its automatic review.`;
@@ -926,6 +929,12 @@ export class CodexAdapter implements ProviderAdapter {
         turnId,
         raw: { source: CODEX_SERVER_NOTIFICATIONS.turnStarted, payload },
       });
+      // Said again inside the first turn, where the chat shows it: a warning
+      // from before any turn reaches only the host's own log.
+      if (state.firstTurnNotice) {
+        this.emit(state, { type: 'runtime.warning', message: state.firstTurnNotice });
+        state.firstTurnNotice = undefined;
+      }
     });
 
     client.onNotification(CODEX_SERVER_NOTIFICATIONS.turnCompleted, (params) => {
