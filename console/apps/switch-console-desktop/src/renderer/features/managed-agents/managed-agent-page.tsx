@@ -55,6 +55,7 @@ import {
   isValidProviderId,
   providerDisplayName,
 } from '@shared/core/providers/agent-provider-registry';
+import { catalogueAsReported } from './catalogue-as-reported';
 import { InlineEditableText } from './inline-editable-text';
 import {
   type Draft,
@@ -535,7 +536,12 @@ function useHostCatalogue(
     );
   if (query.error)
     return unavailable(failureText(query.error, 'The machine’s models could not be read.'));
-  return query.data;
+  return catalogueAsReported(
+    query.data,
+    agent.machine.name,
+    agent.definition.provider,
+    machine.providers.find((entry) => entry.provider === providerId)
+  );
 }
 
 /** A disabled control, with why it is disabled on hover. A span carries the tooltip: a disabled button emits no pointer events. */
