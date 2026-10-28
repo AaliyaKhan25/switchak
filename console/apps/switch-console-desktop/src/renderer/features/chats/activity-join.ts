@@ -4,6 +4,7 @@ import {
   TURN_ITEM_ID,
 } from '@shared/core/chats/activity';
 import { type ChatMessage, isSessionStartingNotice, turnEndNotice } from '@shared/core/chats/chats';
+import { isControlAck } from './stop-rows';
 
 /**
  * Joining an agent's turns, as Switch's activity feed stores them, to the
@@ -124,7 +125,8 @@ export function placeTurns(
     each.sender.kind === 'agent' &&
     each.sender.agentId === agentId &&
     !isSessionStartingNotice(each) &&
-    !turnEndNotice(each);
+    !turnEndNotice(each) &&
+    !isControlAck(each);
   messages.forEach((message, at) => {
     const turn = bound.get(message.messageId);
     if (!turn) return;
@@ -168,7 +170,14 @@ export function foldTurnEndNotices(
     const turn = messages
       .slice(0, at)
       .map((each) => bound.get(each.messageId))
-      .findLast((each) => each?.status === status && !claimed.has(each.turnId));
+      .findLast(
+        (each) =>
+          each?.status === status &&
+          !claimed.has(each.turnId) &&
+          // A notice from before the turn started is about an earlier run of its
+          // message (the one a retry ran again), not this one.
+          !(each.items[0] && Date.parse(each.items[0].createdAt) > Date.parse(message.sentAt))
+      );
     if (!turn) return;
     claimed.add(turn.turnId);
     folded.set(message.messageId, turn.turnId);

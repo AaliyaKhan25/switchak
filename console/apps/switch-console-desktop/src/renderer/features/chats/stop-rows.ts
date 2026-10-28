@@ -45,3 +45,11 @@ export function hiddenStopRows(messages: readonly Row[]): Set<string> {
   }
   return hidden;
 }
+
+/** An agent's acknowledgement of a Stop or Retry, which the chat leaves out: never where a turn shows. */
+export function isControlAck(message: Pick<ChatMessage, 'body' | 'sender'>): boolean {
+  return (
+    message.sender.kind !== 'human' &&
+    HIDDEN_COMMANDS.some(([, ack]) => message.body.startsWith(ack))
+  );
+}

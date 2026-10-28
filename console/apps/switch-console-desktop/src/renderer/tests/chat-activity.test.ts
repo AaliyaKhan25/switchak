@@ -172,6 +172,32 @@ describe('placeTurns', () => {
     });
   });
 
+  it('never shows a turn under a Retry’s acknowledgement, which the chat leaves out', () => {
+    const at = (second: number) => new Date(Date.UTC(2026, 0, 1, 0, 0, second)).toISOString();
+    const messages = [
+      { ...said('q1', null), sentAt: at(0) },
+      {
+        ...said('failed', 'helper'),
+        body: 'I finished without replying. The turn failed: model',
+        sentAt: at(2),
+      },
+      { ...said('retry', null), body: '!retry @helper q1', sentAt: at(3) },
+      {
+        ...said('ack', 'helper'),
+        body: 'Trying that message again.',
+        threadRootId: 'retry',
+        sentAt: at(4),
+      },
+    ] as ChatMessage[];
+    const retried = {
+      ...turn('t2', 'error'),
+      items: [row('t2', 'tool', { createdAt: at(5) })],
+    };
+    expect(ids(placeTurns(messages, 'helper', new Map([['q1', retried]])))).toEqual({
+      q1: ['t2'],
+    });
+  });
+
   it('does not wait on a reply from a turn that ended with an error', () => {
     const messages = [said('q1', null), said('q2', null), said('r2', 'helper')];
     const bound = new Map([
@@ -245,6 +271,19 @@ describe('foldTurnEndNotices', () => {
         ['n2', 't2'],
       ])
     );
+  });
+
+  it('folds the last failure into a turn run again for the same message, leaving the first shown', () => {
+    const failed = 'I finished without replying. The turn failed: model not supported';
+    const at = (second: number) => new Date(Date.UTC(2026, 0, 1, 0, 0, second)).toISOString();
+    const messages = [
+      { ...said('q1', null), sentAt: at(0) },
+      { ...said('n1', 'helper', failed), sentAt: at(2) },
+      { ...said('n2', 'helper', failed), sentAt: at(9) },
+    ] as ChatMessage[];
+    const retried = { ...turn('t2', 'error'), items: [row('t2', 'tool', { createdAt: at(5) })] };
+    const bound = new Map([['q1', retried]]);
+    expect(foldTurnEndNotices(messages, 'helper', bound)).toEqual(new Map([['n2', 't2']]));
   });
 
   it('keeps a notice whose turn shows no such ending, or is not known', () => {
