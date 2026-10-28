@@ -1368,3 +1368,30 @@ async def test_only_a_manager_renames_a_group_and_everyone_sees_it(
         "Launch crew",
     )
     await events.stream.aclose()  # type: ignore[attr-defined]
+
+
+async def test_two_processes_creating_one_persons_identity_share_it(
+    chats: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    other = _second_process(chats)
+    both_looked = asyncio.Barrier(2)
+    for service in (chats.service, other):
+        look = service.member_client
+
+        async def look_then_wait(
+            session: AsyncSession, user_id: str, look: Any = look
+        ) -> Client | None:
+            found = await look(session, user_id)
+            # Both find none before either creates it.
+            if found is None:
+                await both_looked.wait()
+            return found
+
+        monkeypatch.setattr(service, "member_client", look_then_wait)
+
+    tenant = "00000000-0000-0000-0000-000000000000"
+    first, second = await asyncio.gather(
+        chats.service.member_actor(tenant, chats.bob),
+        other.member_actor(tenant, chats.bob),
+    )
+    assert first.id == second.id

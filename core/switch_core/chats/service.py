@@ -308,15 +308,31 @@ class ChatService:
                 client = await self.member_client(session, user.id)
                 if client is not None:
                     return client
-                client = Client(
-                    transport_user_id=f"@switch-member-{user.id}:{self._id_server_name}",
-                    display_name=user.name,
-                    type=MEMBER_CLIENT_TYPE,
-                    user_id=user.id,
+                # Another process may be creating the same one: the first
+                # insert wins, and this one reads what it wrote.
+                created = await session.scalar(
+                    pg_insert(Client)
+                    .values(
+                        id=str(uuid.uuid4()),
+                        tenant_id=tenant_id,
+                        transport_user_id=f"@switch-member-{user.id}:{self._id_server_name}",
+                        display_name=user.name,
+                        type=MEMBER_CLIENT_TYPE,
+                        user_id=user.id,
+                    )
+                    .on_conflict_do_nothing()
+                    .returning(Client.id)
                 )
-                session.add(client)
                 await session.commit()
-                logger.info("Created member client %s for user %s", client.id, user.id)
+                if created is not None:
+                    logger.info(
+                        "Created member client %s for user %s", created, user.id
+                    )
+                client = await self.member_client(session, user.id)
+                if client is None:
+                    raise RuntimeError(
+                        f"No member client for user {user.id} after creating one"
+                    )
                 return client
 
     async def has_tenant_role(
