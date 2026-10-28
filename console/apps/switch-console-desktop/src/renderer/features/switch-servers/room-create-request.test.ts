@@ -61,11 +61,9 @@ describe('roomCreateRequest', () => {
 });
 
 describe('canCreate', () => {
-  it('asks a chat only for a name, a bridged room for a description too', () => {
-    expect(canCreate({ bridgeId: null, name: 'x', description: '' })).toBe(true);
-    expect(canCreate({ bridgeId: 'b1', name: 'x', description: '' })).toBe(false);
-    expect(canCreate({ bridgeId: 'b1', name: 'x', description: 'd' })).toBe(true);
-    expect(canCreate({ bridgeId: null, name: ' ', description: 'd' })).toBe(false);
+  it('asks only for a name, a bridged room included', () => {
+    expect(canCreate({ name: 'x' })).toBe(true);
+    expect(canCreate({ name: ' ' })).toBe(false);
   });
 });
 

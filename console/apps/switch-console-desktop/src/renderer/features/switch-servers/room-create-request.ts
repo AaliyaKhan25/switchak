@@ -66,9 +66,9 @@ export function roomCreateRequest(form: {
   };
 }
 
-/** A chat needs only a name; a bridged room also needs a description. */
-export function canCreate(form: { bridgeId: string | null; name: string; description: string }) {
-  return form.name.trim() !== '' && (form.bridgeId === null || form.description.trim() !== '');
+/** A room needs only a name; a bridged room's description is optional, as its channel topic is. */
+export function canCreate(form: { name: string }) {
+  return form.name.trim() !== '';
 }
 
 /**

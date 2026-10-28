@@ -84,4 +84,31 @@ describe('CreateRoomModal', () => {
     client.setQueryData(['chat-agent-candidates', 'srv', 'ws', null], ['a1']);
     expect(render(client)).toContain('aria-label="Remove agent-one"');
   });
+  it('labels a bridged room’s description and instructions as optional', () => {
+    flags.group_chats = false;
+    try {
+      const client = new QueryClient();
+      client.setQueryData(
+        ['remote-bridges', 'ws'],
+        [
+          {
+            id: 'b1',
+            displayName: 'Discord',
+            type: 'discord',
+            status: 'active',
+            canCreateChannels: true,
+          },
+        ]
+      );
+      const html = render(client);
+      expect(html).toMatch(
+        /<label[^>]*for="new-room-description"[^>]*>Description \(optional\)<\/label>/
+      );
+      expect(html).toMatch(
+        /<label[^>]*for="new-room-instructions"[^>]*>Instructions \(optional\)<\/label>/
+      );
+    } finally {
+      flags.group_chats = true;
+    }
+  });
 });

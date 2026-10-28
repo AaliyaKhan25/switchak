@@ -183,7 +183,7 @@ export const CreateRoomModal = observer(function CreateRoomModal({
     workspaceId !== null &&
     startingAgentState !== 'pending' &&
     !nowhere &&
-    canCreate({ bridgeId: selectedBridge?.id ?? null, name, description }) &&
+    canCreate({ name }) &&
     !isSubmitting;
 
   async function handleSubmit() {
@@ -320,24 +320,30 @@ export const CreateRoomModal = observer(function CreateRoomModal({
 
           {/* A bridged room's own settings; a Switch Console room has none to start with. */}
           {selectedBridge && (
-            <section className="flex flex-col gap-3">
-              <Input
-                placeholder="What this room is for"
-                aria-label="Description"
-                value={description}
-                onChange={(e) => {
-                  setDescription(e.target.value);
-                  setError(null);
-                }}
-              />
-              <Textarea
-                placeholder="Optional guidance shown to agents when they enter the room"
-                aria-label="Instructions"
-                value={instructions}
-                onChange={(e) => setInstructions(e.target.value)}
-                rows={3}
-              />
-            </section>
+            <>
+              <Field>
+                <FieldLabel htmlFor="new-room-description">Description (optional)</FieldLabel>
+                <Input
+                  id="new-room-description"
+                  placeholder="What this room is for"
+                  value={description}
+                  onChange={(e) => {
+                    setDescription(e.target.value);
+                    setError(null);
+                  }}
+                />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="new-room-instructions">Instructions (optional)</FieldLabel>
+                <Textarea
+                  id="new-room-instructions"
+                  placeholder="Guidance shown to agents when they enter the room"
+                  value={instructions}
+                  onChange={(e) => setInstructions(e.target.value)}
+                  rows={3}
+                />
+              </Field>
+            </>
           )}
 
           {nowhere && (
