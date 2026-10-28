@@ -5,6 +5,7 @@ import {
   MoreVertical,
   Pencil,
   PlugZap,
+  Power,
   RefreshCw,
   Trash2,
   Unplug,
@@ -33,8 +34,12 @@ import {
 } from '@renderer/lib/ui/dropdown-menu';
 import { Spinner } from '@renderer/lib/ui/spinner';
 import { dashboardOrigin, type SwitchServer } from '@shared/core/switch-servers/switch-servers';
+import { frozenSentence } from './frozen-workspace';
 import { GuardrailsSection } from './GuardrailsSection';
 import { localServerStore } from './local-server-store';
+import { startManagedServer } from './managed-server-actions';
+import { TONE_BOX, ToneDot } from './managed-server-dot';
+import { managedServerState } from './managed-server-state';
 import { MessagingAppsCard } from './MessagingAppsCard';
 import { openServerPage } from './open-server-page';
 import { remoteServerStore } from './remote-server-store';
@@ -123,7 +128,8 @@ const ServerMainPanel = observer(function ServerMainPanel() {
 
   // A managed server that isn't running has no gateway to reach — its
   // connection status, sign-in, and web-app links are meaningless until it's up,
-  // so we neither fetch nor render them (only the Start/Reset controls show).
+  // so we neither fetch nor render them: a card saying it is down, with the way
+  // to start it and to its status page, shows instead.
   const detailsVisible = !server?.managed || isManagedRunning(server);
 
   useEffect(() => {
@@ -288,7 +294,9 @@ const ServerMainPanel = observer(function ServerMainPanel() {
           </Alert>
         )}
 
-        {detailsVisible && unreachable && <ServerUnreachableCard serverId={serverId} />}
+        {!detailsVisible && <ManagedServerDownCard server={server} />}
+
+        {detailsVisible && unreachable && <ServerUnreachableCard server={server} />}
 
         {detailsVisible && !unreachable && (
           <>
@@ -400,12 +408,19 @@ const UNREACHABLE_RETRY_MS = 10_000;
  * gives them nothing to act on (CHOO-2042).
  */
 const ServerUnreachableCard = observer(function ServerUnreachableCard({
-  serverId,
+  server,
 }: {
-  serverId: string;
+  server: SwitchServer;
 }) {
   const store = switchServersStore;
+  const serverId = server.id;
   const retrying = store.refreshing.has(serverId);
+  const { navigate } = useNavigate();
+  // A server this Console runs is not a connection problem: the network
+  // between here and it is this machine, or a host whose reachability is
+  // modelled separately. Console watches its process, and the status page says
+  // what that found.
+  const managed = server.managed;
 
   // Keep probing while this is on screen. Waiting for the user to press
   // something would leave a server that recovered looking down. This only
@@ -424,24 +439,84 @@ const ServerUnreachableCard = observer(function ServerUnreachableCard({
     <div className={`${card} flex items-center justify-between gap-3`}>
       <div className="flex items-center gap-2 text-sm">
         <PlugZap className="size-4 text-amber-500" />
-        <span className="text-foreground">Cannot reach the server</span>
+        <span className="text-foreground">
+          {managed ? `${server.name} isn't answering` : 'Cannot reach the server'}
+        </span>
         <span className="text-foreground-muted">
-          {retrying ? 'Reconnecting…' : 'Check your connection.'}
+          {retrying
+            ? 'Reconnecting…'
+            : managed
+              ? 'Server status shows what it is doing.'
+              : 'Check your connection.'}
         </span>
       </div>
-      <Button
-        variant="outline"
-        size="sm"
-        disabled={retrying}
-        // A full refreshServer, not the lighter retryConnection the timer
-        // above uses: a click is one bounded request, not a forever-repeating
-        // one, so it can afford to also re-check sign-in options — the one
-        // way a persistently broken sign-in-options endpoint gets re-driven.
-        onClick={() => void store.refreshServer(serverId)}
-      >
-        <RefreshCw className={retrying ? 'size-4 animate-spin' : 'size-4'} />
-        Retry
-      </Button>
+      <div className="flex shrink-0 items-center gap-2">
+        {managed && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => navigate('managedServer', { serverId })}
+          >
+            Server status
+          </Button>
+        )}
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={retrying}
+          // A full refreshServer, not the lighter retryConnection the timer
+          // above uses: a click is one bounded request, not a forever-repeating
+          // one, so it can afford to also re-check sign-in options — the one
+          // way a persistently broken sign-in-options endpoint gets re-driven.
+          onClick={() => void store.refreshServer(serverId)}
+        >
+          <RefreshCw className={retrying ? 'size-4 animate-spin' : 'size-4'} />
+          Retry
+        </Button>
+      </div>
+    </div>
+  );
+});
+
+/**
+ * In place of the page's details when a server this Console runs is not
+ * running: what is wrong, in the words the workspace banner uses, Start (or
+ * Restart, after it stopped on its own) when that is all it takes, and the way
+ * to its status page, where the reason and the rest of its controls are.
+ * Nothing until its state has been read: an unread state is not a stopped one.
+ */
+const ManagedServerDownCard = observer(function ManagedServerDownCard({
+  server,
+}: {
+  server: SwitchServer;
+}) {
+  const { navigate } = useNavigate();
+  const state = managedServerState(server);
+  if (!state || !state.known || state.answering) return null;
+  const crashed = state.reason === 'stopped-unexpectedly';
+  return (
+    <div
+      className={`flex items-center justify-between gap-3 rounded-lg border p-4 ${TONE_BOX[state.tone]}`}
+    >
+      <div className="flex min-w-0 items-center gap-2 text-sm">
+        <ToneDot tone={state.tone} size={7} />
+        <span className="text-foreground">{frozenSentence(server, state)}</span>
+      </div>
+      <div className="flex shrink-0 items-center gap-2">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => navigate('managedServer', { serverId: server.id })}
+        >
+          Server status
+        </Button>
+        {(state.tone === 'stopped' || crashed) && (
+          <Button size="sm" onClick={() => startManagedServer(server)}>
+            <Power className="size-4" />
+            {crashed ? 'Restart' : 'Start'}
+          </Button>
+        )}
+      </div>
     </div>
   );
 });
