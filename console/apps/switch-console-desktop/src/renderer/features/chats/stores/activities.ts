@@ -1,3 +1,4 @@
+import { agentNamesChanged } from '@renderer/features/agent-identity/agent-names-changed';
 import { changesRooms } from '@renderer/features/switch-servers/room-changing-tools';
 import { switchRoomsStore } from '@renderer/features/switch-servers/switch-rooms-store';
 import { events, rpc } from '@renderer/lib/ipc';
@@ -10,6 +11,7 @@ import {
   chatResetChannel,
 } from '@shared/core/chats/chatEvents';
 import { roomHealthChangedChannel } from '@shared/core/switch-rooms/switchRoomEvents';
+import { userChangesChannel } from '@shared/events/userChangesEvents';
 import { AgentActivities } from './chat-activity-store';
 import { chatsStore } from './chats';
 
@@ -61,3 +63,8 @@ events.on(chatRemovedChannel, ({ serverId, roomId, reason }) => {
   if (reason === 'access') agentActivities.drop(serverId, roomId);
 });
 events.on(chatResetChannel, ({ serverId }) => agentActivities.drop(serverId, null));
+// A managed agent changed, maybe its name, which rooms and chats show too.
+events.on(userChangesChannel, (event) => {
+  if (event.type === 'changed' && event.changes.some((change) => change.kind === 'managed_agent'))
+    agentNamesChanged();
+});

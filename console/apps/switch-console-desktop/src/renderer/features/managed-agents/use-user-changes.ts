@@ -1,6 +1,5 @@
 import { type QueryClient, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
-import { agentNamesChanged } from '@renderer/features/agent-identity/agent-names-changed';
 import { workspacesStore } from '@renderer/features/workspaces/workspaces-store';
 import { events, rpc } from '@renderer/lib/ipc';
 import { userChangesChannel } from '@shared/events/userChangesEvents';
@@ -41,8 +40,6 @@ function startFeed(queryClient: QueryClient, serverId: string, workspaceId: stri
       setLive(false);
     } else {
       refresh();
-      // A managed agent's name may be what changed, which rooms and chats show too.
-      if (event.changes.some((change) => change.kind === 'managed_agent')) agentNamesChanged();
     }
   });
   void rpc.userChanges.watch(serverId, workspaceId).then((isLive) => {

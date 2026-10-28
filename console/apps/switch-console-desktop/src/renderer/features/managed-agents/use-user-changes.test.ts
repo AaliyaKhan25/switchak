@@ -22,9 +22,6 @@ vi.mock('@renderer/features/workspaces/workspaces-store', () => ({
   workspacesStore: { idOnServerInScope: () => 'w1' },
 }));
 
-const agentNamesChanged = vi.fn();
-vi.mock('@renderer/features/agent-identity/agent-names-changed', () => ({ agentNamesChanged }));
-
 const { useUserChangesLive } = await import('./use-user-changes');
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -73,18 +70,6 @@ describe('useUserChangesLive', () => {
       });
     });
     expect(invalidate).toHaveBeenCalledTimes(1);
-    expect(agentNamesChanged).not.toHaveBeenCalled();
-
-    // A managed agent changed, maybe its name: rooms and chats read it again.
-    await act(async () => {
-      emit({
-        serverId: 's1',
-        workspaceId: 'w1',
-        type: 'changed',
-        changes: [{ kind: 'managed_agent', id: 'a1' }],
-      });
-    });
-    expect(agentNamesChanged).toHaveBeenCalledTimes(1);
 
     await act(async () => root.unmount());
     expect(unwatch).toHaveBeenCalledTimes(1);
