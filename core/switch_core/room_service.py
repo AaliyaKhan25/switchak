@@ -36,7 +36,11 @@ from switch_core.db.session_scope import tenant_session
 from switch_core.db.stores.agent_store import AgentStore
 from switch_core.db.stores.collaboration_bridge_store import CollaborationBridgeStore
 from switch_core.db.stores.room_role_store import validate_role_name
-from switch_core.db.stores.room_store import RoomStore
+from switch_core.db.stores.room_store import (
+    LINKED_CHANNEL_NAME_KEY,
+    NAME_SOURCE_KEY,
+    RoomStore,
+)
 from switch_core.db.tenant_lookup import all_tenant_ids
 from switch_core.provisioning import Provisioning
 from switch_core.telemetry import TelemetryService, emit_safely
@@ -143,6 +147,9 @@ class RoomCreateConfig(BaseModel):
     # `{agent_id, body}`: what that agent says as it joins, in place of its
     # usual line. Stamped with the room, so it is there before the agent is.
     agent_greeting: dict[str, str] | None = None
+    # The linked channel's name when the room is named after it (a bridge's
+    # own room), so it follows the channel's renames (`NAME_SOURCE_KEY`).
+    named_after_channel: str | None = None
 
 
 class RoomCreateResult(BaseModel):
@@ -659,6 +666,14 @@ class RoomService:
                         if config.agent_greeting is not None
                         else {}
                     ),
+                    **(
+                        {
+                            NAME_SOURCE_KEY: "channel",
+                            LINKED_CHANNEL_NAME_KEY: config.named_after_channel,
+                        }
+                        if config.named_after_channel is not None
+                        else {}
+                    ),
                 },
             )
 
@@ -1165,6 +1180,28 @@ class RoomService:
                 read_visibility=read_visibility,
                 write_visibility=write_visibility,
             )
+            await session.commit()
+        self._room_changed(tenant_id, room_id)
+
+    async def take_platform_name(
+        self, room_id: str, name: str, channel_name: str
+    ) -> None:
+        """Name a bridged room after its channel, so it follows the channel's
+        renames from now on, and tell whoever sees it."""
+        tenant_id = await self._room_tenant(room_id)
+        async with tenant_session(self._session_factory, tenant_id) as session:
+            await self._room_store.set_platform_name(
+                session, room_id, name, channel_name
+            )
+            await session.commit()
+        self._room_changed(tenant_id, room_id)
+
+    async def record_channel_name(self, room_id: str, channel_name: str) -> None:
+        """Keep the linked channel's current name on a room that does not
+        follow it, so whoever sees the room can be offered it."""
+        tenant_id = await self._room_tenant(room_id)
+        async with tenant_session(self._session_factory, tenant_id) as session:
+            await self._room_store.record_channel_name(session, room_id, channel_name)
             await session.commit()
         self._room_changed(tenant_id, room_id)
 

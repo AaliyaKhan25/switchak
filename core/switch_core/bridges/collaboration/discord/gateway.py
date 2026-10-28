@@ -319,8 +319,6 @@ class DiscordGatewayClient:
         """Route a guild channel's change to the bridge its guild resolves to,
         fresh and with no tenant bound, as a message is (G1). A guild with no
         install is dropped."""
-        if before.name == after.name:
-            return
         with no_tenant():
             try:
                 target = await self._install_service.resolve_by_workspace(

@@ -31,6 +31,13 @@ from switch_core.db.models import (
 )
 from switch_core.db.stores.delivery_cursor_store import DeliveryCursorStore
 
+# Where a room's name came from, in its `metadata`: "channel" for a bridged
+# room named after its channel (it follows the channel's renames), "custom"
+# once a person or an agent names it. Absent on rooms from before it was kept.
+NAME_SOURCE_KEY = "name_source"
+# The linked platform channel's name as the bridge last saw it.
+LINKED_CHANNEL_NAME_KEY = "linked_channel_name"
+
 # Keys in a room's `metadata` for the follow-the-conversation settings. Both
 # are absent by default (follow-ups on, no main agent), so rooms made before
 # the settings existed need no backfill.
@@ -767,6 +774,8 @@ class RoomStore:
             raise ValueError(f"Room not found: {room_id}")
         if name is not None:
             room.name = name
+            # Named by someone: a platform's channel name no longer replaces it.
+            room.metadata_ = {**(room.metadata_ or {}), NAME_SOURCE_KEY: "custom"}
         if description is not None:
             room.description = description
         if instructions is not None:
@@ -777,6 +786,34 @@ class RoomStore:
             room.read_visibility = read_visibility
         if write_visibility is not None:
             room.write_visibility = write_visibility
+        await session.flush()
+
+    async def set_platform_name(
+        self, session: AsyncSession, room_id: str, name: str, channel_name: str
+    ) -> None:
+        """Name the room after its platform channel, so it follows the
+        channel's renames from now on."""
+        room = await session.get(Room, room_id)
+        if room is None:
+            raise ValueError(f"Room not found: {room_id}")
+        room.name = name
+        room.metadata_ = {
+            **(room.metadata_ or {}),
+            NAME_SOURCE_KEY: "channel",
+            LINKED_CHANNEL_NAME_KEY: channel_name,
+        }
+        await session.flush()
+
+    async def record_channel_name(
+        self, session: AsyncSession, room_id: str, channel_name: str
+    ) -> None:
+        room = await session.get(Room, room_id)
+        if room is None:
+            raise ValueError(f"Room not found: {room_id}")
+        room.metadata_ = {
+            **(room.metadata_ or {}),
+            LINKED_CHANNEL_NAME_KEY: channel_name,
+        }
         await session.flush()
 
     async def set_group(

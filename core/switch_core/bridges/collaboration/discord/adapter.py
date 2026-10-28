@@ -832,12 +832,13 @@ class DiscordAdapter(PlatformAdapter):
     async def dispatch_channel_update(
         self, before: discord.abc.GuildChannel, after: discord.abc.GuildChannel
     ) -> None:
-        """A channel in this bridge's guild was renamed: tell the bridge, so
-        the room linked to it follows. Other settings changes are not news."""
-        if after.guild.id != self._guild_id or before.name == after.name:
+        """A channel in this bridge's guild changed: tell the bridge what it is
+        called now, so the room linked to it follows a rename, including one
+        made before the bridge followed renames."""
+        if after.guild.id != self._guild_id:
             return
-        if self._on_channel_renamed is not None:
-            await self._on_channel_renamed(str(after.id), before.name, after.name)
+        if self._on_channel_named is not None:
+            await self._on_channel_named(str(after.id), before.name, after.name)
 
     async def dispatch_interaction(self, interaction: discord.Interaction) -> None:
         """Handle one press on a card's button the shared client routed here.

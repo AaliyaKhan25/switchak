@@ -627,10 +627,9 @@ class PlatformAdapter(ABC):
         # when the platform reissues a channel's id.
         self._on_channel_migrated: Callable[[str, str], Awaitable[None]] | None = None
         # Set by set_channel_rename_handler. Called with (channel_id, old_name,
-        # new_name) when the platform reports a channel renamed.
-        self._on_channel_renamed: Callable[[str, str, str], Awaitable[None]] | None = (
-            None
-        )
+        # new_name) when the platform reports a change to a channel (the two
+        # names are the same when it was not a rename).
+        self._on_channel_named: Callable[[str, str, str], Awaitable[None]] | None = None
         # Set by set_channel_type_handler. Called with (channel_id, type) when
         # the adapter learns a channel's type from the platform.
         self._on_channel_type_learned: (
@@ -1871,10 +1870,10 @@ class PlatformAdapter(ABC):
     def set_channel_rename_handler(
         self, handler: Callable[[str, str, str], Awaitable[None]]
     ) -> None:
-        """Install the callback an adapter calls when a channel is renamed on
-        the platform, so the room linked to it can take the new name. Used by
-        the adapters whose platform reports it (Discord)."""
-        self._on_channel_renamed = handler
+        """Install the callback an adapter calls with a channel's name when the
+        platform reports a change to it, so the room linked to it can follow.
+        Used by the adapters whose platform reports it (Discord)."""
+        self._on_channel_named = handler
 
     def set_channel_type_handler(
         self, handler: Callable[[str, ChannelType], Awaitable[None]]

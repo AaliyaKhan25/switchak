@@ -1215,6 +1215,11 @@
       "flags": []
     },
     {
+      "route": "POST /gateway/rooms/{room_id}/sync-name",
+      "auth": "session",
+      "flags": []
+    },
+    {
       "route": "POST /gateway/rooms/{room_id}/unarchive",
       "auth": "session",
       "flags": []
