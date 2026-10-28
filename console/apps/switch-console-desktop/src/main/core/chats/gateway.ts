@@ -26,7 +26,9 @@ import {
   type ChatUpload,
   chatUploadSchema,
   chatAgentAddedSchema,
+  type ChatCommand,
   type ChatMember,
+  chatCommandListSchema,
   chatMemberListSchema,
   type WorkspaceMember,
   workspaceMemberSchema,
@@ -173,6 +175,14 @@ export async function removeChatAgent(
 
 export async function listChatMembers(server: SwitchServer, roomId: string): Promise<ChatMember[]> {
   return (await json(server, `${room(roomId)}/members`, chatMemberListSchema)).members;
+}
+
+/** The room commands a member can type in this room (`GET /chats/{room}/commands`). */
+export async function listChatCommands(
+  server: SwitchServer,
+  roomId: string
+): Promise<ChatCommand[]> {
+  return (await json(server, `${room(roomId)}/commands`, chatCommandListSchema)).commands;
 }
 
 export async function addChatMember(

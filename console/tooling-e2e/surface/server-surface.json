@@ -378,6 +378,11 @@
       "flags": []
     },
     {
+      "route": "GET /gateway/chats/{room_id}/commands",
+      "auth": "session",
+      "flags": []
+    },
+    {
       "route": "GET /gateway/chats/{room_id}/media",
       "auth": "session",
       "flags": []

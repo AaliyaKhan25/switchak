@@ -1,3 +1,4 @@
+import { useQuery } from '@tanstack/react-query';
 import { ChevronDown, Minimize2, Plus, RotateCcw, RotateCw, X } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
 import { type KeyboardEvent as ReactKeyboardEvent, useEffect, useRef, useState } from 'react';
@@ -7,6 +8,7 @@ import { workspacesStore } from '@renderer/features/workspaces/workspaces-store'
 import { AgentAvatar } from '@renderer/lib/components/agent-avatar';
 import { isEditableTarget } from '@renderer/lib/hooks/use-arrow-key-navigation';
 import { useFeatureFlags } from '@renderer/lib/hooks/useFeatureFlags';
+import { rpc } from '@renderer/lib/ipc';
 import { modalStore } from '@renderer/lib/modal/modal-store';
 import { Button } from '@renderer/lib/ui/button';
 import { Popover, PopoverContent, PopoverTitle, PopoverTrigger } from '@renderer/lib/ui/popover';
@@ -14,11 +16,13 @@ import { cn } from '@renderer/utils/utils';
 import { agentInitials } from '@shared/core/agents/agent-avatar';
 import {
   type ChatAgent,
+  type ChatCommand,
   type ChatMessage,
   chatAgentLabel,
   requestIdOfClientTxn,
 } from '@shared/core/chats/chats';
 import { snippetOf } from '../chat-threads';
+import { commandQuery, filterCommands } from '../command-query';
 import {
   agentTargets,
   composeMentions,
@@ -64,7 +68,8 @@ function chatFile(file: File): ChatFile {
 
 type Suggestion =
   | { kind: 'agent'; id: string; agent: ChatAgent }
-  | { kind: 'person'; id: string; person: MentionPerson & { email: string | null } };
+  | { kind: 'person'; id: string; person: MentionPerson & { email: string | null } }
+  | { kind: 'command'; id: string; command: ChatCommand };
 
 /** Chats just created here, whose composer takes focus when it first shows. */
 const focusOnOpen = new Set<string>();
@@ -318,21 +323,30 @@ export const ChatComposer = observer(function ChatComposer({
   const agentNamed = tokens.some((token) => token.kind === 'agent');
   const mentionable =
     (agents.length > 0 && (groupChats || !agentNamed)) || mentionPeople.length > 0;
-  const query = mentionable ? mentionQuery(draft, caret) : null;
-  const suggestions: Suggestion[] = query
-    ? [
-        ...filterMentionAgents(agents, query.query).map((agent): Suggestion => ({
-          kind: 'agent',
-          id: agent.id,
-          agent,
-        })),
-        ...filterMentionPeople(mentionPeople, query.query).map((person): Suggestion => ({
-          kind: 'person',
-          id: `user:${person.userId}`,
-          person,
-        })),
-      ]
-    : [];
+  // A `!` that starts the message offers the room's commands, as the server lists them.
+  const typingCommand = commandQuery(draft, caret);
+  const commands = useQuery({
+    queryKey: ['chat-commands', serverId, timeline.roomId],
+    queryFn: () => rpc.chats.commands(serverId, timeline.roomId),
+    enabled: typingCommand !== null,
+    staleTime: 5 * 60_000,
+    retry: false,
+  });
+  const query = typingCommand ?? (mentionable ? mentionQuery(draft, caret) : null);
+  const suggestions: Suggestion[] = typingCommand
+    ? filterCommands(commands.data ?? [], typingCommand.query).map(
+        (command): Suggestion => ({ kind: 'command', id: `command:${command.name}`, command })
+      )
+    : query
+      ? [
+          ...filterMentionAgents(agents, query.query).map(
+            (agent): Suggestion => ({ kind: 'agent', id: agent.id, agent })
+          ),
+          ...filterMentionPeople(mentionPeople, query.query).map(
+            (person): Suggestion => ({ kind: 'person', id: `user:${person.userId}`, person })
+          ),
+        ]
+      : [];
   const suggesting = query !== null && query.start !== dismissedAt && suggestions.length > 0;
   const activeIndex = Math.min(mentionIndex, suggestions.length - 1);
   const listId = `mentions-${timeline.roomId}`;
@@ -377,6 +391,17 @@ export const ChatComposer = observer(function ChatComposer({
   const pick = (choice: Suggestion) => {
     const textarea = input.current;
     if (!textarea || !query) return;
+    if (choice.kind === 'command') {
+      const typed = `!${choice.command.name} `;
+      textarea.focus();
+      textarea.setSelectionRange(0, caret);
+      if (!document.execCommand('insertText', false, typed)) {
+        edit(`${typed}${draft.slice(caret)}`, null);
+        setCaret(typed.length);
+      }
+      setMentionIndex(0);
+      return;
+    }
     const name = choice.kind === 'agent' ? choice.agent.name : choice.person.name;
     pendingPick.current = {
       kind: choice.kind,
@@ -544,7 +569,7 @@ export const ChatComposer = observer(function ChatComposer({
                 <div
                   id={listId}
                   role="listbox"
-                  aria-label="Mention an agent or person"
+                  aria-label={typingCommand ? 'Room commands' : 'Mention an agent or person'}
                   className="absolute bottom-full left-0 z-50 mb-3 flex max-h-60 w-72 flex-col overflow-y-auto rounded-md border bg-background-quaternary p-1 text-sm shadow-sm"
                 >
                   {suggestions.map((each, index) => (
@@ -562,7 +587,14 @@ export const ChatComposer = observer(function ChatComposer({
                       onMouseDown={(event) => event.preventDefault()}
                       onClick={() => pick(each)}
                     >
-                      {each.kind === 'agent' ? (
+                      {each.kind === 'command' ? (
+                        <span className="flex min-w-0 flex-col">
+                          <span className="truncate font-medium">{each.command.usage}</span>
+                          <span className="truncate text-xs text-foreground-muted">
+                            {each.command.description}
+                          </span>
+                        </span>
+                      ) : each.kind === 'agent' ? (
                         <>
                           <AgentAvatar
                             name={each.agent.name}
@@ -632,9 +664,9 @@ export const ChatComposer = observer(function ChatComposer({
                 placeholder={disabled ?? `Message ${recipient}...`}
                 value={draft}
                 disabled={disabled !== null}
-                role={mentionable ? 'combobox' : undefined}
-                aria-autocomplete={mentionable ? 'list' : undefined}
-                aria-expanded={mentionable ? suggesting : undefined}
+                role="combobox"
+                aria-autocomplete="list"
+                aria-expanded={suggesting}
                 aria-controls={suggesting ? listId : undefined}
                 aria-activedescendant={
                   suggesting ? `${listId}-${suggestions[activeIndex]!.id}` : undefined
@@ -644,7 +676,10 @@ export const ChatComposer = observer(function ChatComposer({
                   edit(event.target.value, (event.nativeEvent as InputEvent).inputType ?? null);
                   setCaret(event.target.selectionStart);
                   setMentionIndex(0);
-                  if (!mentionQuery(event.target.value, event.target.selectionStart))
+                  if (
+                    !mentionQuery(event.target.value, event.target.selectionStart) &&
+                    !commandQuery(event.target.value, event.target.selectionStart)
+                  )
                     setDismissedAt(null);
                 }}
                 onSelect={(event) => setCaret(event.currentTarget.selectionStart)}

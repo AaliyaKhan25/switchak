@@ -34,6 +34,7 @@ from fastapi import (
 from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from switch_core.bridges.agent.commands import COMMANDS
 from switch_core.chats.service import (
     ChatError,
     ChatService,
@@ -171,6 +172,17 @@ class StagedUploadResponse(CamelModel):
 
 class MemberList(CamelModel):
     members: list[ChatMember]
+
+
+class ChatCommand(CamelModel):
+    name: str
+    description: str
+    # How it is typed, with its arguments: `!reset <target>`.
+    usage: str
+
+
+class ChatCommands(CamelModel):
+    commands: list[ChatCommand]
 
 
 class AddMemberRequest(CamelModel):
@@ -509,6 +521,35 @@ async def list_members(room_id: str, user: CurrentUser, service: Service) -> Mem
     async with tenant_session(service.session_factory, tenant_id) as session:
         room, _ = await service.require_member(session, tenant_id, user, room_id)
         return await _member_list(service, session, room)
+
+
+@router.get("/{room_id}/commands", response_model=ChatCommands)
+async def list_commands(
+    room_id: str, user: CurrentUser, service: Service
+) -> ChatCommands:
+    """The room commands a member can type here (`!name`), as the platforms'
+    command lists show them: those that do something and are not hidden."""
+    tenant_id = require_tenant_id()
+    async with tenant_session(service.session_factory, tenant_id) as session:
+        await service.require_member(session, tenant_id, user, room_id)
+    return ChatCommands(
+        commands=[
+            ChatCommand(
+                name=command.name,
+                description=command.description,
+                usage=" ".join(
+                    [
+                        f"!{command.name}",
+                        *(f"<{arg.name}>" for arg in command.args_spec),
+                    ]
+                ),
+            )
+            for command in COMMANDS
+            if command.handler is not None
+            and not command.hidden
+            and command.description.strip()
+        ]
+    )
 
 
 @router.post("/{room_id}/members", response_model=MemberList)

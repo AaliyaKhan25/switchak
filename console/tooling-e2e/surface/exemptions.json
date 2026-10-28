@@ -5,6 +5,7 @@
     "GET /gateway/auth/oidc/callback": "Needs a live OIDC identity provider; the harness signs in with a password.",
     "GET /gateway/auth/oidc/login": "Needs a live OIDC identity provider; the harness signs in with a password.",
     "GET /gateway/chats/agent-candidates": "Switch Console group chats. Covered by core's test_chats_groups.py against real Postgres; no scenario drives Console chats yet (every other /gateway/chats route is still in the backlog), and the stacks the harness builds do not turn on the group_chats flag these routes need.",
+    "GET /gateway/chats/{room_id}/commands": "The commands the chat composer offers on `!`. Covered by core's test_chats_controls.py against real Postgres; no scenario drives Console chats yet, and the stacks the harness builds do not turn on the group_chats flag.",
     "GET /gateway/chats/{room_id}/threads/{root_id}/messages": "Switch Console group chats. Covered by core's test_chats_groups.py against real Postgres; no scenario drives Console chats yet (every other /gateway/chats route is still in the backlog), and the stacks the harness builds do not turn on the group_chats flag these routes need.",
     "GET /gateway/docs": "FastAPI's generated API documentation; no behaviour of Switch's own to cover.",
     "GET /gateway/docs/oauth2-redirect": "FastAPI's generated API documentation; no behaviour of Switch's own to cover.",

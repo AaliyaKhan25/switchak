@@ -117,6 +117,16 @@ export const chatMemberSchema = z.object({
 });
 export type ChatMember = z.infer<typeof chatMemberSchema>;
 export const chatMemberListSchema = z.object({ members: z.array(chatMemberSchema) });
+
+/** A room command a member can type (`!name`), as the server's command list has it. */
+export const chatCommandSchema = z.object({
+  name: z.string(),
+  description: z.string(),
+  /** How it is typed, with its arguments: `!reset <target>`. */
+  usage: z.string(),
+});
+export type ChatCommand = z.infer<typeof chatCommandSchema>;
+export const chatCommandListSchema = z.object({ commands: z.array(chatCommandSchema) });
 /** A person in the workspace, from its roster, who could be added to a chat. */
 export const workspaceMemberSchema = z
   .object({

@@ -296,3 +296,25 @@ async def test_only_a_failed_or_interrupted_turn_is_retried(chats: _Harness) -> 
         assert refused.status_code == 409
         assert _code(refused) == "NOTHING_TO_RETRY"
     assert await _commands(chats, room_id) == []
+
+
+async def test_a_member_is_offered_the_visible_commands_and_no_hidden_one(
+    chats: _Harness,
+) -> None:
+    agent = await chats.agent("helper", owner=chats.alice)
+    room_id = await chats.new_chat(chats.alice, agent, "c1")
+
+    outsider = await chats.client.get(
+        f"/chats/{room_id}/commands", headers=chats.as_user(chats.bob)
+    )
+    assert outsider.status_code == 403
+
+    listed = await chats.client.get(
+        f"/chats/{room_id}/commands", headers=chats.as_user(chats.alice)
+    )
+    assert listed.status_code == 200, listed.text
+    commands = {each["name"]: each for each in listed.json()["commands"]}
+    assert "retry" not in commands
+    assert commands["reset"]["usage"] == "!reset <target>"
+    assert commands["help"]["usage"] == "!help"
+    assert all(each["description"] for each in commands.values())

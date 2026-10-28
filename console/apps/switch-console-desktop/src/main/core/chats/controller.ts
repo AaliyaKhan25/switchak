@@ -16,6 +16,7 @@ import type {
   RoomActivity,
 } from '@shared/core/chats/activity';
 import type {
+  ChatCommand,
   ChatMember,
   ChatMessage,
   ChatMessagesPage,
@@ -44,6 +45,7 @@ import {
   fetchChatMessages,
   fetchRoomActivity,
   fetchThreadMessages,
+  listChatCommands,
   listChatMembers,
   listChats,
   listWorkspaceMembers,
@@ -181,6 +183,9 @@ export const chatsController = createRPCController({
     onServer(params.serverId, (server) => removeChatAgent(server, params.roomId, params.agentId)),
   members: (serverId: string, roomId: string): Promise<ChatMember[]> =>
     onServer(serverId, (server) => listChatMembers(server, roomId)),
+  /** The room commands a member can type here, for the composer's `!` list. */
+  commands: (serverId: string, roomId: string): Promise<ChatCommand[]> =>
+    onServer(serverId, (server) => listChatCommands(server, roomId)),
   addMember: (params: {
     serverId: string;
     roomId: string;
