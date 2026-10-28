@@ -1011,22 +1011,43 @@ async def _activity_frames(
     change: Change,
     sent: dict[tuple[str, str, str, str], int],
 ) -> list[bytes] | None:
-    """Frames for one change, limited to the rooms the caller may read now;
-    None once the caller has no tenant role, which ends the stream."""
+    """Frames for one change, if the caller may read its room now; None once
+    the caller has no tenant role, which ends the stream.
+
+    Reads only what moved: an announcement naming its step reads that one
+    row, and none at all when a revision at least as new was already sent, so
+    a burst of updates to a step is coalesced into the first read of it. An
+    announcement from before steps were named rereads the turn."""
+    if change.kind == "activity" and change.item_id is not None:
+        key = (change.agent_id, change.session_id, change.key, change.item_id)
+        if change.revision is not None and sent.get(key, -1) >= change.revision:
+            return []
     async with tenant_session(service.session_factory, tenant_id) as session:
-        if not await service.has_tenant_role(session, tenant_id, user.id):
+        member, reads = await service.reads_room(
+            session, tenant_id, user.id, change.room_id
+        )
+        if not member:
             return None
-        readable = {room.id for room in await service.readable_rooms(session, user.id)}
-        if not readable:
+        if not reads:
             return []
         if change.kind == "activity":
-            rows = await service.turn_items(
-                session, change.agent_id, change.session_id, change.key
-            )
+            if change.item_id is not None:
+                item = await service.turn_item(
+                    session,
+                    change.agent_id,
+                    change.session_id,
+                    change.key,
+                    change.item_id,
+                )
+                rows = [item] if item is not None else []
+            else:
+                rows = await service.turn_items(
+                    session, change.agent_id, change.session_id, change.key
+                )
             frames = []
             for row in rows:
                 key = (row.agent_id, row.session_id, row.turn_id, row.item_id)
-                if row.room_id in readable and sent.get(key, -1) < row.revision:
+                if row.room_id == change.room_id and sent.get(key, -1) < row.revision:
                     sent[key] = row.revision
                     view = ActivityItemView.of(row)
                     frames.append(
@@ -1036,7 +1057,7 @@ async def _activity_frames(
         request = await service.approval(
             session, change.agent_id, change.session_id, change.key
         )
-        if request is None or request.room_id not in readable:
+        if request is None or request.room_id != change.room_id:
             return []
         approval = ApprovalRequestView.of(request)
         return [_frame("approval", approval.model_dump(mode="json", by_alias=True))]

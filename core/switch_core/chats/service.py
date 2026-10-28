@@ -71,6 +71,7 @@ from switch_core.db.models import (
     Message,
     MessageAttachment,
     Room,
+    TenantMember,
     UsageMetric,
     User,
     require_tenant_id,
@@ -747,6 +748,43 @@ class ChatService:
         self, session: AsyncSession, agent_id: str, session_id: str, turn_id: str
     ) -> list[AgentSessionActivityItem]:
         return await self._activity_store.turn(session, agent_id, session_id, turn_id)
+
+    async def turn_item(
+        self,
+        session: AsyncSession,
+        agent_id: str,
+        session_id: str,
+        turn_id: str,
+        item_id: str,
+    ) -> AgentSessionActivityItem | None:
+        return await session.get(
+            AgentSessionActivityItem,
+            (require_tenant_id(), agent_id, session_id, turn_id, item_id),
+        )
+
+    async def reads_room(
+        self, session: AsyncSession, tenant_id: str, user_id: str, room_id: str | None
+    ) -> tuple[bool, bool]:
+        """Whether the user still holds a role in the tenant, and whether they
+        may read `room_id` now (`readable_rooms`, for that one room), in one
+        query. A step outside any room is read by nobody here."""
+        member = exists().where(
+            TenantMember.tenant_id == tenant_id, TenantMember.user_id == user_id
+        )
+        reads = (
+            exists().where(
+                ClientRoom.room_id == room_id,
+                ClientRoom.client_id == Client.id,
+                Client.user_id == user_id,
+                Client.type == MEMBER_CLIENT_TYPE,
+                Room.id == room_id,
+                Room.archived_at.is_(None),
+            )
+            if room_id is not None
+            else false()
+        )
+        row = (await session.execute(select(member, reads))).one()
+        return bool(row[0]), bool(row[0] and row[1])
 
     async def approval(
         self, session: AsyncSession, agent_id: str, session_id: str, request_id: str

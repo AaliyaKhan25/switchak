@@ -58,6 +58,10 @@ class Change:
     # None for a step or request outside any room.
     room_id: str | None
     row: dict[str, Any] | None
+    # The step and its revision, for `activity`; None for an approval, and on
+    # an announcement from before steps were named.
+    item_id: str | None = None
+    revision: int | None = None
 
     @staticmethod
     def parse(payload: str) -> Change | None:
@@ -80,6 +84,8 @@ class Change:
             else:
                 raise ValueError(table)
             room_id = fields["room_id"]
+            item_id = fields.get("item_id") if kind == "activity" else None
+            revision = fields.get("revision") if kind == "activity" else None
             return Change(
                 kind=kind,
                 tenant_id=str(fields["tenant_id"]),
@@ -88,6 +94,8 @@ class Change:
                 key=key,
                 room_id=None if room_id is None else str(room_id),
                 row=row,
+                item_id=None if item_id is None else str(item_id),
+                revision=None if revision is None else int(revision),
             )
         except (ValueError, TypeError, KeyError):
             logger.warning(
