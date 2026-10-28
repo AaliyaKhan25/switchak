@@ -1401,3 +1401,37 @@ it('posts for a room turn that ended without the agent posting, and not for one 
     expect(await host.stop()).toBeNull();
   }
 });
+
+it('reports the turn a fault ended, and the fault, before it stops', async () => {
+  const host = await start({ rooms: true });
+  await host.parent.ask({ type: 'room', handoff: roomMessage(1, 'hi') });
+  await until(() => expect(host.turns).toHaveLength(1));
+  const turnId = host.turns[0]!.turnId;
+  // Switch is unreachable while the provider fails: nothing goes out until it is back.
+  host.switchCore.state.unavailable = true;
+  host.emit({
+    type: 'turn.completed',
+    turnId,
+    outcome: 'error',
+    message: 'model not supported',
+    usage: [],
+  });
+  host.emit({ type: 'session.state.changed', status: 'error' });
+  await new Promise((resolve) => setTimeout(resolve, 600));
+  host.switchCore.state.unavailable = false;
+
+  const reported = (kind: string, status: string) =>
+    host.switchCore.calls.some((c) => {
+      const row = c.body as { kind: string; status: string; turn_id: string };
+      return (
+        c.path.endsWith('/activity') &&
+        row.kind === kind &&
+        row.status === status &&
+        row.turn_id === turnId
+      );
+    });
+  await until(() => expect(reported('turn', 'error')).toBe(true));
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+  // The host stopped on its own, faulted, once the reports were out.
+  expect(String(await host.stop())).toContain('HOST_FAULTED');
+});

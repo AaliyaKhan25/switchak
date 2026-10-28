@@ -67,6 +67,9 @@ import {
   type VendorServers,
 } from './vendor-mcp';
 
+/** How long a faulted host waits for its last reports to reach Switch before it stops. */
+const FINAL_REPORT_MS = 5_000;
+
 /**
  * A session run on behalf of its agent.
  *
@@ -460,6 +463,9 @@ export async function runSharedHost(
       await send({ kind: 'activity', row });
       return true;
     };
+    // One report at a time: the loop below and the last one before a fault share the cursor.
+    let reportChain: Promise<void> = Promise.resolve();
+    const reportInTurn = () => (reportChain = reportChain.catch(() => {}).then(report));
     const report = async () => {
       if (reportingUnsupported) return;
       const { events } = host!.replay(reporter.cursor);
@@ -957,7 +963,7 @@ export async function runSharedHost(
       await reportStart();
       let force = true;
       while (!executionSignal.aborted) {
-        await report();
+        await reportInTurn();
         await applyOutcomes(force);
         force = false;
         await waker.idleReporting(250, executionSignal);
@@ -970,10 +976,19 @@ export async function runSharedHost(
       if (reportingFailure) throw reportingFailure;
       const status = host.snapshot().session.status;
       if (status === 'stopped') break;
-      if (status === 'error' && !host.resetDecisionPending)
+      if (status === 'error' && !host.resetDecisionPending) {
+        // What faulted it, and the turn that ended with it, are what Switch most
+        // needs to show; stopping would drop them unreported, the turn left running.
+        await Promise.race([
+          reportInTurn().catch((error: unknown) =>
+            console.warn(`Could not report this session's last events: ${String(error)}`)
+          ),
+          delay(FINAL_REPORT_MS, undefined, { signal: executionSignal }).catch(() => {}),
+        ]);
         throw new Error(
           'HOST_FAULTED: Provider execution failed. Inspect the transcript before recovery.'
         );
+      }
       if (host.resetDecisionPending) {
         heldForDecision = true;
         const first = rooms?.pending()[0];
