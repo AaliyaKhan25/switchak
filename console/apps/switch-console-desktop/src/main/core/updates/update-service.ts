@@ -294,11 +294,15 @@ class UpdateService implements IInitializable, IDisposable {
     if (this.fake) return this.fake.check();
 
     if (IS_CANARY) {
-      autoUpdater.setFeedURL({
-        provider: 'generic',
-        url: await resolveCanaryFeedUrl(),
-        channel: 'canary',
-      });
+      let url: string;
+      try {
+        url = await resolveCanaryFeedUrl();
+      } catch (error) {
+        // The updater never runs, so its error listener cannot report this.
+        this.signals.failed(error);
+        throw error;
+      }
+      autoUpdater.setFeedURL({ provider: 'generic', url, channel: 'canary' });
     } else {
       autoUpdater.setFeedURL({
         provider: 'github',
