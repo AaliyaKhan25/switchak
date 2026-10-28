@@ -144,6 +144,7 @@ class DiscordGatewayClient:
         # (guard G4).
         self._connection.set_guild_message_handler(self._on_guild_message)
         self._connection.set_interaction_handler(self._on_interaction)
+        self._connection.set_channel_update_handler(self._on_channel_update)
         self._connection.set_guild_lifecycle_handlers(
             on_remove=self._on_guild_remove,
             on_join=self._on_guild_join,
@@ -311,6 +312,27 @@ class DiscordGatewayClient:
             # handling and outbound posting run against the one socket.
             adapter.attach_shared_connection(self._connection)
             await adapter.dispatch_inbound(message)
+
+    async def _on_channel_update(
+        self, before: discord.abc.GuildChannel, after: discord.abc.GuildChannel
+    ) -> None:
+        """Route a guild channel's change to the bridge its guild resolves to,
+        fresh and with no tenant bound, as a message is (G1). A guild with no
+        install is dropped."""
+        if before.name == after.name:
+            return
+        with no_tenant():
+            try:
+                target = await self._install_service.resolve_by_workspace(
+                    platform=_PLATFORM, workspace_id=str(after.guild.id)
+                )
+            except (WebhookWorkspaceUnknown, WebhookBridgeUnavailable):
+                return
+            adapter = target.adapter
+            if not isinstance(adapter, DiscordAdapter):
+                return
+            adapter.attach_shared_connection(self._connection)
+            await adapter.dispatch_channel_update(before, after)
 
     async def _on_slash(
         self,

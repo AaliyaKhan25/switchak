@@ -494,6 +494,7 @@ class CollaborationCore:
         await self._load_existing_human_actors()
         self._adapter.set_channel_migration_handler(self._handle_channel_migrated)
         self._adapter.set_channel_type_handler(self._record_channel_type)
+        self._adapter.set_channel_rename_handler(self._handle_channel_renamed)
         self._adapter.set_agent_presentation_resolver(self._agent_presentation)
         # A bridge on a shared connection that started before the connection
         # was up is attached later (when it comes up, or on its first event).
@@ -852,6 +853,35 @@ class CollaborationCore:
                 self._bridge_type,
                 channel_id,
                 channel_type,
+            )
+
+    async def _handle_channel_renamed(
+        self, channel_id: str, old_name: str, new_name: str
+    ) -> None:
+        """Give the room linked to this channel the channel's new name. A room
+        whose name is not the one it was made with from the old channel name
+        was given a title of its own, which is kept."""
+        bridge_name = self._bridge_display_name
+        with tenant_scope(self._bridge_tenant_id):
+            async with tenant_session(
+                self._session_factory, self._bridge_tenant_id
+            ) as session:
+                room = await self._room_store.get_by_external_channel(
+                    session, bridge_id=self._bridge_id, external_channel_id=channel_id
+                )
+            if room is None:
+                return
+            if room.name not in (f"{bridge_name}: {old_name}", old_name):
+                logger.info(
+                    "Room %s keeps its own title though its %s channel was "
+                    "renamed to %s",
+                    room.id,
+                    self._bridge_type,
+                    new_name,
+                )
+                return
+            await self._room_service.update_room(
+                room.id, name=f"{bridge_name}: {new_name}"
             )
 
     # ── Inbound (platform → room) ───────────────────────────────────────────

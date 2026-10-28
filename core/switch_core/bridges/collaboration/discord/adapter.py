@@ -734,6 +734,7 @@ class DiscordAdapter(PlatformAdapter):
         conn.register_message_handler(self._guild_id, self._handle_message)
         conn.set_dm_handler(self._handle_message)
         conn.set_interaction_handler(self._make_on_interaction())
+        conn.set_channel_update_handler(self.dispatch_channel_update)
         await conn.connect(
             commands=build_app_commands(self._handle_slash_command),
         )
@@ -827,6 +828,16 @@ class DiscordAdapter(PlatformAdapter):
         and routes each invocation to the bridge its guild resolves to.
         """
         await self._handle_slash_command(interaction, command, values)
+
+    async def dispatch_channel_update(
+        self, before: discord.abc.GuildChannel, after: discord.abc.GuildChannel
+    ) -> None:
+        """A channel in this bridge's guild was renamed: tell the bridge, so
+        the room linked to it follows. Other settings changes are not news."""
+        if after.guild.id != self._guild_id or before.name == after.name:
+            return
+        if self._on_channel_renamed is not None:
+            await self._on_channel_renamed(str(after.id), before.name, after.name)
 
     async def dispatch_interaction(self, interaction: discord.Interaction) -> None:
         """Handle one press on a card's button the shared client routed here.
