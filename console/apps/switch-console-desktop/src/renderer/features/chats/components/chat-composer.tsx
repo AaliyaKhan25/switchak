@@ -334,17 +334,23 @@ export const ChatComposer = observer(function ChatComposer({
   });
   const query = typingCommand ?? (mentionable ? mentionQuery(draft, caret) : null);
   const suggestions: Suggestion[] = typingCommand
-    ? filterCommands(commands.data ?? [], typingCommand.query).map(
-        (command): Suggestion => ({ kind: 'command', id: `command:${command.name}`, command })
-      )
+    ? filterCommands(commands.data ?? [], typingCommand.query).map((command): Suggestion => ({
+        kind: 'command',
+        id: `command:${command.name}`,
+        command,
+      }))
     : query
       ? [
-          ...filterMentionAgents(agents, query.query).map(
-            (agent): Suggestion => ({ kind: 'agent', id: agent.id, agent })
-          ),
-          ...filterMentionPeople(mentionPeople, query.query).map(
-            (person): Suggestion => ({ kind: 'person', id: `user:${person.userId}`, person })
-          ),
+          ...filterMentionAgents(agents, query.query).map((agent): Suggestion => ({
+            kind: 'agent',
+            id: agent.id,
+            agent,
+          })),
+          ...filterMentionPeople(mentionPeople, query.query).map((person): Suggestion => ({
+            kind: 'person',
+            id: `user:${person.userId}`,
+            person,
+          })),
         ]
       : [];
   const suggesting = query !== null && query.start !== dismissedAt && suggestions.length > 0;
