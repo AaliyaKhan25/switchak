@@ -203,6 +203,7 @@ class ChatService:
         self._agent_room_listeners: tuple[
             Callable[[str, str, list[str]], None], ...
         ] = ()
+        self._tasks: set[asyncio.Task[None]] = set()
         # Where a change to people's chats made here is announced to the
         # other processes, once wired (`use_signals`).
         self._signals: ChatSignals | None = None
@@ -570,6 +571,38 @@ class ChatService:
         when its name, display name or icon changes (`room_changes`), so
         whoever shows the room reads it again. It must not block."""
         self._agent_room_listeners = (*self._agent_room_listeners, listener)
+
+    def room_changed(self, tenant_id: str, room_id: str, client_ids: list[str]) -> None:
+        """A room's own details changed (its name, say): wake the streams of
+        the people in it, from a task of its own, so they re-send its summary."""
+        task = asyncio.create_task(self._room_details_changed(tenant_id, room_id))
+        self._tasks.add(task)
+        task.add_done_callback(self._task_done)
+
+    def _task_done(self, task: asyncio.Task[None]) -> None:
+        self._tasks.discard(task)
+        if not task.cancelled() and task.exception() is not None:
+            logger.error(
+                "Could not wake the streams of a changed room's people; they "
+                "re-read it on their next recheck",
+                exc_info=task.exception(),
+            )
+
+    async def _room_details_changed(self, tenant_id: str, room_id: str) -> None:
+        async with tenant_session(self.session_factory, tenant_id) as session:
+            user_ids = (
+                await session.execute(
+                    select(Client.user_id)
+                    .join(ClientRoom, ClientRoom.client_id == Client.id)
+                    .where(
+                        ClientRoom.room_id == room_id,
+                        Client.type == MEMBER_CLIENT_TYPE,
+                        Client.user_id.is_not(None),
+                    )
+                )
+            ).scalars()
+            members = sorted(user_id for user_id in user_ids if user_id is not None)
+        self._memberships_changed(tenant_id, members, [room_id])
 
     async def agent_changed(self, tenant_id: str, agent_id: str) -> None:
         """Tell everyone who sees a room with this agent that it changed, and

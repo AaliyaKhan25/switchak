@@ -10,6 +10,7 @@ from typing import Any
 
 import httpx
 import pytest
+from fastapi import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,7 +20,10 @@ from switch_core.bridges.agent.registration_bootstrap import (
 )
 from switch_core.chats.service import ChatError, ChatService
 from switch_core.db.models import Agent, Client, Message, Room, User, room_agents
+from switch_core.db.stores.room_store import RoomStore
 from switch_core.gateway import chats as chats_module
+from switch_core.gateway import rooms as rooms_module
+from switch_core.gateway.schemas import RoomUpdateRequest
 from switch_core.room_changes import RoomChanges
 from switch_core.user_changes import ROOM
 from tests.switch_core.gateway.conftest import (
@@ -1313,4 +1317,54 @@ async def test_renaming_an_agent_tells_everyone_who_sees_its_rooms(
     name, summary = await events.next()
     assert (name, summary["roomId"]) == ("chat", room_id)
     assert summary["agents"][0]["displayName"] == "QA Blair"
+    await events.stream.aclose()  # type: ignore[attr-defined]
+
+
+async def test_only_a_manager_renames_a_group_and_everyone_sees_it(
+    chats: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def detail(_session: AsyncSession, room: Room, *_args: Any) -> str:
+        return room.name
+
+    monkeypatch.setattr(rooms_module, "_build_room_detail", detail)
+    chats.room_service.on_room_changed(chats.service.room_changed)
+    created = await chats.client.post(
+        "/chats",
+        json={"agentIds": [], "memberUserIds": [chats.bob.id], "requestId": "c1"},
+        headers=chats.as_user(chats.alice),
+    )
+    room_id = created.json()["chat"]["roomId"]
+    events = _stream(chats, chats.bob, {}, recheck=60.0)
+    assert await events.until("ready") == {}
+
+    async def rename(user: User, name: str) -> Any:
+        async with chats.factory() as session:
+            return await rooms_module.patch_room(
+                room_id,
+                RoomUpdateRequest(name=name),
+                session,
+                chats.room_service,
+                RoomStore(),
+                None,  # type: ignore[arg-type]
+                None,  # type: ignore[arg-type]
+                None,  # type: ignore[arg-type]
+                user,
+                False,
+            )
+
+    with pytest.raises(HTTPException) as refused:
+        await rename(chats.bob, "Bob's name")
+    assert refused.value.status_code == 403
+    for bad in ("   ", "x" * 201):
+        with pytest.raises(HTTPException) as invalid:
+            await rename(chats.alice, bad)
+        assert invalid.value.status_code == 400
+
+    assert await rename(chats.alice, "  Launch crew  ") == "Launch crew"
+    name, summary = await events.next()
+    assert (name, summary["roomId"], summary["name"]) == (
+        "chat",
+        room_id,
+        "Launch crew",
+    )
     await events.stream.aclose()  # type: ignore[attr-defined]

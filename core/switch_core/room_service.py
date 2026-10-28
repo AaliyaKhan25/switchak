@@ -158,6 +158,9 @@ class RoomCreateResult(BaseModel):
     failed_attachments: list[dict[str, Any]] = []
 
 
+ROOM_NAME_MAX = 200
+
+
 class RoomService:
     # Class-level defaults so a caller that builds this without `__init__` —
     # several tests assemble a minimal instance directly — still has the
@@ -1132,6 +1135,12 @@ class RoomService:
         read_visibility: str | None = None,
         write_visibility: str | None = None,
     ) -> None:
+        if name is not None:
+            name = name.strip()
+            if not name or len(name) > ROOM_NAME_MAX:
+                raise ValueError(
+                    f"A room's name must be 1 to {ROOM_NAME_MAX} characters."
+                )
         tenant_id = await self._room_tenant(room_id)
         async with tenant_session(self._session_factory, tenant_id) as session:
             if read_visibility is not None or write_visibility is not None:
@@ -1157,6 +1166,7 @@ class RoomService:
                 write_visibility=write_visibility,
             )
             await session.commit()
+        self._room_changed(tenant_id, room_id)
 
     async def set_join_event_listeners(
         self, room_id: str, settings: dict[str, bool]

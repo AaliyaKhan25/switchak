@@ -933,6 +933,9 @@ async def patch_room(
     room = await room_store.get(session, room_id)
     if room is None:
         raise HTTPException(status_code=404, detail="Room not found")
+    # The update was written on another session; this one still holds the row
+    # as it was read for the access check.
+    await session.refresh(room)
     return await _build_room_detail(
         session, room, room_store, bridge_store, external_user_store, protocol
     )
