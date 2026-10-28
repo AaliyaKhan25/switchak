@@ -40,24 +40,22 @@ export function withConsoleGroupChats(
   const listed = new Set(rooms.map((room) => room.id));
   const added = [...chats]
     .filter((chat) => isConsoleGroupChatSummary(chat) && !listed.has(chat.roomId))
-    .map(
-      (chat): RemoteRoomSummary => ({
-        id: chat.roomId,
-        name: chat.name,
-        description: '',
-        channelType: chat.channelType,
-        agentCount: chat.agents.length,
-        bridgeDisplayName: null,
-        bridgeType: null,
-        externalChannelUrl: null,
-        // shortcut: a chat summary names no owner, so a chat-only row offers no delete; read it from the room detail if one is wanted.
-        ownerId: null,
-        viewerIsMember: true,
-        isConsoleChat: true,
-        archived: false,
-        createdAt: chat.lastMessage?.sentAt ?? '',
-      })
-    );
+    .map((chat): RemoteRoomSummary => ({
+      id: chat.roomId,
+      name: chat.name,
+      description: '',
+      channelType: chat.channelType,
+      agentCount: chat.agents.length,
+      bridgeDisplayName: null,
+      bridgeType: null,
+      externalChannelUrl: null,
+      // shortcut: a chat summary names no owner, so a chat-only row offers no delete; read it from the room detail if one is wanted.
+      ownerId: null,
+      viewerIsMember: true,
+      isConsoleChat: true,
+      archived: false,
+      createdAt: chat.lastMessage?.sentAt ?? '',
+    }));
   if (added.length === 0) return rooms;
   return [...rooms, ...added].sort((a, b) => a.name.localeCompare(b.name));
 }

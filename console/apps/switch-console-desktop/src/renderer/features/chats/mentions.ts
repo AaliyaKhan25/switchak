@@ -233,14 +233,12 @@ export function mentionSpans(tokens: MentionToken[]): ChatMentionSpan[] {
 export function tokensFromSpans(body: string, spans: ChatMentionSpan[]): MentionToken[] {
   return spans
     .filter((span) => span.offset >= 0 && span.offset + span.length <= body.length)
-    .map(
-      (span): MentionToken => ({
-        kind: span.kind === 'user' ? 'person' : 'agent',
-        id: span.id,
-        start: span.offset,
-        end: span.offset + span.length,
-      })
-    )
+    .map((span): MentionToken => ({
+      kind: span.kind === 'user' ? 'person' : 'agent',
+      id: span.id,
+      start: span.offset,
+      end: span.offset + span.length,
+    }))
     .sort((a, b) => a.start - b.start);
 }
 
