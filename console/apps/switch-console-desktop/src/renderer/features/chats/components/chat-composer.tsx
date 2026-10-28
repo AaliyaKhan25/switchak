@@ -192,22 +192,28 @@ export const ChatComposer = observer(function ChatComposer({
   const [picked, setPicked] = useState<MentionToken[]>(
     () => readChatDraft(draftKey)?.mentions ?? []
   );
-  // The account or workspace became known: what was kept for it wins over what is on screen.
-  const [readFrom, setReadFrom] = useState(draftKey);
-  if (readFrom !== draftKey) {
-    setReadFrom(draftKey);
-    const kept = readChatDraft(draftKey);
-    if (kept) {
-      setDraft(kept.text);
-      setPicked(kept.mentions);
-    }
-  }
   /** The send that emptied the composer: its text stays kept until the server has taken it. */
   const [sending, setSending] = useState<string | null>(null);
   const sendState =
     sending === null
       ? null
       : (timeline.pending.find((send) => send.requestId === sending)?.state ?? 'sent');
+  // Another account, workspace or room shows its own draft, or none: the one on
+  // screen is never carried over. Only typing done before this room's account and
+  // workspace were known is kept for them, when they have nothing of their own.
+  const [readFrom, setReadFrom] = useState(draftKey);
+  if (readFrom !== draftKey) {
+    const startup =
+      readFrom ===
+      chatDraftKey({ serverId, userId: null, workspaceId: null, roomId: timeline.roomId });
+    const kept = readChatDraft(draftKey);
+    setReadFrom(draftKey);
+    if (kept || !startup) {
+      setDraft(kept?.text ?? '');
+      setPicked(kept?.mentions ?? []);
+      setSending(null);
+    }
+  }
   useEffect(() => {
     if (readFrom !== draftKey) return;
     if (draft === '' && sendState !== null && sendState !== 'sent') return;

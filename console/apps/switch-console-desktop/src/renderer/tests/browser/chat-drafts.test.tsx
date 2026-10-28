@@ -8,7 +8,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const scope = vi.hoisted(() => ({ userId: 'user-a', workspaceId: 'ws-1' }));
+const scope = vi.hoisted(() => ({ userId: 'user-a' as string | null, workspaceId: 'ws-1' }));
 vi.mock('@renderer/lib/hooks/useFeatureFlags', () => ({
   useFeatureFlags: () => ({ group_chats: true }),
 }));
@@ -59,10 +59,13 @@ function api(send: TimelineApi['send']): TimelineApi {
   return { newId: () => `id-${++n}`, send } as unknown as TimelineApi;
 }
 
+/** Renders the composer for `timeline`; a second call re-renders the same mounted composer. */
 async function mount(timeline: ChatTimeline): Promise<HTMLTextAreaElement> {
-  container = document.createElement('div');
-  document.body.appendChild(container);
-  root = createRoot(container);
+  if (!root) {
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+  }
   await act(async () =>
     root!.render(
       <QueryClientProvider client={new QueryClient()}>
@@ -80,7 +83,7 @@ async function mount(timeline: ChatTimeline): Promise<HTMLTextAreaElement> {
       </QueryClientProvider>
     )
   );
-  return container.querySelector('textarea')!;
+  return container!.querySelector('textarea')!;
 }
 
 async function type(textarea: HTMLTextAreaElement, value: string): Promise<void> {
@@ -173,5 +176,37 @@ describe('chat drafts', () => {
     await unmount();
     textarea = await mount(new ChatTimeline('room-1', api(vi.fn())));
     expect(textarea.value).toBe('do not lose me');
+  });
+  it('shows the other room’s draft, or none, in the same composer, and never carries one over', async () => {
+    localStorage.setItem(
+      key('user-a', 'ws-1', 'room-a'),
+      JSON.stringify({ text: '@agent-two only for A', mentions: [keptMention] })
+    );
+    let textarea = await mount(new ChatTimeline('room-a', api(vi.fn())));
+    expect(textarea.value).toBe('@agent-two only for A');
+
+    textarea = await mount(new ChatTimeline('room-b', api(vi.fn())));
+    expect(textarea.value).toBe('');
+    expect(container!.querySelector('mark')).toBeNull();
+    expect(localStorage.getItem(key('user-a', 'ws-1', 'room-b'))).toBeNull();
+
+    // Another account in the same room: its own draft, or none.
+    textarea = await mount(new ChatTimeline('room-a', api(vi.fn())));
+    expect(textarea.value).toBe('@agent-two only for A');
+    scope.userId = 'user-b';
+    textarea = await mount(new ChatTimeline('room-a', api(vi.fn())));
+    expect(textarea.value).toBe('');
+    expect(localStorage.getItem(key('user-b', 'ws-1', 'room-a'))).toBeNull();
+    expect(readChatDraft(key('user-a', 'ws-1', 'room-a'))?.text).toBe('@agent-two only for A');
+  });
+
+  it('keeps what was typed before the account was known, for that account', async () => {
+    scope.userId = null;
+    let textarea = await mount(new ChatTimeline('room-1', api(vi.fn())));
+    await type(textarea, 'typed while starting');
+    scope.userId = 'user-a';
+    textarea = await mount(new ChatTimeline('room-1', api(vi.fn())));
+    expect(textarea.value).toBe('typed while starting');
+    expect(readChatDraft(key('user-a', 'ws-1', 'room-1'))?.text).toBe('typed while starting');
   });
 });
