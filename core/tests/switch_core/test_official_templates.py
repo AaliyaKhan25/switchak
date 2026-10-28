@@ -16,6 +16,7 @@ from switch_core.official_templates import (
     released_agent_fingerprints,
     revisions,
 )
+from switch_core.providers.registry import provider_ids
 from switch_core.template_installs import fingerprints, render_agents
 from switch_core.template_lint import lint_template
 
@@ -203,3 +204,40 @@ def test_released_fingerprints_list_every_revision_newest_first():
         range(current_revision("switch-buddy"), 0, -1)
     )
     assert all("buddy" in agents for _, agents in released)
+
+
+def test_switch_buddy_offers_every_provider_switch_runs():
+    """The template's provider param lists the providers to try in order; a
+    provider added to Switch and not to it is one buddy is never created
+    with outside Switch Console, which always names one."""
+    template = yaml.safe_load(
+        (_PACKAGED / "switch-buddy" / "template.yaml").read_text(encoding="utf-8")
+    )
+    assert sorted(template["params"]["provider"]["default"]) == sorted(provider_ids())
+
+
+def test_switch_buddy_declares_the_inputs_switch_console_fills():
+    """Switch Console fills these when it creates a buddy (create-buddy.ts),
+    and the server refuses an input a template does not declare: dropping or
+    renaming one stops every Console that sends it from creating a buddy."""
+    template = yaml.safe_load(
+        (_PACKAGED / "switch-buddy" / "template.yaml").read_text(encoding="utf-8")
+    )
+    assert {"agent_name", "provider", "machine"} <= set(template["params"])
+
+
+def test_switch_buddy_s_icon_is_in_the_repository_where_its_link_points():
+    """Every buddy any release ever created carries this link, and the chat
+    apps load the picture from it: the file it names on the main branch must
+    stay where it is, or every buddy's face breaks for every release at once."""
+    template = yaml.safe_load(
+        (_PACKAGED / "switch-buddy" / "template.yaml").read_text(encoding="utf-8")
+    )
+    prefix = "https://raw.githubusercontent.com/sandbox-quantum/switch/main/"
+    icon_url = template["resources"]["buddy"]["icon_url"]
+    assert icon_url.startswith(prefix), icon_url
+    path = _REPO / icon_url.removeprefix(prefix)
+    assert path.is_file(), (
+        f"{path.relative_to(_REPO)} is gone, and every switch-buddy's icon links "
+        "to it there. Put it back: older releases go on creating buddies with this link."
+    )
