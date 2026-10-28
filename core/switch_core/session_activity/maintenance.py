@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 
 EXPIRY_INTERVAL_SECONDS = 5.0
 PRUNE_EVERY_SECONDS = 3600.0
+ORPHANS_EVERY_SECONDS = 60.0
 ACTIVITY_RETENTION = timedelta(days=7)
 
 
@@ -52,12 +53,39 @@ async def maintain_once(
                 )
 
 
+async def end_orphaned_turns_once(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """One pass over every tenant: end the turns no host is left to finish."""
+    service = AgentSessionActivityService(session_factory)
+    for tenant_id in await all_tenant_ids(session_factory):
+        with tenant_scope(tenant_id):
+            try:
+                ended = await service.end_orphaned_turns()
+                if ended:
+                    logger.warning(
+                        "Ended %d turn(s) in tenant %s whose agent went away "
+                        "before reporting their end",
+                        len(ended),
+                        tenant_id,
+                    )
+            except Exception:
+                logger.exception(
+                    "Ending orphaned turns failed for tenant %s", tenant_id
+                )
+
+
 async def maintenance_loop(session_factory: async_sessionmaker[AsyncSession]) -> None:
-    """Session-activity upkeep every 5 s."""
+    """Session-activity upkeep every 5 s; orphaned turns every minute."""
     with no_tenant():
         since_prune = PRUNE_EVERY_SECONDS
+        since_orphans = 0.0
         while True:
             await asyncio.sleep(EXPIRY_INTERVAL_SECONDS)
+            since_orphans += EXPIRY_INTERVAL_SECONDS
+            if since_orphans >= ORPHANS_EVERY_SECONDS:
+                since_orphans = 0.0
+                await end_orphaned_turns_once(session_factory)
             since_prune += EXPIRY_INTERVAL_SECONDS
             prune = since_prune >= PRUNE_EVERY_SECONDS
             try:

@@ -6,13 +6,20 @@ transaction, and the bound tenant scopes every read through row-level security.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
-from sqlalchemy import delete, func, or_, select, update
+from sqlalchemy import delete, exists, func, literal, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 
-from switch_core.db.models import Agent, AgentSessionActivityItem, ApprovalRequest
+from switch_core.db.models import (
+    Agent,
+    AgentConnectionRecord,
+    AgentSession,
+    AgentSessionActivityItem,
+    ApprovalRequest,
+    SwitchCoreProcess,
+)
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -137,6 +144,63 @@ class AgentSessionActivityStore:
             .with_for_update()
         )
         return status
+
+    async def end_orphaned_turns(
+        self,
+        session: AsyncSession,
+        *,
+        quiet_for: timedelta,
+        lease_ttl: timedelta,
+        heartbeat_ttl: timedelta,
+        text: str,
+    ) -> list[tuple[str, str, str]]:
+        """End, as interrupted, the turns still queued or running that no
+        host can finish: nothing in the turn has moved for `quiet_for`, and
+        its agent has no live connection (open, on a process holding its
+        lease) and no fresh heartbeat. The revision moves on, so the change is
+        announced like a host's. Returns (agent, session, turn) of each."""
+        other = AgentSessionActivityItem.__table__.alias("other")
+        turn = AgentSessionActivityItem
+        quiet = ~exists().where(
+            other.c.tenant_id == turn.tenant_id,
+            other.c.agent_id == turn.agent_id,
+            other.c.session_id == turn.session_id,
+            other.c.turn_id == turn.turn_id,
+            other.c.updated_at > func.now() - literal(quiet_for),
+        )
+        connected = exists().where(
+            AgentConnectionRecord.agent_id == turn.agent_id,
+            AgentConnectionRecord.closed_at.is_(None),
+            SwitchCoreProcess.id == AgentConnectionRecord.process_id,
+            SwitchCoreProcess.stopped_at.is_(None),
+            SwitchCoreProcess.beat_at > func.now() - literal(lease_ttl),
+        )
+        beating = exists().where(
+            AgentSession.agent_id == turn.agent_id,
+            AgentSession.lifecycle == "heartbeat",
+            AgentSession.last_seen_at > func.now() - literal(heartbeat_ttl),
+        )
+        result = await session.execute(
+            update(turn)
+            .where(
+                turn.item_id == TURN_ITEM_ID,
+                turn.status.in_(("queued", "running")),
+                quiet,
+                ~connected,
+                ~beating,
+            )
+            .values(
+                status="interrupted",
+                text=text,
+                revision=turn.revision + 1,
+                updated_at=func.now(),
+            )
+            .returning(turn.agent_id, turn.session_id, turn.turn_id)
+        )
+        return [
+            (agent_id, session_id, turn_id)
+            for agent_id, session_id, turn_id in result.all()
+        ]
 
     async def upsert(
         self, session: AsyncSession, item: AgentSessionActivityItem
