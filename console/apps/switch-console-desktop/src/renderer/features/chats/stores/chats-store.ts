@@ -108,12 +108,29 @@ export class ChatsStore {
     events.onReset(({ serverId }) => this.reset(serverId));
   }
 
-  /** Follow the server the window is scoped to; `key` changes with the workspace. */
+  /**
+   * Follow the server the window is scoped to; `key` changes with the workspace
+   * and the account signed in there. A new key on the same server starts over:
+   * the feed is opened again under the new sign-in, and nothing of the last
+   * account's chats is kept.
+   */
   follow(read: () => { serverId: string | null; key: string | null }): () => void {
-    return reaction(read, ({ serverId }) => void this.connect(serverId), {
-      fireImmediately: true,
-      equals: (a, b) => a.serverId === b.serverId && a.key === b.key,
-    });
+    let following: string | null = null;
+    return reaction(
+      read,
+      ({ serverId }) => {
+        const again = serverId !== null && serverId === following;
+        following = serverId;
+        void (async () => {
+          if (again) await this.connect(null);
+          await this.connect(serverId);
+        })();
+      },
+      {
+        fireImmediately: true,
+        equals: (a, b) => a.serverId === b.serverId && a.key === b.key,
+      }
+    );
   }
 
   async connect(serverId: string | null): Promise<void> {

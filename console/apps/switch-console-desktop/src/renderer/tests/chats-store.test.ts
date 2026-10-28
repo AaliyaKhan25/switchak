@@ -1,3 +1,4 @@
+import { observable, runInAction } from 'mobx';
 import { describe, expect, it, vi } from 'vitest';
 import { readThroughSeq } from '@renderer/features/chats/read-progress';
 import type { TimelineApi } from '@renderer/features/chats/stores/chat-timeline-store';
@@ -85,7 +86,7 @@ function setup(
     onReset: () => () => {},
   };
   const api: ChatsApi = {
-    connect: async () => ({ state: 'live', detail: null }),
+    connect: vi.fn(async () => ({ state: 'live' as const, detail: null })),
     disconnect: vi.fn(async () => {}),
     list: vi.fn(list),
     identity,
@@ -105,6 +106,23 @@ function setup(
 }
 
 describe('ChatsStore', () => {
+  it('opens the feed again, keeping nothing of the last account, when the sign-in changes', async () => {
+    const { store, api } = setup(async () => [summary('r1', 1)]);
+    const scope = observable({ key: 'ws:t:user-a' as string | null });
+    const stop = store.follow(() => ({ serverId: 's1', key: scope.key }));
+    await vi.waitFor(() => expect(store.chats.size).toBe(1));
+    expect(api.connect).toHaveBeenCalledTimes(1);
+
+    runInAction(() => (scope.key = 'ws:t:null'));
+    await vi.waitFor(() => expect(api.connect).toHaveBeenCalledTimes(2));
+    expect(api.disconnect).toHaveBeenCalledWith('s1');
+    runInAction(() => (scope.key = 'ws:t:user-a'));
+    await vi.waitFor(() => expect(api.connect).toHaveBeenCalledTimes(3));
+    await vi.waitFor(() => expect(store.streamState).toBe('live'));
+    expect(store.chats.size).toBe(1);
+    stop();
+  });
+
   it('reads every summary again, so a renamed agent shows its new name', async () => {
     let name = 'ada';
     const { store } = setup(async () => {
