@@ -2091,6 +2091,47 @@ it('hands a relayed command to the session it names, and only if it runs here', 
   }
 });
 
+it('starts the host of a session a failure took down, to hand it a retry', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'shared-watch-retry-'));
+  roots.push(root);
+  paths.root = root;
+  const config = await spawning(root);
+  const faulted = await existing(root, config);
+  const hosts = sessionHosts();
+  vi.mocked(ensureSharedProcess).mockImplementation(async ({ root: sessionRoot }) => {
+    await hosts.start(sessionRoot);
+    return { created: false };
+  });
+  vi.spyOn(console, 'warn').mockImplementation(() => {});
+  const abort = new AbortController();
+  const run = runAgentHost(
+    root,
+    config,
+    abort.signal,
+    hosts.supervision,
+    new WatcherControl(),
+    openSwitchStream
+  );
+  const retry = {
+    sessionId: faulted.sessionId,
+    commandId: 'retry-1',
+    body: { type: 'message.retry', messageId: 'm1' },
+  };
+  try {
+    await eventually(() => streams.length === 1);
+    await streams[0]!.onSessionCommand!(retry);
+    expect(vi.mocked(ensureSharedProcess).mock.calls.map(([input]) => input.root)).toEqual([
+      faulted.sessionRoot,
+    ]);
+    expect(hosts.to(faulted.sessionRoot)).toEqual([
+      { type: 'command', command: retry, requesterName: null },
+    ]);
+  } finally {
+    abort.abort();
+    await run;
+  }
+});
+
 it('hands a room control to the session working in its room, when Switch names only the room', async () => {
   const root = await mkdtemp(join(tmpdir(), 'shared-watch-room-control-'));
   roots.push(root);

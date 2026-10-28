@@ -136,6 +136,10 @@ function isReset(command: Record<string, unknown>): boolean {
   return z.object({ type: z.literal('session.reset') }).safeParse(command.body).success;
 }
 
+function isRetry(command: Record<string, unknown>): boolean {
+  return z.object({ type: z.literal('message.retry') }).safeParse(command.body).success;
+}
+
 function isAssignment(record: WatchRecord): record is Assignment {
   return 'sequence' in record;
 }
@@ -1284,6 +1288,17 @@ export async function runAgentHost(
             );
             return false;
           }));
+        // A retry is for a turn that failed, and a failure can take the session's
+        // host down with it (a provider error faults it): started again, as a
+        // room message would start it, rather than dropped for not running.
+        const relaunched =
+          isRetry(command) && !links.ready(sharedSessionRoot(sessionId))
+            ? await sessionConfig(sessionId).then(async (config) => {
+                if (!config) return false;
+                await launch(config);
+                return true;
+              })
+            : false;
         const taken = await askSession(
           sessionId,
           {
@@ -1292,7 +1307,7 @@ export async function runAgentHost(
             requesterName: typeof requesterName === 'string' ? requesterName : null,
           },
           `command ${command.commandId}`,
-          restarted ? HOST_START_MS : 0
+          restarted || relaunched ? HOST_START_MS : 0
         );
         if (!taken)
           console.warn(
