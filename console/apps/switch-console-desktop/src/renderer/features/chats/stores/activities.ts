@@ -11,6 +11,7 @@ import {
 } from '@shared/core/chats/chatEvents';
 import { roomHealthChangedChannel } from '@shared/core/switch-rooms/switchRoomEvents';
 import { AgentActivities } from './chat-activity-store';
+import { chatsStore } from './chats';
 
 /** How long to gather room changes before re-reading: a template makes several at once. */
 const ROOM_REFRESH_DELAY_MS = 500;
@@ -24,6 +25,7 @@ export const agentActivities = new AgentActivities(
     watchPlacements: (serverId, onChange) =>
       events.on(roomHealthChangedChannel, onChange, serverId),
     roomActivity: (serverId, roomId) => rpc.chats.roomActivity(serverId, roomId),
+    roomMessages: (serverId, roomId) => chatsStore.timelines.peek(serverId, roomId)?.messages ?? [],
     control: (input) => rpc.chats.control(input),
     answerApproval: (input) => rpc.chats.answerApproval(input),
   },

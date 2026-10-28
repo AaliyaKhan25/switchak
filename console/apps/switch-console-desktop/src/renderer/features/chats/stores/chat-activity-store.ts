@@ -9,9 +9,15 @@ import type {
   RoomActivity,
 } from '@shared/core/chats/activity';
 import { SERVER_TOO_OLD_FOR_ACTIVITY } from '@shared/core/chats/activity';
-import type { ChatStreamState } from '@shared/core/chats/chats';
+import type { ChatMessage, ChatStreamState } from '@shared/core/chats/chats';
 import type { ReasoningList, ReasoningTurn, ToolDetail } from '@shared/core/sessions/reasoning';
-import { bindTurns, groupTurns, itemKey, type TurnActivity } from '../activity-join';
+import {
+  bindTurns,
+  groupTurns,
+  itemKey,
+  settleTurnsByNotices,
+  type TurnActivity,
+} from '../activity-join';
 import { chatFailure, serverTooOld } from './chat-errors';
 
 /**
@@ -37,6 +43,8 @@ export type ActivityApi = {
   /** Call `onChange` whenever the server's local or SSH placements change. */
   watchPlacements: (serverId: string, onChange: () => void) => () => void;
   roomActivity: (serverId: string, roomId: string) => Promise<RoomActivity>;
+  /** The room's messages loaded here, oldest first: a host's notice that a turn ended is among them. */
+  roomMessages: (serverId: string, roomId: string) => readonly ChatMessage[];
   control: (input: {
     serverId: string;
     roomId: string;
@@ -155,7 +163,12 @@ export class AgentActivity {
   }
 
   get allTurns(): TurnActivity[] {
-    return groupTurns(this.items.values(), this.approvals.values());
+    return settleTurnsByNotices(
+      groupTurns(this.items.values(), this.approvals.values()),
+      this.api.roomMessages(this.serverId, this.roomId),
+      this.agentId,
+      this.roomId
+    );
   }
 
   /** Turns joined to the room messages that started them. */

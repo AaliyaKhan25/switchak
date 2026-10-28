@@ -1,4 +1,4 @@
-import { makeAutoObservable, runInAction } from 'mobx';
+import { makeAutoObservable, observable, runInAction } from 'mobx';
 import {
   type ChatMentionSpan,
   type ChatMessage,
@@ -359,7 +359,8 @@ export class ChatTimeline {
  * them.
  */
 export class ChatTimelines {
-  private readonly timelines = new Map<string, ChatTimeline>();
+  /** Observable, so what reads a room's messages through {@link peek} follows a timeline opened later. */
+  private readonly timelines = observable.map<string, ChatTimeline>({}, { deep: false });
 
   constructor(private readonly api: (serverId: string) => TimelineApi) {}
 
@@ -367,8 +368,9 @@ export class ChatTimelines {
     const key = `${serverId}\u0000${roomId}`;
     let timeline = this.timelines.get(key);
     if (!timeline) {
-      timeline = new ChatTimeline(roomId, this.api(serverId));
-      this.timelines.set(key, timeline);
+      const created = new ChatTimeline(roomId, this.api(serverId));
+      runInAction(() => this.timelines.set(key, created));
+      timeline = created;
     }
     return timeline;
   }

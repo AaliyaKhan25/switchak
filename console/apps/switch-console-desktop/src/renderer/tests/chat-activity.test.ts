@@ -391,7 +391,7 @@ function memoryStorage() {
   };
 }
 
-function fakeApi(snapshots: RoomActivity[]) {
+function fakeApi(snapshots: RoomActivity[], messages: ChatMessage[] = []) {
   const reads: string[] = [];
   const controls: unknown[] = [];
   const api: ActivityApi = {
@@ -406,6 +406,7 @@ function fakeApi(snapshots: RoomActivity[]) {
       reads.push(roomId);
       return snapshots.shift() ?? { items: [], approvals: [] };
     },
+    roomMessages: () => messages,
     control: async (input) => {
       controls.push(input);
       return 'cmd-1';
@@ -434,6 +435,47 @@ describe('AgentActivities', () => {
     expect(b.working).toBe(false);
     activities.release(a);
     activities.release(b);
+  });
+
+  it('ends a turn the host said failed, though the feed still has it running, after a reopen too', async () => {
+    const said = (messageId: string, agentId: string | null, body = messageId) =>
+      ({
+        messageId,
+        body,
+        sender: { kind: agentId ? 'agent' : 'human', agentId, clientId: agentId ?? 'me' },
+      }) as unknown as ChatMessage;
+    const failed =
+      'I finished without replying. The turn failed: {"type":"error","status":400,"error":"model_not_found"}';
+    const messages = [said('m-t1', null), said('n1', 'agent-a', failed)];
+    // The feed lost the turn's last update: every read still has it running.
+    const running = { items: [row('t1', 'turn')], approvals: [] };
+    const { api } = fakeApi([running, running], messages);
+    const activities = new AgentActivities(api, memoryStorage());
+
+    let activity = activities.acquire('server', 'tenant', 'room-1', 'agent-a');
+    await vi.waitFor(() => expect(activity.turns().size).toBe(1));
+    expect(activity.working).toBe(false);
+    expect(activity.runningTurn).toBeNull();
+    expect(activity.turns().get('m-t1')?.status).toBe('error');
+    // The notice folds into the ended turn, which shows the provider's reason.
+    expect(foldTurnEndNotices(messages, 'agent-a', activity.turns())).toEqual(
+      new Map([['n1', 't1']])
+    );
+
+    activities.release(activity);
+    activity = activities.acquire('server', 'tenant', 'room-1', 'agent-a');
+    await vi.waitFor(() => expect(activity.turns().size).toBe(1));
+    expect(activity.working).toBe(false);
+    activities.release(activity);
+  });
+
+  it('keeps a turn running when no notice says it ended', async () => {
+    const { api } = fakeApi([{ items: [row('t1', 'turn')], approvals: [] }]);
+    const activities = new AgentActivities(api, memoryStorage());
+    const activity = activities.acquire('server', 'tenant', 'room-1', 'agent-a');
+    await vi.waitFor(() => expect(activity.turns().size).toBe(1));
+    expect(activity.working).toBe(true);
+    activities.release(activity);
   });
 
   it('merges live rows with the snapshot by revision, dropping stale ones', async () => {
