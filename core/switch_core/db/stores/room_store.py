@@ -15,10 +15,6 @@ from switch_core.db.models import (
     RoomGroup,
     require_tenant_id,
     room_agents,
-    room_documents,
-    room_packages,
-    room_references,
-    room_skills,
 )
 from switch_core.db.stores.delivery_cursor_store import DeliveryCursorStore
 
@@ -252,14 +248,6 @@ class RoomStore:
 
     async def delete(self, session: AsyncSession, room_id: str) -> None:
         await session.execute(delete(ClientRoom).where(ClientRoom.room_id == room_id))
-        for attached in (
-            room_agents,
-            room_references,
-            room_documents,
-            room_packages,
-            room_skills,
-        ):
-            await session.execute(delete(attached).where(attached.c.room_id == room_id))
         room = await session.get(Room, room_id)
         if room:
             await session.delete(room)

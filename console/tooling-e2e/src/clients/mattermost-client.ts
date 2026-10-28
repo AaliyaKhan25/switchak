@@ -136,6 +136,32 @@ export class MattermostClient {
     return { client: new MattermostClient({ ...env, token }, environment), user, token };
   }
 
+  /**
+   * Take a person the harness signed up off the server again: deactivate them
+   * (`DELETE /api/v4/users/{id}`, as themselves), or, where Mattermost does not
+   * let a person deactivate themselves, take them out of every team and sign
+   * them out, and say that the account itself is left behind.
+   */
+  async leave(userId: string): Promise<void> {
+    try {
+      await this.request('DELETE', `/users/${userId}`);
+      return;
+    } catch (error) {
+      if (!(error instanceof MattermostHttpError) || ![401, 403, 501].includes(error.status)) {
+        throw error;
+      }
+      const teams = await this.request<MattermostTeam[]>('GET', `/users/${userId}/teams`);
+      for (const team of teams) {
+        await this.request('DELETE', `/teams/${team.id}/members/${userId}`);
+      }
+      await this.request('POST', '/users/logout');
+      console.warn(
+        `Mattermost does not let ${userId} deactivate itself here (${error.status}); ` +
+          'it was taken out of its teams and signed out, but the account remains.'
+      );
+    }
+  }
+
   /** `POST /api/v4/teams/{id}/members` — join a team that is open to anyone, as the token's user. */
   async joinTeam(teamId: string, userId: string): Promise<void> {
     await this.request('POST', `/teams/${teamId}/members`, { team_id: teamId, user_id: userId });

@@ -2,7 +2,12 @@ import { randomBytes } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { stringify } from 'yaml';
-import { MattermostClient, sleep, type MattermostPost } from '../clients/mattermost-client.ts';
+import {
+  MattermostClient,
+  sleep,
+  type MattermostPost,
+  type MattermostUser,
+} from '../clients/mattermost-client.ts';
 import { OWNER_ONLY, TemplateRefusal, type TemplateRun } from '../clients/switch-client.ts';
 import type { NameScope } from '../core/run.ts';
 import type { ScenarioHeader } from '../core/scenario.ts';
@@ -471,6 +476,9 @@ export const interrupt: Scenario = (harness) =>
  * lets anyone sign up: the throwaway stack and a local one. On both, the person
  * the harness posts as is the identity the admin who owns the agent claimed.
  */
+/** How long a refused answer is given to run the command anyway, before the owner answers. */
+const REFUSED_QUIET_MS = 20_000;
+
 export const cardAnswerRefused: Scenario = (harness, names) =>
   scenario('card-answer-refused', async (record) => {
     const mattermostEnv = harness.env.mattermost;
@@ -485,77 +493,96 @@ export const cardAnswerRefused: Scenario = (harness, names) =>
       password,
     });
     secrets.record(other.token);
-    const team = await harness.mattermost.findTeam(mattermostEnv.team);
-    await other.client.joinTeam(team.id, other.user.id);
-    await harness.mattermost.addUserToChannel(harness.channel.id, other.user.id);
-
-    await harness.switch.setAddressingPolicy(harness.agent.id, OWNER_ONLY);
     try {
-      const file = `refused-${harness.runId}.txt`;
-      const since = await ask(
-        harness,
-        `run the shell command \`echo ${OK_MARKER} > ${file}\` and then reply with the single word done`
-      );
-      const card = await expectBotPost(harness.mattermost, {
-        where: sharedRoom(harness),
-        since,
-        record,
-        predicate: (post) =>
-          requestHandle(post.message) !== null &&
-          APPROVAL_HINTS.some((hint) => lower(post).includes(hint)),
-        describe: 'an approval card for the shell command',
-      });
-      const handle = requestHandle(card.message)!;
-      const thread = card.root_id === '' ? card.id : card.root_id;
+      return await refuseThenApprove(harness, record, other);
+    } finally {
+      await other.client.leave(other.user.id);
+    }
+  });
 
-      const refusedAt = Date.now() - 1;
-      await other.client.post({ channelId: harness.channel.id, message: `${handle} 1` });
-      // Said by the bridge's own admin account, whatever it is called here.
-      const isNotice = (post: MattermostPost): boolean =>
-        post.root_id === thread &&
-        post.message.includes(`answer to ${handle} did not land`) &&
-        post.message.includes('may not address this agent');
-      let notice: MattermostPost | undefined;
-      const until = Date.now() + 60_000;
-      while (notice === undefined && Date.now() < until) {
-        const posts = await harness.mattermost.postsSince(harness.channel.id, refusedAt);
-        record(posts);
-        notice = posts.find(isNotice);
-        if (notice === undefined) await sleep(2_000);
-      }
-      if (notice === undefined) {
-        const seen = await harness.mattermost.postsSince(harness.channel.id, refusedAt);
-        throw new Error(
-          `${username}'s answer to ${handle} was not refused in the card's thread. Channel said: ${summarise(seen)}`
-        );
-      }
-      if (notice.user_id === other.user.id || notice.user_id === harness.human.id) {
-        throw new Error(`The refusal notice was posted by a person, not by Switch: ${notice.id}`);
-      }
+async function refuseThenApprove(
+  harness: Harness,
+  record: (posts: MattermostPost[]) => void,
+  other: { client: MattermostClient; user: MattermostUser }
+): Promise<string> {
+  const mattermostEnv = harness.env.mattermost!;
+  const username = other.user.username;
+  const team = await harness.mattermost.findTeam(mattermostEnv.team);
+  await other.client.joinTeam(team.id, other.user.id);
+  await harness.mattermost.addUserToChannel(harness.channel.id, other.user.id);
+
+  await harness.switch.setAddressingPolicy(harness.agent.id, OWNER_ONLY);
+  try {
+    const file = `refused-${harness.runId}.txt`;
+    const since = await ask(
+      harness,
+      `run the shell command \`echo ${OK_MARKER} > ${file}\` and then reply with the single word done`
+    );
+    const card = await expectBotPost(harness.mattermost, {
+      where: sharedRoom(harness),
+      since,
+      record,
+      predicate: (post) =>
+        requestHandle(post.message) !== null &&
+        APPROVAL_HINTS.some((hint) => lower(post).includes(hint)),
+      describe: 'an approval card for the shell command',
+    });
+    const handle = requestHandle(card.message)!;
+    const thread = card.root_id === '' ? card.id : card.root_id;
+
+    const refusedAt = Date.now() - 1;
+    await other.client.post({ channelId: harness.channel.id, message: `${handle} 1` });
+    // Said by the bridge's own admin account, whatever it is called here.
+    const isNotice = (post: MattermostPost): boolean =>
+      post.root_id === thread &&
+      post.message.includes(`answer to ${handle} did not land`) &&
+      post.message.includes('may not address this agent');
+    let notice: MattermostPost | undefined;
+    const until = Date.now() + 60_000;
+    while (notice === undefined && Date.now() < until) {
+      const posts = await harness.mattermost.postsSince(harness.channel.id, refusedAt);
+      record(posts);
+      notice = posts.find(isNotice);
+      if (notice === undefined) await sleep(2_000);
+    }
+    if (notice === undefined) {
+      const seen = await harness.mattermost.postsSince(harness.channel.id, refusedAt);
+      throw new Error(
+        `${username}'s answer to ${handle} was not refused in the card's thread. Channel said: ${summarise(seen)}`
+      );
+    }
+    if (notice.user_id === other.user.id || notice.user_id === harness.human.id) {
+      throw new Error(`The refusal notice was posted by a person, not by Switch: ${notice.id}`);
+    }
+    // A refused answer must not run the command: give it time to, if it would.
+    const quietUntil = Date.now() + REFUSED_QUIET_MS;
+    while (Date.now() < quietUntil) {
       const ranEarly = (
         await harness.mattermost.postsFrom(harness.channel.id, harness.bot.id, refusedAt)
       ).filter(
         (post) =>
           !isRuntimeStatusPost(post) && !isNoSessionNotice(post) && lower(post).includes('done')
       );
-      record(ranEarly);
       if (ranEarly.length > 0) {
-        throw new Error(`The command ran on the answer of someone who may not address the agent.`);
+        record(ranEarly);
+        throw new Error('The command ran on the answer of someone who may not address the agent.');
       }
-
-      const approvedAt = await answerCard(harness, card, 1);
-      const done = await expectBotPost(harness.mattermost, {
-        where: sharedRoom(harness),
-        since: approvedAt,
-        record,
-        predicate: (post) => lower(post).includes('done'),
-        describe: "a 'done' reply after the owner approved the command",
-      });
-      return `refused in ${notice.id}, approved by the owner, completed in ${done.id}`;
-    } finally {
-      await harness.switch.openAddressing(harness.agent.id);
+      await sleep(2_000);
     }
-  });
+
+    const approvedAt = await answerCard(harness, card, 1);
+    const done = await expectBotPost(harness.mattermost, {
+      where: sharedRoom(harness),
+      since: approvedAt,
+      record,
+      predicate: (post) => lower(post).includes('done'),
+      describe: "a 'done' reply after the owner approved the command",
+    });
+    return `refused in ${notice.id}, approved by the owner, completed in ${done.id}`;
+  } finally {
+    await harness.switch.openAddressing(harness.agent.id);
+  }
+}
 
 // ── template ─────────────────────────────────────────────────────────────────
 
@@ -625,20 +652,22 @@ export const templateAgent: Scenario = (harness, names) =>
         run: () => harness.switch.deleteAgentByName(made.name),
       });
     }
-    const room = await harness.switch.getRoom(run.room.room_id);
-    const channelId = room.externalChannelId;
+    const roomId = run.room.room_id;
     undo.push({
-      label: `room ${room.name} (${room.id})`,
+      label: `room ${run.room.room_name} (${roomId})`,
       run: async () => {
-        await harness.switch.deleteRoom(room.id);
-        if (channelId === null) return;
-        const left = await harness.mattermost.getChannel(channelId);
-        if (!left.delete_at) await harness.mattermost.archiveChannel(channelId);
+        const { externalChannelId } = await harness.switch.getRoom(roomId);
+        await harness.switch.deleteRoom(roomId);
+        if (externalChannelId === null) return;
+        const left = await harness.mattermost.getChannel(externalChannelId);
+        if (!left.delete_at) await harness.mattermost.archiveChannel(externalChannelId);
       },
     });
 
     let failed = false;
     try {
+      const room = await harness.switch.getRoom(roomId);
+      const channelId = room.externalChannelId;
       if (run.created_agents.length !== 1) {
         throw new Error(`The template made ${run.created_agents.length} agents, not one.`);
       }
