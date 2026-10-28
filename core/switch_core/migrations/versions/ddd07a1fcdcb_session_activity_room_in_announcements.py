@@ -6,14 +6,14 @@ outside any room), so a subscriber can tell whom the change concerns without
 reading the row. Replaces the notify function only.
 
 Revision ID: ddd07a1fcdcb
-Revises: c7715ebb95c9
+Revises: f4a9c2e7b153
 Create Date: 2026-10-19 00:00:00.000000
 """
 
 from alembic import op
 
 revision: str = "ddd07a1fcdcb"
-down_revision: str | None = "c7715ebb95c9"
+down_revision: str | None = "f4a9c2e7b153"
 branch_labels = None
 depends_on = None
 
