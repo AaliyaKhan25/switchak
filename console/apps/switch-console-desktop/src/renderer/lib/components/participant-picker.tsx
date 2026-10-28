@@ -1,5 +1,5 @@
 import { Loader2, X } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useAgentAccent } from '@renderer/lib/components/agent-accent';
 import { AgentAvatar } from '@renderer/lib/components/agent-avatar';
 import { cn } from '@renderer/utils/utils';
@@ -110,6 +110,32 @@ export function ParticipantPicker({
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
+  const field = useRef<HTMLInputElement>(null);
+  const pointerDown = useRef(false);
+  useEffect(() => {
+    const down = () => (pointerDown.current = true);
+    const up = () => (pointerDown.current = false);
+    window.addEventListener('pointerdown', down, true);
+    window.addEventListener('pointerup', up, true);
+    return () => {
+      window.removeEventListener('pointerdown', down, true);
+      window.removeEventListener('pointerup', up, true);
+    };
+  }, []);
+  // Closing the list moves what follows it up; closed on a press, it would move a button out
+  // from under the pointer before the release, and that click would be lost. So a press
+  // elsewhere closes it after the release, once the click has landed.
+  const close = () => {
+    if (!pointerDown.current) return setOpen(false);
+    window.addEventListener(
+      'pointerup',
+      () =>
+        setTimeout(() => {
+          if (document.activeElement !== field.current) setOpen(false);
+        }),
+      { once: true }
+    );
+  };
   const results = searchParticipants(candidates, picked, query);
   const current = Math.min(active, Math.max(results.length - 1, 0));
 
@@ -140,6 +166,7 @@ export function ParticipantPicker({
           />
         ))}
         <input
+          ref={field}
           id={inputId}
           autoFocus={autoFocus}
           role="combobox"
@@ -158,7 +185,7 @@ export function ParticipantPicker({
             setOpen(true);
           }}
           onFocus={() => setOpen(true)}
-          onBlur={() => setOpen(false)}
+          onBlur={close}
           onKeyDown={(event) => {
             // keyCode 229: a key the IME is handling, which some IMEs send with isComposing false.
             if (event.nativeEvent.isComposing || event.keyCode === 229) return;
