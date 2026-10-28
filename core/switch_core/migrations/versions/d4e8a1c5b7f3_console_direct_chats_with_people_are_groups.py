@@ -8,7 +8,7 @@ agent's owner, kept in while the agent is) does not count. Data only, and
 one way: the downgrade cannot tell these rooms from groups made since.
 
 Revision ID: d4e8a1c5b7f3
-Revises: f68b679599ab
+Revises: a4c1e7b93d20
 Create Date: 2026-10-21 00:00:00.000000
 
 """
@@ -18,7 +18,7 @@ from collections.abc import Sequence
 from alembic import op
 
 revision: str = "d4e8a1c5b7f3"
-down_revision: str | Sequence[str] | None = "f68b679599ab"
+down_revision: str | Sequence[str] | None = "a4c1e7b93d20"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
