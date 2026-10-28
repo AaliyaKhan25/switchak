@@ -670,6 +670,11 @@ function GeneralSection({ workspaceId, room }: { workspaceId: string; room: Remo
           }}
         />
       </Field>
+      <LinkedChannelName
+        workspaceId={workspaceId}
+        room={room}
+        onSynced={(updated) => setName(updated.name)}
+      />
 
       <Field
         label="Description"
@@ -714,6 +719,66 @@ function GeneralSection({ workspaceId, room }: { workspaceId: string; room: Remo
     </section>
   );
 }
+
+/**
+ * The channel a bridged room is linked to, when it is called something else
+ * there, with a way for someone who manages the room to name it after the
+ * channel, which it then follows when the channel is renamed.
+ */
+const LinkedChannelName = observer(function LinkedChannelName({
+  workspaceId,
+  room,
+  onSynced,
+}: {
+  workspaceId: string;
+  room: RemoteRoomDetail;
+  onSynced: (updated: RemoteRoomDetail) => void;
+}) {
+  const queryClient = useQueryClient();
+  const [syncing, setSyncing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const channel = room.linkedChannelName;
+  if (!channel || channel === room.name || `#${channel}` === room.name) return null;
+  const canSync = switchRoomsStore.canDeleteRoom(workspaceId, room);
+
+  async function sync() {
+    setSyncing(true);
+    setError(null);
+    try {
+      const updated = await rpc.workspaces.syncRoomName({ workspaceId, roomId: room.id });
+      queryClient.setQueryData(roomDetailKey(workspaceId, room.id), updated);
+      onSynced(updated);
+      void refreshSidebarRoomState(true);
+      void chatsStore.refreshSummaries();
+    } catch (cause) {
+      setError(failureText(cause, 'Could not name the room after its channel.'));
+    } finally {
+      setSyncing(false);
+    }
+  }
+
+  return (
+    <div className="-mt-2 flex flex-wrap items-center gap-2 text-xs text-foreground-muted">
+      <span>Linked channel: #{channel}</span>
+      {canSync && (
+        <Button
+          type="button"
+          size="xs"
+          variant="outline"
+          disabled={syncing}
+          onClick={() => void sync()}
+        >
+          {syncing ? 'Renaming…' : 'Use channel name'}
+        </Button>
+      )}
+      {error && (
+        <span role="alert" className="text-destructive">
+          {error}
+        </span>
+      )}
+    </div>
+  );
+});
 
 /** Says where the edits stand, so an unsaved change is never silent. */
 function SaveStatus({ state, dirty }: { state: SaveState; dirty: boolean }) {

@@ -360,6 +360,8 @@ export type RemoteRoomDetail = RemoteRoomSummary & {
    * Undefined from a server that predates the field, which says nothing about
    * the channel either way. */
   channelOnDelete?: ChannelRetirement | null;
+  /** The name of the platform channel the room is linked to, as Switch last saw it; null when it has not. */
+  linkedChannelName: string | null;
 };
 
 /** What deleting a room does to its platform channel when asked to retire it
@@ -378,6 +380,9 @@ export type RetireOutcome = {
 
 /** The room fields Switch Console can change. Anything omitted is left alone;
  * an empty string clears the field rather than leaving it. */
+/** Name a room after the channel it is linked to. */
+export type SyncRoomNameParams = { workspaceId: string; roomId: string };
+
 export type UpdateRoomParams = {
   workspaceId: string;
   roomId: string;
