@@ -203,7 +203,7 @@ from switch_core.room_changes import RoomChanges
 from switch_core.room_service import RoomService
 from switch_core.session_activity.listener import AgentSessionActivityListener
 from switch_core.session_activity.maintenance import (
-    maintenance_loop as session_activity_maintenance_loop,
+    own_maintenance as own_session_activity_maintenance,
 )
 from switch_core.session_activity.outcomes import ApprovalOutcomes
 from switch_core.session_activity.service import AgentSessionActivityService
@@ -700,6 +700,7 @@ async def run(config: SwitchConfig, process_id: str) -> None:
         store=OwnershipLeaseStore(),
         processes=SwitchCoreProcessStore(),
     )
+    own_session_activity_maintenance(ownership, session_factory)
     # Every owned consumer's progress, written in batches
     # (`transport/cursors.py`).
     cursor_writer = CursorWriter(
@@ -1385,9 +1386,6 @@ async def run(config: SwitchConfig, process_id: str) -> None:
             attachment_group_task = asyncio.create_task(
                 _attachment_group_sweep_loop(session_factory, router)
             )
-            session_activity_task = asyncio.create_task(
-                session_activity_maintenance_loop(session_factory)
-            )
             connection_sweep_task = asyncio.create_task(
                 _connection_sweep_loop(protocol)
             )
@@ -1436,7 +1434,6 @@ async def run(config: SwitchConfig, process_id: str) -> None:
                 retention_task.cancel()
                 attachment_group_task.cancel()
                 router.close()
-                session_activity_task.cancel()
                 connection_sweep_task.cancel()
                 service_token_task.cancel()
                 if snapshot_task is not None:

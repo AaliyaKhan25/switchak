@@ -12,12 +12,14 @@ like every other background task that spans them.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from datetime import timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from switch_core.db.tenant_lookup import all_tenant_ids
+from switch_core.ownership import Fence, OwnedKind, Ownership
 from switch_core.session_activity.service import AgentSessionActivityService
 from switch_core.tenant_context import no_tenant, tenant_scope
 
@@ -95,3 +97,35 @@ async def maintenance_loop(session_factory: async_sessionmaker[AsyncSession]) ->
             else:
                 if prune:
                     since_prune = 0.0
+
+
+# The sweeps are owned work (`ownership.py`): one process runs them for every
+# tenant, and the next takes over when it stops or dies, rather than each
+# process sweeping every tenant on its own clock.
+SWEEP_KIND = "session_activity_sweep"
+SWEEP_KEY = "all"
+
+
+def own_maintenance(
+    ownership: Ownership, session_factory: async_sessionmaker[AsyncSession]
+) -> OwnedKind:
+    """Register the session-activity sweeps as owned work, wanted by this
+    process; they run here only while it holds them."""
+    running: dict[str, asyncio.Task[None]] = {}
+
+    async def start(key: str, fence: Fence) -> None:
+        running[key] = asyncio.create_task(
+            maintenance_loop(session_factory), name="session-activity-sweeps"
+        )
+
+    async def stop(key: str) -> None:
+        task = running.pop(key, None)
+        if task is None:
+            return
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    kind = ownership.kind(SWEEP_KIND, start=start, stop=stop)
+    kind.want(SWEEP_KEY)
+    return kind
