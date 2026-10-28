@@ -2072,6 +2072,10 @@ version of their own to them without also giving them a release of their own.
   agent"; it was the only place Console showed that name.
 
 #### Fixed
+- **Two agent hosts starting at once on Windows no longer crash each other.**
+  A host reading another host's ownership ticket while that host replaced or
+  deleted it got `EPERM` from Windows and exited. It now tries the read again
+  for a few seconds, as it already did for its own writes.
 - **Settings → Agent providers keeps this computer's report current.** It
   prefers the report from the server Console is on, rereads it while open and
   after the controller reports again, and the install section says so when
