@@ -3739,9 +3739,7 @@ class DiscordAdapter(PlatformAdapter):
         root_message = None
         try:
             root_message = await channel.fetch_message(root_message_id)
-            root_content = str(root_message.content or "").strip()
-            if root_content:
-                name = root_content[:60]
+            name = _thread_title(root_message) or name
         except discord.HTTPException:
             pass
 
@@ -3764,3 +3762,15 @@ class DiscordAdapter(PlatformAdapter):
             logger.error("Invalid Discord message ref format: %s", message_ref)
             return "", ""
         return parts[0], parts[1]
+
+
+# A user, role or channel mention as Discord writes it in a message's text.
+_MENTION_TOKEN = re.compile(r"<(?:@[!&]?|#)\d+>")
+
+
+def _thread_title(message: Any) -> str:
+    """A thread's name from the message it starts at: its text with mentions
+    as people read them (`@name`, `#channel`), any Discord could not resolve
+    dropped, at most 60 characters."""
+    text = _MENTION_TOKEN.sub("", str(message.clean_content or ""))
+    return " ".join(text.split())[:60]
