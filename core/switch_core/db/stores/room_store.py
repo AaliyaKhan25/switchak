@@ -772,7 +772,7 @@ class RoomStore:
         room = await session.get(Room, room_id)
         if room is None:
             raise ValueError(f"Room not found: {room_id}")
-        if name is not None:
+        if name is not None and name != room.name:
             room.name = name
             # Named by someone: a platform's channel name no longer replaces it.
             room.metadata_ = {**(room.metadata_ or {}), NAME_SOURCE_KEY: "custom"}
@@ -803,6 +803,31 @@ class RoomStore:
             LINKED_CHANNEL_NAME_KEY: channel_name,
         }
         await session.flush()
+
+    async def follow_channel_name(
+        self,
+        session: AsyncSession,
+        room_id: str,
+        name: str,
+        channel_name: str,
+        legacy_name: str,
+    ) -> bool:
+        """`set_platform_name`, decided on the row locked for it: only when the
+        room is named after its channel, or, from before that was recorded,
+        still has exactly `legacy_name`. False, and nothing written, when
+        someone named the room meanwhile."""
+        room = (
+            await session.execute(
+                select(Room).where(Room.id == room_id).with_for_update()
+            )
+        ).scalar_one_or_none()
+        if room is None:
+            return False
+        source = (room.metadata_ or {}).get(NAME_SOURCE_KEY)
+        if not (source == "channel" or (source is None and room.name == legacy_name)):
+            return False
+        await self.set_platform_name(session, room_id, name, channel_name)
+        return True
 
     async def record_channel_name(
         self, session: AsyncSession, room_id: str, channel_name: str

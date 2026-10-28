@@ -88,6 +88,8 @@ class DiscordGatewayClient:
         self._task: asyncio.Task[None] | None = None
         # The socket as owned work, once `own` has registered it.
         self._owned: OwnedKind | None = None
+        # Channels whose update has been routed since this process started.
+        self._channel_names_seen: set[int] = set()
         # command_guild_id=None → commands register globally, once for the
         # application across every guild (decision #7); guild-scoped registration
         # is the self-registered adapter's, which serves one guild.
@@ -318,7 +320,11 @@ class DiscordGatewayClient:
     ) -> None:
         """Route a guild channel's change to the bridge its guild resolves to,
         fresh and with no tenant bound, as a message is (G1). A guild with no
-        install is dropped."""
+        install is dropped. Only a rename, or a channel's first update since
+        this process started, is resolved; the adapter makes the same cut."""
+        if before.name == after.name and after.id in self._channel_names_seen:
+            return
+        self._channel_names_seen.add(after.id)
         with no_tenant():
             try:
                 target = await self._install_service.resolve_by_workspace(

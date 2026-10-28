@@ -55,7 +55,6 @@ from switch_core.db.stores.client_store import ClientStore
 from switch_core.db.stores.external_user_store import ExternalUserStore
 from switch_core.db.stores.room_store import (
     LINKED_CHANNEL_NAME_KEY,
-    NAME_SOURCE_KEY,
     RoomStore,
 )
 from switch_core.db.tenant_lookup import tenant_of_room
@@ -880,15 +879,11 @@ class CollaborationCore:
             if room is None:
                 return
             metadata = room.metadata_ or {}
-            source = metadata.get(NAME_SOURCE_KEY)
-            follows = source == "channel" or (
-                source is None
-                and old_name != new_name
-                and room.name == f"{bridge_name}: {old_name}"
-            )
-            if follows and room.name != name:
-                await self._room_service.take_platform_name(room.id, name, new_name)
-            elif metadata.get(LINKED_CHANNEL_NAME_KEY) != new_name:
+            if room.name != name and await self._room_service.follow_channel_name(
+                room.id, name, new_name, f"{bridge_name}: {old_name}"
+            ):
+                return
+            if metadata.get(LINKED_CHANNEL_NAME_KEY) != new_name:
                 await self._room_service.record_channel_name(room.id, new_name)
 
     # ── Inbound (platform → room) ───────────────────────────────────────────

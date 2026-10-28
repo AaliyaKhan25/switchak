@@ -1196,6 +1196,21 @@ class RoomService:
             await session.commit()
         self._room_changed(tenant_id, room_id)
 
+    async def follow_channel_name(
+        self, room_id: str, name: str, channel_name: str, legacy_name: str
+    ) -> bool:
+        """Rename a bridged room after its renamed channel when it still follows
+        the channel (`RoomStore.follow_channel_name`); False when it does not."""
+        tenant_id = await self._room_tenant(room_id)
+        async with tenant_session(self._session_factory, tenant_id) as session:
+            followed = await self._room_store.follow_channel_name(
+                session, room_id, name, channel_name, legacy_name
+            )
+            await session.commit()
+        if followed:
+            self._room_changed(tenant_id, room_id)
+        return followed
+
     async def record_channel_name(self, room_id: str, channel_name: str) -> None:
         """Keep the linked channel's current name on a room that does not
         follow it, so whoever sees the room can be offered it."""

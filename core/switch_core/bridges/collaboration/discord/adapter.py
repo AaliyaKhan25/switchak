@@ -628,6 +628,8 @@ class DiscordAdapter(PlatformAdapter):
         super().__init__()
         self._config = config
         self._guild_id = int(config.guild_id)
+        # Channels whose name this bridge has reported since it started.
+        self._channel_names_seen: set[int] = set()
         # The Gateway socket lives on the connection, not the adapter: the
         # socket is per bot token and the adapter is per guild. Intents are
         # built here and handed over, so the socket owner does not decide them.
@@ -837,6 +839,12 @@ class DiscordAdapter(PlatformAdapter):
         made before the bridge followed renames."""
         if after.guild.id != self._guild_id:
             return
+        # Only a rename, or the first word of a channel since this process
+        # started, is worth the bridge's lookup; Discord sends an update for
+        # every permission or topic change too.
+        if before.name == after.name and after.id in self._channel_names_seen:
+            return
+        self._channel_names_seen.add(after.id)
         if self._on_channel_named is not None:
             await self._on_channel_named(str(after.id), before.name, after.name)
 
