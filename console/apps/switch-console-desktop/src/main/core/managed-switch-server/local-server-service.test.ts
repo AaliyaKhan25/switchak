@@ -109,11 +109,7 @@ const native = vi.hoisted(() => ({
   discard: vi.fn(async () => {}),
   failureLine: vi.fn(async (): Promise<string | null> => null),
 }));
-const watch = vi.hoisted(() => ({
-  health: vi.fn(async () => true),
-  mattermostAnswers: vi.fn(async () => true),
-  mattermostExpected: vi.fn(async () => false),
-}));
+const watch = vi.hoisted(() => ({ health: vi.fn(async () => true) }));
 vi.mock('./health', () => ({ probeHealth: watch.health }));
 vi.mock('./native/native-stack', () => ({
   startNativeStack: native.start,
@@ -143,8 +139,6 @@ vi.mock('./native/mattermost', () => ({
   readMattermostEnabled: async () => null,
   writeMattermostEnabled: mattermost.write,
   stopMattermost: mattermost.stop,
-  mattermostAnswers: watch.mattermostAnswers,
-  mattermostExpected: watch.mattermostExpected,
 }));
 
 const { LocalServerService } = await import('./local-server-service');
@@ -190,8 +184,6 @@ beforeEach(() => {
   native.start.mockResolvedValue({ result: started, bringUpMattermost: null });
   native.failureLine.mockResolvedValue(null);
   watch.health.mockResolvedValue(true);
-  watch.mattermostAnswers.mockResolvedValue(true);
-  watch.mattermostExpected.mockResolvedValue(false);
   // Docker servers stay on Docker unless a test is about moving them.
   move.blocked.mockResolvedValue('not moved in this test');
 });
@@ -863,55 +855,4 @@ it('ignores what it saw when a stop began while it looked', async () => {
 
   expect(service.getStatus().phase).toBe('stopped');
   expect(m.record).not.toHaveBeenCalledWith('crashed', expect.anything());
-});
-
-it('checks the Mattermost of a server found running at launch, and notices it going', async () => {
-  m.ports.mockResolvedValue({ api: 1, gateway: 2, postgres: 3, mattermost: 8065 });
-  watch.mattermostExpected.mockResolvedValue(true);
-  const service = await bootRunningNative();
-  expect(service.getStatus().mattermostState).toBeNull();
-
-  await service.watch();
-  expect(watch.mattermostAnswers).toHaveBeenCalledWith(8065);
-  expect(service.getStatus().mattermostState).toBe('running');
-
-  watch.mattermostAnswers.mockResolvedValue(false);
-  await service.watch();
-  await service.watch();
-  expect(service.getStatus().mattermostState).toBe('running');
-  await service.watch();
-  expect(service.getStatus()).toMatchObject({ phase: 'running', mattermostState: 'failed' });
-  expect(service.getStatus().notice).toMatch(/Mattermost stopped answering/);
-
-  watch.mattermostAnswers.mockResolvedValue(true);
-  await service.watch();
-  expect(service.getStatus()).toMatchObject({ mattermostState: 'running', notice: null });
-});
-
-it('does not look for a Mattermost that was never set up or is turned off', async () => {
-  m.ports.mockResolvedValue({ api: 1, gateway: 2, postgres: 3, mattermost: 8065 });
-  const service = await bootRunningNative();
-  await service.watch();
-  expect(watch.mattermostAnswers).not.toHaveBeenCalled();
-  expect(service.getStatus().mattermostState).toBeNull();
-});
-
-it('leaves a Mattermost that failed during its start to the start to report', async () => {
-  runtime.read.mockResolvedValue('native');
-  m.ports.mockResolvedValue({ api: 1, gateway: 2, postgres: 3, mattermost: 8065 });
-  native.start.mockResolvedValue({
-    result: started,
-    bringUpMattermost: async () => {
-      throw new Error('seeding failed');
-    },
-  });
-  const service = new LocalServerService();
-  await boot(service);
-  await service.start();
-  native.running.mockResolvedValue(true);
-  await vi.waitFor(() => expect(service.getStatus().mattermostState).toBe('failed'));
-
-  await service.watch();
-  expect(watch.mattermostAnswers).not.toHaveBeenCalled();
-  expect(service.getStatus().notice).toMatch(/seeding failed/);
 });

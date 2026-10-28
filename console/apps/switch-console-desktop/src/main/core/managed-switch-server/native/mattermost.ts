@@ -243,37 +243,6 @@ export function pullMattermostImage(onLog: (line: string) => void): Promise<void
   });
 }
 
-/**
- * Whether Mattermost has been brought up beside this server at some point and
- * is not turned off: what a server Console finds running at launch is
- * expected to have beside it. `enabled` is {@link readMattermostEnabled}'s
- * answer, null when the user never chose.
- */
-export async function mattermostExpected(
-  layout: NativeLayout,
-  enabled: boolean | null
-): Promise<boolean> {
-  if (enabled === false) return false;
-  try {
-    await readFile(path.join(layout.root, COMPOSE_FILE), 'utf8');
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/** Whether the Mattermost on `port` answers. */
-export async function mattermostAnswers(port: number, timeoutMs = 5000): Promise<boolean> {
-  try {
-    const res = await fetch(`http://localhost:${port}/api/v4/system/ping`, {
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-    return res.ok;
-  } catch {
-    return false;
-  }
-}
-
 /** Stop Mattermost, keeping its data. A machine without Docker, or one that
  * never started it, has nothing to stop. */
 export async function stopMattermost(layout: NativeLayout, removeData: boolean): Promise<void> {

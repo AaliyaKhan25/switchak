@@ -50,13 +50,7 @@ import {
   type UpgradeJournal,
   upgradeState,
 } from './managed-upgrade';
-import {
-  mattermostAnswers,
-  mattermostExpected,
-  readMattermostEnabled,
-  stopMattermost,
-  writeMattermostEnabled,
-} from './native/mattermost';
+import { readMattermostEnabled, stopMattermost, writeMattermostEnabled } from './native/mattermost';
 import {
   type DockerExport,
   exportDockerStack,
@@ -103,10 +97,6 @@ const WATCH_INTERVAL_MS = 5_000;
 /** Missed probes in a row before something that is still running counts as not
  * answering: one miss is a busy moment, not a verdict. */
 const MISSES_ALLOWED = 3;
-
-const MATTERMOST_LOST_NOTICE =
-  'The server is running, but Mattermost stopped answering, so nothing reaches the server ' +
-  'from it. Restart the server to bring Mattermost back.';
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -160,14 +150,12 @@ export class LocalServerService {
   /** Watches the running server for it stopping on its own; see {@link watch}. */
   private watchTimer: ReturnType<typeof setInterval> | null = null;
   private watching = false;
-  /** The {@link mattermostRun} the counters below were counted in: a start or
-   * stop since begins them again. */
-  private watchedRun = -1;
+  /** Counts phase changes, so a watch that a start, stop or reset overtook
+   * while it looked does not report on the server that replaced the one it saw. */
+  private phaseChanges = 0;
+  /** Probes missed in a row, counted since {@link missesSince} phase changes. */
   private coreMisses = 0;
-  private mattermostMisses = 0;
-  /** Whether the watch, rather than a start, marked Mattermost failed: only
-   * then does Mattermost answering again mean it is back. */
-  private mattermostLost = false;
+  private missesSince = -1;
 
   getStatus(): LocalServerStatus {
     return this.status;
@@ -254,6 +242,7 @@ export class LocalServerService {
   private setStatus(patch: Partial<LocalServerStatus>): void {
     // Any change of phase settles what failed, unless the patch says.
     const failedTo = patch.phase !== undefined ? (patch.failedTo ?? null) : this.status.failedTo;
+    if (patch.phase !== undefined) this.phaseChanges++;
     this.status = { ...this.status, ...patch, failedTo };
     events.emit(localServerStatusChannel, this.status);
   }
@@ -414,8 +403,6 @@ export class LocalServerService {
    * reached. A server whose process is gone is marked so at once; one whose
    * process is there but whose gateway misses {@link MISSES_ALLOWED} probes in
    * a row is marked as not answering, and back to running if it answers again.
-   * The Mattermost beside a native server is watched the same way, including
-   * one found running at launch, which nothing else checks.
    *
    * Runs on a timer from boot; public so a test can drive it.
    */
@@ -425,16 +412,14 @@ export class LocalServerService {
     const lost = phase === 'error' && failedTo === 'run';
     if (phase !== 'running' && !lost) return;
     this.watching = true;
-    const run = this.mattermostRun;
-    if (run !== this.watchedRun) {
-      this.watchedRun = run;
+    const seen = this.phaseChanges;
+    if (seen !== this.missesSince) {
+      this.missesSince = seen;
       this.coreMisses = 0;
-      this.mattermostMisses = 0;
-      this.mattermostLost = false;
     }
     // A start, stop or reset that began while this looked: what it saw is of
     // a server that is being replaced.
-    const overtaken = () => run !== this.mattermostRun || this.busy || this.starting !== null;
+    const overtaken = () => seen !== this.phaseChanges || this.busy || this.starting !== null;
     const host: ServerHost = new LocalServerHost();
     try {
       const server = await getManagedServer();
@@ -488,10 +473,7 @@ export class LocalServerService {
           `switch-core is running but has not answered for about ${seconds} seconds.`
         );
         return;
-      } else {
-        return;
       }
-      if (native) await this.watchMattermost(host, layout, overtaken);
     } catch (error) {
       log.warn('local-switch-server: could not check on the server', { error: String(error) });
     } finally {
@@ -514,45 +496,6 @@ export class LocalServerService {
       deployedTelemetry: null,
     });
     await recordLocalActivity('crashed', error);
-  }
-
-  /** The Mattermost half of {@link watch}, for a native server that answers. */
-  private async watchMattermost(
-    host: ServerHost,
-    layout: NativeLayout,
-    overtaken: () => boolean
-  ): Promise<void> {
-    const state = this.status.mattermostState;
-    // Null: running since before this launch, so nothing has looked yet.
-    // Starting is the start's to report, and off is off; failed is watched
-    // only when this is what said so.
-    const watched =
-      state === 'running' ||
-      (state === null && (await mattermostExpected(layout, this.status.mattermost))) ||
-      (state === 'failed' && this.mattermostLost);
-    if (!watched) return;
-    const ports = await readPersistedPorts(host);
-    if (ports === null) return;
-    const answers = await mattermostAnswers(ports.mattermost);
-    if (overtaken() || this.status.phase !== 'running' || this.status.mattermostState !== state) {
-      return;
-    }
-    if (answers) {
-      this.mattermostMisses = 0;
-      if (state === 'running') return;
-      if (this.mattermostLost) log.info('local-switch-server: Mattermost is answering again');
-      this.mattermostLost = false;
-      this.setStatus({
-        mattermostState: 'running',
-        ...(state === 'failed' ? { notice: null } : {}),
-      });
-      return;
-    }
-    if (state === 'failed' || ++this.mattermostMisses < MISSES_ALLOWED) return;
-    this.mattermostMisses = 0;
-    this.mattermostLost = true;
-    log.warn('local-switch-server: Mattermost is not answering');
-    this.setStatus({ mattermostState: 'failed', notice: MATTERMOST_LOST_NOTICE });
   }
 
   /**
