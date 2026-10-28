@@ -6,13 +6,13 @@ describe a room in exactly the same terms.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 from pydantic.alias_generators import to_camel
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from switch_core.chats import MEMBER_CLIENT_TYPE
@@ -170,109 +170,161 @@ async def _bridge(session: AsyncSession, room: Room) -> CollaborationBridge | No
 async def chat_summary(
     session: AsyncSession, room: Room, *, viewer_id: str, can_manage: bool
 ) -> ChatSummary:
-    rows = (
-        await session.execute(
-            select(Agent, room_agents.c.alias, User.name)
-            .join(room_agents, room_agents.c.agent_id == Agent.id)
-            .outerjoin(User, User.id == Agent.owner_id)
-            .where(room_agents.c.room_id == room.id)
-            .order_by(Agent.name)
-        )
-    ).all()
-    agents = [agent for agent, _alias, _owner in rows]
-    providers = {
-        definition.agent_id: definition.definition.get("provider")
-        for definition in (
-            await session.execute(
-                select(AgentDefinition).where(
-                    AgentDefinition.agent_id.in_([agent.id for agent in agents])
+    [summary] = await chat_summaries(
+        session, [room], viewer_id=viewer_id, can_manage={room.id: can_manage}
+    )
+    return summary
+
+
+async def chat_summaries(
+    session: AsyncSession,
+    rooms: Sequence[Room],
+    *,
+    viewer_id: str,
+    can_manage: Mapping[str, bool],
+) -> list[ChatSummary]:
+    """The rooms' summaries for the viewer, in the order given, read with one
+    query per kind of fact (agents, providers, bridges, people, unread counts,
+    last messages) whatever the number of rooms."""
+    if not rooms:
+        return []
+    room_ids = [room.id for room in rooms]
+    agent_rows: dict[str, list[tuple[Agent, str | None, str | None]]] = {}
+    for room_id, agent, alias, owner_name in await session.execute(
+        select(room_agents.c.room_id, Agent, room_agents.c.alias, User.name)
+        .join(room_agents, room_agents.c.agent_id == Agent.id)
+        .outerjoin(User, User.id == Agent.owner_id)
+        .where(room_agents.c.room_id.in_(room_ids))
+        .order_by(Agent.name)
+    ):
+        agent_rows.setdefault(room_id, []).append((agent, alias, owner_name))
+    agent_ids = {agent.id for rows in agent_rows.values() for agent, _, _ in rows}
+    providers = (
+        {
+            definition.agent_id: definition.definition.get("provider")
+            for definition in (
+                await session.execute(
+                    select(AgentDefinition).where(
+                        AgentDefinition.agent_id.in_(agent_ids)
+                    )
                 )
+            ).scalars()
+        }
+        if agent_ids
+        else {}
+    )
+    bridge_ids = {room.bridge_id for room in rooms if room.bridge_id is not None}
+    bridges = (
+        {
+            bridge.id: bridge
+            for bridge in (
+                await session.execute(
+                    select(CollaborationBridge).where(
+                        CollaborationBridge.id.in_(bridge_ids)
+                    )
+                )
+            ).scalars()
+        }
+        if bridge_ids
+        else {}
+    )
+    members: dict[str, list[str]] = {}
+    for room_id, user_id in await session.execute(
+        select(ClientRoom.room_id, Client.user_id)
+        .join(Client, Client.id == ClientRoom.client_id)
+        .where(ClientRoom.room_id.in_(room_ids), Client.type == MEMBER_CLIENT_TYPE)
+    ):
+        if user_id is not None:
+            members.setdefault(room_id, []).append(user_id)
+    viewer_client = (
+        select(Client.id)
+        .where(Client.user_id == viewer_id, Client.type == MEMBER_CLIENT_TYPE)
+        .scalar_subquery()
+    )
+    unread: dict[str, int] = {}
+    for room_id, count in await session.execute(
+        select(Message.room_id, func.count())
+        .select_from(Message)
+        .outerjoin(
+            ChatRead,
+            and_(
+                ChatRead.room_id == Message.room_id,
+                ChatRead.user_id == viewer_id,
+            ),
+        )
+        .where(
+            Message.room_id.in_(room_ids),
+            Message.event_type.in_(SHOWN_EVENT_TYPES),
+            Message.seq > func.coalesce(ChatRead.read_through_seq, 0),
+            Message.sender_client_id.is_distinct_from(viewer_client),
+        )
+        .group_by(Message.room_id)
+    ):
+        unread[room_id] = count
+    last_messages = {
+        message.room_id: message
+        for message in (
+            await session.execute(
+                select(Message)
+                .where(
+                    Message.room_id.in_(room_ids),
+                    Message.event_type.in_(SHOWN_EVENT_TYPES),
+                )
+                .distinct(Message.room_id)
+                .order_by(Message.room_id, Message.seq.desc())
             )
         ).scalars()
     }
-    bridge = await _bridge(session, room)
-    member_user_ids = sorted(
-        user_id
-        for user_id in (
-            await session.execute(
-                select(Client.user_id)
-                .join(ClientRoom, ClientRoom.client_id == Client.id)
-                .where(ClientRoom.room_id == room.id, Client.type == MEMBER_CLIENT_TYPE)
+    summaries: list[ChatSummary] = []
+    for room in rooms:
+        rows = agent_rows.get(room.id, [])
+        bridge = bridges.get(room.bridge_id) if room.bridge_id else None
+        channel_name: str | None = None
+        if bridge is not None and room.external_channel_id is not None:
+            prefix = f"{bridge.display_name}: "
+            channel_name = (
+                room.name[len(prefix) :] if room.name.startswith(prefix) else room.name
             )
-        ).scalars()
-        if user_id is not None
-    )
-    unread_count = await session.scalar(
-        select(func.count())
-        .select_from(Message)
-        .where(
-            Message.room_id == room.id,
-            Message.event_type.in_(SHOWN_EVENT_TYPES),
-            Message.seq
-            > func.coalesce(
-                select(ChatRead.read_through_seq)
-                .where(ChatRead.user_id == viewer_id, ChatRead.room_id == room.id)
-                .scalar_subquery(),
-                0,
-            ),
-            Message.sender_client_id.is_distinct_from(
-                select(Client.id)
-                .where(Client.user_id == viewer_id, Client.type == MEMBER_CLIENT_TYPE)
-                .scalar_subquery()
-            ),
+        member_user_ids = sorted(members.get(room.id, []))
+        last = last_messages.get(room.id)
+        summaries.append(
+            ChatSummary(
+                room_id=room.id,
+                name=room.name,
+                channel_type=room.channel_type or "channel_public",
+                bridge_type=bridge.type if bridge is not None else None,
+                channel_name=channel_name,
+                agents=[
+                    ChatAgent(
+                        id=agent.id,
+                        name=agent.name,
+                        display_name=agent.display_name,
+                        icon_url=agent.icon_url,
+                        provider=_provider(agent, providers.get(agent.id)),
+                        alias=alias,
+                        owner_name=owner_name,
+                        owned_by_viewer=agent.owner_id == viewer_id,
+                    )
+                    for agent, alias, owner_name in rows
+                ],
+                can_manage=can_manage[room.id],
+                owns_agent=any(agent.owner_id == viewer_id for agent, _, _ in rows),
+                member_count=len(member_user_ids),
+                member_user_ids=member_user_ids,
+                unread_count=unread.get(room.id, 0),
+                last_message=(
+                    ChatLastMessage(
+                        seq=last.seq,
+                        sent_at=_iso(last.sent_at),
+                        preview=(last.body or _command_text(last))[:PREVIEW_CHARS],
+                        sender_name=last.sender_name or "",
+                    )
+                    if last is not None
+                    else None
+                ),
+            )
         )
-    )
-    channel_name: str | None = None
-    if bridge is not None and room.external_channel_id is not None:
-        prefix = f"{bridge.display_name}: "
-        channel_name = (
-            room.name[len(prefix) :] if room.name.startswith(prefix) else room.name
-        )
-    last = (
-        await session.execute(
-            select(Message)
-            .where(
-                Message.room_id == room.id, Message.event_type.in_(SHOWN_EVENT_TYPES)
-            )
-            .order_by(Message.seq.desc())
-            .limit(1)
-        )
-    ).scalar_one_or_none()
-    return ChatSummary(
-        room_id=room.id,
-        name=room.name,
-        channel_type=room.channel_type or "channel_public",
-        bridge_type=bridge.type if bridge is not None else None,
-        channel_name=channel_name,
-        agents=[
-            ChatAgent(
-                id=agent.id,
-                name=agent.name,
-                display_name=agent.display_name,
-                icon_url=agent.icon_url,
-                provider=_provider(agent, providers.get(agent.id)),
-                alias=alias,
-                owner_name=owner_name,
-                owned_by_viewer=agent.owner_id == viewer_id,
-            )
-            for agent, alias, owner_name in rows
-        ],
-        can_manage=can_manage,
-        owns_agent=any(agent.owner_id == viewer_id for agent in agents),
-        member_count=len(member_user_ids),
-        member_user_ids=member_user_ids,
-        unread_count=unread_count or 0,
-        last_message=(
-            ChatLastMessage(
-                seq=last.seq,
-                sent_at=_iso(last.sent_at),
-                preview=(last.body or _command_text(last))[:PREVIEW_CHARS],
-                sender_name=last.sender_name or "",
-            )
-            if last is not None
-            else None
-        ),
-    )
+    return summaries
 
 
 def _command_text(message: Message) -> str:

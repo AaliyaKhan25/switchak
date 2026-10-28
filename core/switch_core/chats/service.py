@@ -392,8 +392,19 @@ class ChatService:
     ) -> bool:
         if room.owner_id is not None and room.owner_id == user.id:
             return True
+        return await self.administers(session, tenant_id, user)
+
+    async def administers(
+        self, session: AsyncSession, tenant_id: str, user: User
+    ) -> bool:
+        """Whether the user manages every room in the tenant (`can_manage`)."""
         role = await self._user_store.tenant_role(session, tenant_id, user.id)
         return administers_tenant(is_operator=user.role == "admin", tenant_role=role)
+
+    async def head_seqs(
+        self, session: AsyncSession, room_ids: list[str]
+    ) -> dict[str, int]:
+        return await self._message_store.head_seqs(session, room_ids)
 
     async def _require_manager(
         self, session: AsyncSession, tenant_id: str, user: User, room: Room
@@ -690,23 +701,37 @@ class ChatService:
     async def stream_rooms(self, session: AsyncSession, user_id: str) -> list[Room]:
         """The caller's member rooms that are chats: unarchived, and either
         holding an agent or started in Switch Console (which may have none)."""
+        return [
+            room
+            for room, listed in await self.readable_and_listed(session, user_id)
+            if listed
+        ]
+
+    async def readable_and_listed(
+        self, session: AsyncSession, user_id: str
+    ) -> list[tuple[Room, bool]]:
+        """`readable_rooms`, each with whether it is one of `stream_rooms`, in
+        one query."""
         client = await self.member_client(session, user_id)
         if client is None:
             return []
+        listed = or_(
+            exists().where(room_agents.c.room_id == Room.id),
+            Room.metadata_.has_key("chat_operation_id"),
+        )
         result = await session.execute(
-            select(Room)
+            select(Room, listed)
             .join(ClientRoom, ClientRoom.room_id == Room.id)
-            .where(
-                ClientRoom.client_id == client.id,
-                Room.archived_at.is_(None),
-                or_(
-                    exists().where(room_agents.c.room_id == Room.id),
-                    Room.metadata_.has_key("chat_operation_id"),
-                ),
-            )
+            .where(ClientRoom.client_id == client.id, Room.archived_at.is_(None))
             .order_by(Room.created_at)
         )
-        return list(result.scalars().all())
+        return [(room, bool(is_listed)) for room, is_listed in result.all()]
+
+    async def moved_rooms(
+        self, session: AsyncSession, cursors: dict[str, int]
+    ) -> set[str]:
+        """Of the rooms in `cursors`, those with a row past their cursor."""
+        return await self._message_store.rooms_past(session, cursors)
 
     async def room_activity(
         self, session: AsyncSession, room_id: str

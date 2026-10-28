@@ -1045,13 +1045,13 @@ async def test_a_change_to_one_chat_re_summarises_only_that_chat(
         assert await events.until("ready") == {}
 
     summaries: list[str] = []
-    summarise = chats_module.chat_summary
+    summarise = chats_module.chat_summaries
 
-    async def counted(session: AsyncSession, room: Room, **kwargs: Any) -> Any:
-        summaries.append(room.id)
-        return await summarise(session, room, **kwargs)
+    async def counted(session: AsyncSession, rooms: list[Room], **kwargs: Any) -> Any:
+        summaries.extend(room.id for room in rooms)
+        return await summarise(session, rooms, **kwargs)
 
-    monkeypatch.setattr(chats_module, "chat_summary", counted)
+    monkeypatch.setattr(chats_module, "chat_summaries", counted)
     added = await _add_agent(chats, chats.alice.id, room_ids[0], agent)
     assert added.status_code == 200
     for events in streams:
