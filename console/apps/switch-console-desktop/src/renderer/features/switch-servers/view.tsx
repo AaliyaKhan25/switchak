@@ -5,7 +5,6 @@ import {
   MoreVertical,
   Pencil,
   PlugZap,
-  Power,
   RefreshCw,
   Trash2,
   Unplug,
@@ -34,12 +33,8 @@ import {
 } from '@renderer/lib/ui/dropdown-menu';
 import { Spinner } from '@renderer/lib/ui/spinner';
 import { dashboardOrigin, type SwitchServer } from '@shared/core/switch-servers/switch-servers';
-import { frozenSentence } from './frozen-workspace';
 import { GuardrailsSection } from './GuardrailsSection';
 import { localServerStore } from './local-server-store';
-import { startManagedServer } from './managed-server-actions';
-import { TONE_BOX, ToneDot } from './managed-server-dot';
-import { managedServerState } from './managed-server-state';
 import { MessagingAppsCard } from './MessagingAppsCard';
 import { openServerPage } from './open-server-page';
 import { remoteServerStore } from './remote-server-store';
@@ -128,8 +123,8 @@ const ServerMainPanel = observer(function ServerMainPanel() {
 
   // A managed server that isn't running has no gateway to reach — its
   // connection status, sign-in, and web-app links are meaningless until it's up,
-  // so we neither fetch nor render them: a card saying it is down, with the way
-  // to start it and to its status page, shows instead.
+  // so we neither fetch nor render them (the workspace banner above says it is
+  // down, with the way to start it and to its status page).
   const detailsVisible = !server?.managed || isManagedRunning(server);
 
   useEffect(() => {
@@ -293,8 +288,6 @@ const ServerMainPanel = observer(function ServerMainPanel() {
             {store.errorDetail && <AlertDescription>{store.errorDetail}</AlertDescription>}
           </Alert>
         )}
-
-        {!detailsVisible && <ManagedServerDownCard server={server} />}
 
         {detailsVisible && unreachable && <ServerUnreachableCard server={server} />}
 
@@ -473,49 +466,6 @@ const ServerUnreachableCard = observer(function ServerUnreachableCard({
           <RefreshCw className={retrying ? 'size-4 animate-spin' : 'size-4'} />
           Retry
         </Button>
-      </div>
-    </div>
-  );
-});
-
-/**
- * In place of the page's details when a server this Console runs is not
- * running: what is wrong, in the words the workspace banner uses, Start (or
- * Restart, after it stopped on its own) when that is all it takes, and the way
- * to its status page, where the reason and the rest of its controls are.
- * Nothing until its state has been read: an unread state is not a stopped one.
- */
-const ManagedServerDownCard = observer(function ManagedServerDownCard({
-  server,
-}: {
-  server: SwitchServer;
-}) {
-  const { navigate } = useNavigate();
-  const state = managedServerState(server);
-  if (!state || !state.known || state.answering) return null;
-  const crashed = state.reason === 'stopped-unexpectedly';
-  return (
-    <div
-      className={`flex items-center justify-between gap-3 rounded-lg border p-4 ${TONE_BOX[state.tone]}`}
-    >
-      <div className="flex min-w-0 items-center gap-2 text-sm">
-        <ToneDot tone={state.tone} size={7} />
-        <span className="text-foreground">{frozenSentence(server, state)}</span>
-      </div>
-      <div className="flex shrink-0 items-center gap-2">
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => navigate('managedServer', { serverId: server.id })}
-        >
-          Server status
-        </Button>
-        {(state.tone === 'stopped' || crashed) && (
-          <Button size="sm" onClick={() => startManagedServer(server)}>
-            <Power className="size-4" />
-            {crashed ? 'Restart' : 'Start'}
-          </Button>
-        )}
       </div>
     </div>
   );

@@ -11,9 +11,8 @@ vi.hoisted(() => {
   } as unknown as typeof window.electronAPI;
 });
 
-// The home page of the server on this computer when it is not answering: a
-// crash shows as the server being down, with Restart and the way to its status
-// page, rather than as a connection problem.
+// The home page of the server on this computer when it is not answering says
+// so, with the way to its status page, rather than blaming the connection.
 const state = vi.hoisted(() => ({
   status: null as unknown,
   unreachable: false,
@@ -97,13 +96,13 @@ vi.mock('@renderer/features/switch-servers/server-sign-in', () => ({
 import { serverView } from '@renderer/features/switch-servers/view';
 import '@renderer/index.css';
 
-const LOCAL = {
+const LOCAL: { managed: boolean; [key: string]: unknown } = {
   id: 'local',
   name: 'Local server',
   url: 'http://localhost:41001',
   dashboardUrl: null,
   managed: true,
-  managementKind: 'local' as const,
+  managementKind: 'local',
   sshHost: null,
   createdAt: '2026-01-01T00:00:00.000Z',
   updatedAt: '2026-01-01T00:00:00.000Z',
@@ -148,41 +147,6 @@ function button(label: RegExp): HTMLElement | undefined {
     label.test(b.textContent?.trim() ?? '')
   );
 }
-
-it('says the server stopped unexpectedly, and offers Restart and its status page', async () => {
-  state.status = {
-    ...base,
-    phase: 'error',
-    failedTo: 'run',
-    error: 'switch-core stopped unexpectedly',
-  };
-  await render();
-
-  expect(document.body.textContent).toContain('Local server stopped unexpectedly');
-  expect(document.body.textContent).not.toContain('Check your connection');
-
-  await act(async () => button(/^Restart$/)!.click());
-  expect(state.localStart).toHaveBeenCalledOnce();
-  await act(async () => button(/^Server status$/)!.click());
-  expect(state.navigate).toHaveBeenCalledWith('managedServer', { serverId: 'local' });
-});
-
-it('offers Start for a server that was stopped', async () => {
-  state.status = { ...base, phase: 'stopped' };
-  await render();
-
-  expect(document.body.textContent).toContain("Local server isn't running");
-  expect(button(/^Start$/)).toBeDefined();
-});
-
-it('says nothing until the server has been looked at', async () => {
-  state.status = { ...base, phase: 'stopped', checked: false };
-  await render();
-
-  expect(button(/^Start$/)).toBeUndefined();
-  expect(button(/^Server status$/)).toBeUndefined();
-});
-
 it('does not blame the connection when the local server is not answering', async () => {
   state.unreachable = true;
   await render();
@@ -190,4 +154,16 @@ it('does not blame the connection when the local server is not answering', async
   expect(document.body.textContent).toContain("Local server isn't answering");
   expect(document.body.textContent).not.toContain('Check your connection');
   expect(button(/^Server status$/)).toBeDefined();
+});
+
+it('still calls an unmanaged server unreachable a connection problem', async () => {
+  state.unreachable = true;
+  LOCAL.managed = false;
+  try {
+    await render();
+    expect(document.body.textContent).toContain('Check your connection');
+    expect(button(/^Server status$/)).toBeUndefined();
+  } finally {
+    LOCAL.managed = true;
+  }
 });
