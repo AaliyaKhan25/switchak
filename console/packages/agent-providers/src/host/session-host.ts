@@ -107,6 +107,8 @@ export class HostedSession {
   private readonly finished = new Set<string>();
   private readonly roomReplies = new Set<string>();
   private readonly postedTurns = new Set<string>();
+  /** Turns whose posts to the room were refused, with the last refusal. */
+  private readonly failedPosts = new Map<string, string>();
   private readonly usage = new Map<string, TokenUsage[]>();
   private readonly resumeOperations = new Set<string>();
   private readonly queue: Command[] = [];
@@ -578,6 +580,11 @@ export class HostedSession {
    */
   agentPostedToRoom(): void {
     if (this.activeTurn) this.postedTurns.add(this.activeTurn);
+  }
+
+  /** A post to the room in the running turn was refused: why, the last one kept. */
+  agentPostFailed(reason: string): void {
+    if (this.activeTurn) this.failedPosts.set(this.activeTurn, reason);
   }
 
   /** Where the command that started `turnId` came from, if a command started it. */
@@ -1089,13 +1096,18 @@ export class HostedSession {
     detail: string | null
   ): Promise<void> {
     const posted = this.postedTurns.delete(turnId);
+    const failedPost = this.failedPosts.get(turnId) ?? null;
+    this.failedPosts.delete(turnId);
     const reply = this.config.replyToRoom;
     if (!reply || posted || this.shuttingDown || this.stopped || this.resetting) return;
     if (this.roomReplies.has(turnId)) return;
     const origin = this.commands.get(turnId)?.origin;
     if (!origin?.roomId || !origin.messageId) return;
     const roomId = origin.roomId;
-    const body = unpostedReply(outcome, detail);
+    // A turn whose every post was refused ended in silence as far as the room
+    // could tell: it is told that, once, unless the turn failed and says so already.
+    const body =
+      unpostedReply(outcome, detail) ?? (failedPost !== null ? postFailedReply(failedPost) : null);
     if (body === null) return;
     await this.inbox.append({ type: 'room-reply', commandId: turnId });
     this.roomReplies.add(turnId);
@@ -1383,6 +1395,11 @@ export function unpostedReply(outcome: TurnOutcome, detail: string | null): stri
   if (outcome !== 'error') return null;
   const reason = detail?.trim() ? `: ${cap(detail.trim(), 1000)}` : '.';
   return `I finished without replying. The turn failed${reason}`;
+}
+
+/** What the host posts for a turn whose every post to the room was refused. */
+export function postFailedReply(reason: string): string {
+  return `I couldn't post my reply here: ${cap(reason.trim(), 1000)}`;
 }
 
 function cap(text: string, limit: number): string {

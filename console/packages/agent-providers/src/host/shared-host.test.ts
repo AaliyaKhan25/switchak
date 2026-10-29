@@ -1487,3 +1487,56 @@ it('runs a room message again on a retry asked for there, and says so when it ca
     await host.stop();
   }
 }, 20000);
+
+it('tells the room once when every post of a turn was refused, and not when one landed', async () => {
+  const host = await start({ rooms: true });
+  const asks = () =>
+    host.parent.sent.filter(
+      (message): message is typeof message & { id: number; ask: Record<string, unknown> } =>
+        message.kind === 'ask' && message.ask?.type !== 'room-instructions'
+    );
+  const answer = (id: number, value: unknown) =>
+    host.parent.port.emit('message', { kind: 'answer', id, ok: true, value });
+  const refused = {
+    isError: true,
+    content: [{ type: 'text', text: 'Not connected to a room. Call connect_to_room first.' }],
+  };
+  const turn = async (sequence: number) => {
+    const before = host.turns.length;
+    await host.parent.ask({ type: 'room', handoff: roomMessage(sequence, 'reply please') });
+    await until(() => expect(host.turns).toHaveLength(before + 1));
+    return host.turns.at(-1)!.turnId;
+  };
+  const post = async (result: unknown) => {
+    const before = asks().length;
+    const posting = host.channel.ask({
+      type: 'tool',
+      name: 'post_message',
+      arguments: { body: 'x' },
+    });
+    await until(() => expect(asks()).toHaveLength(before + 1));
+    answer(asks().at(-1)!.id, result);
+    await posting.catch(() => {});
+  };
+  try {
+    const silent = await turn(1);
+    await post(refused);
+    await post(refused);
+    host.emit({ type: 'turn.completed', turnId: silent, outcome: 'completed', usage: [] });
+    await until(() => expect(asks().filter((m) => m.ask.type === 'room-reply')).toHaveLength(1));
+    expect(asks().find((m) => m.ask.type === 'room-reply')!.ask).toMatchObject({
+      roomId: 'room',
+      body: "I couldn't post my reply here: Not connected to a room. Call connect_to_room first.",
+    });
+    answer(asks().find((m) => m.ask.type === 'room-reply')!.id, null);
+
+    const landed = await turn(2);
+    await post(refused);
+    await post({ content: [{ type: 'text', text: '{"event_id":"e"}' }] });
+    host.emit({ type: 'turn.completed', turnId: landed, outcome: 'completed', usage: [] });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(asks().filter((m) => m.ask.type === 'room-reply')).toHaveLength(1);
+  } finally {
+    expect(await host.stop()).toBeNull();
+  }
+}, 20000);

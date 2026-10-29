@@ -180,6 +180,22 @@ export const ROOM_POSTING_TOOLS = new Set([
   'send_attachment',
 ]);
 
+/** Why a post to the room was refused, when the result is one; null for anything else. */
+export function postFailure(name: string, result: unknown): string | null {
+  if (!ROOM_POSTING_TOOLS.has(name)) return null;
+  if (typeof result !== 'object' || result === null) return null;
+  const { isError, content } = result as { isError?: unknown; content?: unknown };
+  if (isError !== true) return null;
+  const text = Array.isArray(content)
+    ? content
+        .map((part) => (part as { text?: unknown }).text)
+        .filter((part): part is string => typeof part === 'string')
+        .join(' ')
+        .trim()
+    : '';
+  return text || 'Switch refused the post.';
+}
+
 /** Whether a Switch tool result is a post that landed. */
 export function postedToRoom(name: string, result: unknown): boolean {
   if (!ROOM_POSTING_TOOLS.has(name)) return false;
@@ -422,6 +438,8 @@ export async function runSharedHost(
     stopHearingTools =
       parentChannel?.onToolAnswered((name, result) => {
         if (postedToRoom(name, result)) hosted.agentPostedToRoom();
+        const failure = postFailure(name, result);
+        if (failure !== null) hosted.agentPostFailed(failure);
       }) ?? null;
 
     options.serviceNotices.attach((message) => host!.serviceFallback(message));
