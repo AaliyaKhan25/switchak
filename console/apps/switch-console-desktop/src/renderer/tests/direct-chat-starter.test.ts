@@ -1,3 +1,4 @@
+import { autorun, configure } from 'mobx';
 import { describe, expect, it, vi } from 'vitest';
 import { DirectChatStarter } from '@renderer/features/chats/stores/direct-chat-starter';
 import type { ChatSummary } from '@shared/core/chats/chats';
@@ -34,6 +35,19 @@ describe('DirectChatStarter', () => {
     });
     expect(deps.created).toHaveBeenCalledWith('s1', chat);
     expect(deps.warm).not.toHaveBeenCalled();
+  });
+
+  it('changes whether a chat is starting in actions, as strict mode asks, while a view watches it', async () => {
+    configure({ enforceActions: 'observed' });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { starter } = setup(async () => chat);
+    const seen: boolean[] = [];
+    const stop = autorun(() => seen.push(starter.starting));
+    await starter.start('s1', 'a1');
+    stop();
+    expect(seen).toEqual([false, true, false]);
+    expect(warn.mock.calls.some((call) => String(call[0]).includes('[MobX]'))).toBe(false);
+    warn.mockRestore();
   });
 
   it('ignores a second start for the same agent while one is in flight', async () => {

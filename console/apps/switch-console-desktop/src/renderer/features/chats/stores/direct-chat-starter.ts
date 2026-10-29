@@ -1,4 +1,4 @@
-import { observable } from 'mobx';
+import { observable, runInAction } from 'mobx';
 import type { ChatSummary } from '@shared/core/chats/chats';
 import { chatFailure } from './chat-errors';
 
@@ -48,7 +48,7 @@ export class DirectChatStarter {
 
     const key = `${serverId}:${agentId}`;
     if (this.inFlight.has(key)) return null;
-    this.inFlight.add(key);
+    runInAction(() => this.inFlight.add(key));
     const requestId = this.retryIds.get(key) ?? this.deps.newId();
     try {
       const chat = await this.deps.create({
@@ -74,7 +74,7 @@ export class DirectChatStarter {
       }
       return null;
     } finally {
-      this.inFlight.delete(key);
+      runInAction(() => this.inFlight.delete(key));
     }
   }
 }
