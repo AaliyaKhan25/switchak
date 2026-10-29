@@ -43,6 +43,8 @@ export const directChats = new DirectChatStarter({
         if (appState.navigation.viewParamsStore[viewId]?.roomId === from)
           appState.navigation.updateViewParams(viewId, { roomId: chat.roomId });
     });
+    // Saved now, not on the next debounce: a reload before then would reopen the unsaved id, which is gone.
+    void rpc.viewState.save('navigation', appState.navigation.snapshot);
     chatTitler.created(chat, false);
     const first = chatsStore.timelines.peek(serverId, chat.roomId)?.pending[0];
     if (first) void chatTitler.sent(serverId, chat.roomId, first.body);

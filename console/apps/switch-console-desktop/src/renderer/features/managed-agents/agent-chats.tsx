@@ -133,6 +133,14 @@ function conversationsOf({ serverId, workspaceId, agentId }: ManagedAgentView) {
   };
 }
 
+/** Whether `roomId` is the agent's unsaved chat, open now or kept from before a reload. */
+function isUnsavedChatOf(agent: ManagedAgentView, roomId: string): boolean {
+  return (
+    directChats.unsavedChat(roomId) !== undefined ||
+    directChats.waiting(agent.serverId, agent.agentId) === roomId
+  );
+}
+
 /**
  * The direct chat open on an agent's page: the one in the params, archived or
  * not, else its newest; none while the open chat is unsaved, so nothing of
@@ -142,7 +150,7 @@ export function openAgentChat(
   agent: ManagedAgentView,
   roomId: string | undefined
 ): ChatSummary | null {
-  if (roomId && directChats.unsavedChat(roomId)) return null;
+  if (roomId && isUnsavedChatOf(agent, roomId)) return null;
   const { direct, archived } = conversationsOf(agent);
   return [...direct, ...archived].find((chat) => chat.roomId === roomId) ?? direct[0] ?? null;
 }
@@ -175,12 +183,21 @@ export const AgentChats = observer(function AgentChats({ agent }: { agent: Manag
   const { sections, section } = useAgentSection(serverId, agent, params.section);
   const thisComputer = useRunsOnThisComputer(agent);
   const shownRoom = openAgentRoom(agent, params.room, section);
-  const roomId = shownRoom
-    ? null
-    : params.roomId && directChats.unsavedChat(params.roomId)
-      ? params.roomId
-      : (openAgentChat(agent, params.roomId)?.roomId ?? null);
+  // The unsaved chat open before a reload is kept, but not in memory yet: it opens again.
+  const restoring =
+    !!params.roomId &&
+    !directChats.unsavedChat(params.roomId) &&
+    isUnsavedChatOf(agent, params.roomId);
+  const roomId =
+    shownRoom || restoring
+      ? null
+      : params.roomId && directChats.unsavedChat(params.roomId)
+        ? params.roomId
+        : (openAgentChat(agent, params.roomId)?.roomId ?? null);
   const open = (id: string) => setParams({ roomId: id, section: undefined, room: undefined });
+  useEffect(() => {
+    if (restoring) setParams({ roomId: directChats.start(serverId, agentId) });
+  }, [restoring, serverId, agentId, setParams]);
   // The chat open here that becomes a group follows into its room, rather than another chat taking its place.
   useOpenGroupAsRoom(shownRoom || section ? null : (params.roomId ?? null), 'managedAgent');
   const newChat = () => open(directChats.start(serverId, agentId));
@@ -314,7 +331,7 @@ export const AgentChats = observer(function AgentChats({ agent }: { agent: Manag
               className="pointer-events-none absolute inset-x-0 top-0 z-10 h-6 bg-linear-to-b from-background to-transparent"
             />
           </>
-        ) : listing || autoStart ? null : (
+        ) : listing || autoStart || restoring ? null : (
           <EmptyState
             label="No chat open"
             description="Start a chat with this agent."
