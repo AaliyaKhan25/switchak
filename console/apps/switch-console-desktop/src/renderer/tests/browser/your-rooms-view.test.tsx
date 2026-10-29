@@ -38,6 +38,8 @@ vi.mock('@renderer/features/chats/stores/chats', async () => {
       serverId: 'srv',
       chats: new Map<string, unknown>(),
       unlisted: new Set<string>(),
+      archived: new Map<string, unknown>(),
+      archivedError: null,
     }),
   };
 });
