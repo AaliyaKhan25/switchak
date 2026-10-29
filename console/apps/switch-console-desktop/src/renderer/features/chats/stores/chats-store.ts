@@ -31,9 +31,11 @@ export type ChatsApi = {
   connect: (serverId: string) => Promise<{ state: ChatStreamState; detail: string | null }>;
   disconnect: (serverId: string) => Promise<void>;
   list: (serverId: string) => Promise<ChatSummary[]>;
+  listArchived: (serverId: string) => Promise<ChatSummary[]>;
   identity: (serverId: string) => Promise<{ userId: string; tenantId: string | null }>;
   timeline: (serverId: string) => TimelineApi;
   archive: (serverId: string, roomId: string) => Promise<void>;
+  unarchive: (serverId: string, roomId: string) => Promise<void>;
   delete: (serverId: string, roomId: string) => Promise<void>;
   markRead: (serverId: string, roomId: string, seq: number) => Promise<void>;
   removeMember: (serverId: string, roomId: string, userId: string) => Promise<void>;
@@ -63,6 +65,9 @@ export class ChatsStore {
   removed = new Set<string>();
   /** Rooms off the list while the person is still a member. */
   unlisted = new Set<string>();
+  /** The person's archived chats: off the list, still readable, and written back into it. */
+  archived = new Map<string, ChatSummary>();
+  archivedError: string | null = null;
   streamState: ChatStreamState = 'offline';
   streamDetail: string | null = null;
   listError: string | null = null;
@@ -92,7 +97,10 @@ export class ChatsStore {
     });
     events.onMessage(({ serverId, message }) => this.message(serverId, message));
     events.onRemoved(({ serverId, roomId, reason }) => {
-      if (serverId === this.serverId) this.remove(roomId, reason);
+      if (serverId !== this.serverId) return;
+      this.remove(roomId, reason);
+      // Archiving is one way a chat leaves the list while its people stay in it.
+      if (reason === 'unlisted') void this.loadArchived(serverId);
     });
     events.onState(({ serverId, state, detail }) => {
       if (serverId !== this.serverId) return;
@@ -141,6 +149,8 @@ export class ChatsStore {
         this.chats = new Map();
         this.removed = new Set();
         this.unlisted = new Set();
+        this.archived = new Map();
+        this.archivedError = null;
         this.userId = null;
         this.tenantId = null;
         this.listError = null;
@@ -173,15 +183,36 @@ export class ChatsStore {
         this.listError = failureText(error, 'Your chats could not be listed.');
       });
     }
+    await this.loadArchived(serverId);
+  }
+
+  async loadArchived(serverId: string): Promise<void> {
+    try {
+      const chats = await this.api.listArchived(serverId);
+      if (serverId !== this.serverId) return;
+      runInAction(() => {
+        this.archived = new Map(
+          chats.filter((chat) => !this.chats.has(chat.roomId)).map((chat) => [chat.roomId, chat])
+        );
+        this.archivedError = null;
+      });
+    } catch (error) {
+      if (serverId !== this.serverId) return;
+      runInAction(() => {
+        this.archivedError = failureText(error, 'Your archived chats could not be listed.');
+      });
+    }
   }
 
   upsert(chat: ChatSummary): void {
     this.chats.set(chat.roomId, chat);
     this.removed.delete(chat.roomId);
+    const wasArchived = this.archived.delete(chat.roomId);
     const timeline = this.serverId ? this.timelines.peek(this.serverId, chat.roomId) : undefined;
     timeline?.restore();
     // The feed did not follow the room while it was off the list.
-    if (this.unlisted.delete(chat.roomId) && timeline?.loaded) void timeline.load();
+    if ((this.unlisted.delete(chat.roomId) || wasArchived) && timeline?.loaded)
+      void timeline.load();
   }
 
   /** A chat the person made or was let into from here, ahead of the feed. */
@@ -192,7 +223,17 @@ export class ChatsStore {
   /** Archived for everyone in it; throws, leaving the chat listed, if the server refuses. */
   async archive(serverId: string, roomId: string): Promise<void> {
     await this.api.archive(serverId, roomId);
-    this.remove(roomId, 'access');
+    const chat = this.chats.get(roomId);
+    this.remove(roomId, 'unlisted');
+    if (chat) this.archived.set(roomId, chat);
+    await switchRoomsStore.refreshRoomState();
+  }
+
+  /** Back on the list for everyone in it; throws, leaving it archived, if the server refuses. */
+  async unarchive(serverId: string, roomId: string): Promise<void> {
+    await this.api.unarchive(serverId, roomId);
+    const chat = this.archived.get(roomId);
+    if (chat) this.upsert(chat);
     await switchRoomsStore.refreshRoomState();
   }
 
@@ -216,7 +257,12 @@ export class ChatsStore {
     this.timelines.peek(serverId, message.roomId)?.apply(message);
     const chat = this.chats.get(message.roomId);
     // The feed follows hidden chats too; a message in one is what brings it back.
-    if (!chat && !this.removed.has(message.roomId) && !this.unlisted.has(message.roomId))
+    if (
+      !chat &&
+      !this.removed.has(message.roomId) &&
+      !this.unlisted.has(message.roomId) &&
+      !this.archived.has(message.roomId)
+    )
       void this.relist(serverId);
     if (chat && (chat.lastMessage === null || chat.lastMessage.seq < message.seq))
       this.chats.set(message.roomId, {
@@ -285,6 +331,7 @@ export class ChatsStore {
       return;
     }
     this.unlisted.delete(roomId);
+    this.archived.delete(roomId);
     this.removed.add(roomId);
     if (this.serverId) {
       const timeline = this.timelines.peek(this.serverId, roomId);
@@ -298,6 +345,8 @@ export class ChatsStore {
     this.chats = new Map();
     this.removed = new Set();
     this.unlisted = new Set();
+    this.archived = new Map();
+    this.archivedError = null;
     this.userId = null;
     this.tenantId = null;
     void this.connect(serverId);
@@ -360,8 +409,16 @@ export class ChatsStore {
       .sort((a, b) => (b.lastMessage?.sentAt ?? '').localeCompare(a.lastMessage?.sentAt ?? ''));
   }
 
+  /** The archived chats an agent is in, newest activity first. */
+  archivedOfAgent(agentId: string): ChatSummary[] {
+    return [...this.archived.values()]
+      .filter((chat) => chat.agents.some((agent) => agent.id === agentId))
+      .sort((a, b) => (b.lastMessage?.sentAt ?? '').localeCompare(a.lastMessage?.sentAt ?? ''));
+  }
+
+  /** A listed chat, or an archived one. */
   chat(roomId: string): ChatSummary | undefined {
-    return this.chats.get(roomId);
+    return this.chats.get(roomId) ?? this.archived.get(roomId);
   }
 }
 

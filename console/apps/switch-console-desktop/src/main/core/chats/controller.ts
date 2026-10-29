@@ -47,6 +47,7 @@ import {
   fetchThreadMessages,
   listChatCommands,
   listChatMembers,
+  listArchivedChats,
   listChats,
   listWorkspaceMembers,
   listAgentCandidates,
@@ -56,6 +57,7 @@ import {
   renameChat,
   sendChatControl,
   sendChatMessage,
+  unarchiveChat,
   uploadChatAttachment,
   warmChatAgent,
 } from './gateway';
@@ -157,6 +159,7 @@ export const chatsController = createRPCController({
     return { userId: me.id, tenantId: workspace.tenantId };
   },
   list: (serverId: string): Promise<ChatSummary[]> => onServer(serverId, listChats),
+  listArchived: (serverId: string): Promise<ChatSummary[]> => onServer(serverId, listArchivedChats),
   /** `greeting`: what the chat's one agent, the caller's own, says as it joins, in place of its usual line. */
   create: async (params: {
     serverId: string;
@@ -262,6 +265,8 @@ export const chatsController = createRPCController({
   },
   archive: (serverId: string, roomId: string): Promise<void> =>
     onServer(serverId, (server) => archiveChat(server, roomId)),
+  unarchive: (serverId: string, roomId: string): Promise<void> =>
+    onServer(serverId, (server) => unarchiveChat(server, roomId)),
   delete: (serverId: string, roomId: string): Promise<void> =>
     onServer(serverId, async (server) => {
       await deleteRoom(server, roomId);

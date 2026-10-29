@@ -2,6 +2,7 @@ import { ChevronDown, ChevronRight, Plus } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { agentConversations } from '@renderer/features/chats/agent-conversations';
+import { ArchivedFold } from '@renderer/features/chats/components/archived-fold';
 import { ChatPanel } from '@renderer/features/chats/components/chat-panel';
 import { ChatRow } from '@renderer/features/chats/components/chat-row';
 import { useOpenGroupAsRoom } from '@renderer/features/chats/console-chat-redirect';
@@ -10,6 +11,7 @@ import { chatsStore } from '@renderer/features/chats/stores/chats';
 import { RoomListRow } from '@renderer/features/sidebar/main-section';
 import { SidebarItemMiniButton } from '@renderer/features/sidebar/sidebar-primitives';
 import { EmbeddedRoom } from '@renderer/features/switch-rooms/view';
+import { isConsoleDirectChatSummary } from '@renderer/features/switch-servers/room-filters';
 import { switchRoomsStore } from '@renderer/features/switch-servers/switch-rooms-store';
 import { useFeatureFlags } from '@renderer/lib/hooks/useFeatureFlags';
 import { useParams } from '@renderer/lib/layout/navigation-provider';
@@ -118,18 +120,26 @@ const Note = ({ children }: { children: ReactNode }) => (
 
 function conversationsOf({ serverId, workspaceId, agentId }: ManagedAgentView) {
   // The chats store follows the window's server; another server's chats are not in it.
-  const agentChats = chatsStore.serverId === serverId ? chatsStore.chatsOfAgent(agentId) : [];
+  const ownServer = chatsStore.serverId === serverId;
+  const agentChats = ownServer ? chatsStore.chatsOfAgent(agentId) : [];
+  const archived = ownServer
+    ? chatsStore.archivedOfAgent(agentId).filter(isConsoleDirectChatSummary)
+    : [];
   const agentRooms = switchRoomsStore.roomsFor(workspaceId, agentId);
-  return { agentRooms, ...agentConversations(agentChats, agentRooms ?? [], chatsStore.removed) };
+  return {
+    agentRooms,
+    archived,
+    ...agentConversations(agentChats, agentRooms ?? [], chatsStore.removed),
+  };
 }
 
-/** The direct chat open on an agent's page: the one in the params, else its newest. */
+/** The direct chat open on an agent's page: the one in the params, archived or not, else its newest. */
 export function openAgentChat(
   agent: ManagedAgentView,
   roomId: string | undefined
 ): ChatSummary | null {
-  const { direct } = conversationsOf(agent);
-  return direct.find((chat) => chat.roomId === roomId) ?? direct[0] ?? null;
+  const { direct, archived } = conversationsOf(agent);
+  return [...direct, ...archived].find((chat) => chat.roomId === roomId) ?? direct[0] ?? null;
 }
 
 /** The room shown on an agent's page in place of a chat, if one is. */
@@ -155,7 +165,7 @@ export const AgentChats = observer(function AgentChats({ agent }: { agent: Manag
     return switchRoomsStore.watchMembership(workspaceId, agentId);
   }, [workspaceId, agentId]);
 
-  const { agentRooms, direct, rooms } = conversationsOf(agent);
+  const { agentRooms, direct, archived, rooms } = conversationsOf(agent);
   const roomsError = switchRoomsStore.errorFor(workspaceId, agentId);
   const { sections, section } = useAgentSection(serverId, agent, params.section);
   const thisComputer = useRunsOnThisComputer(agent);
@@ -221,6 +231,17 @@ export const AgentChats = observer(function AgentChats({ agent }: { agent: Manag
             />
           ))}
           {direct.length === 0 && !chatsStore.listError && <Note>No direct chats yet.</Note>}
+          <ArchivedFold count={archived.length} error={ownServer ? chatsStore.archivedError : null}>
+            {archived.map((chat) => (
+              <ChatRow
+                key={chat.roomId}
+                serverId={serverId}
+                chat={chat}
+                isActive={!section && chat.roomId === roomId}
+                onOpen={() => open(chat.roomId)}
+              />
+            ))}
+          </ArchivedFold>
         </Section>
         <Section
           title="Rooms"

@@ -211,7 +211,7 @@ class RoomService:
         not block."""
         self._room_listeners = (*self._room_listeners, listener)
 
-    def _room_changed(self, tenant_id: str, room_id: str) -> None:
+    def room_changed(self, tenant_id: str, room_id: str) -> None:
         for listener in self._room_listeners:
             try:
                 listener(tenant_id, room_id, [])
@@ -826,7 +826,7 @@ class RoomService:
                 failed_attachments,
             )
 
-        self._room_changed(room.tenant_id, room.id)
+        self.room_changed(room.tenant_id, room.id)
         return RoomCreateResult(room=room, failed_attachments=failed_attachments)
 
     async def _seed_aliases(
@@ -1064,7 +1064,7 @@ class RoomService:
 
         logger.info("Added %d agents to room %s", len(agent_ids), room_id)
         await self.room_agents_changed(room.tenant_id, room.id)
-        self._room_changed(room.tenant_id, room.id)
+        self.room_changed(room.tenant_id, room.id)
 
         emit_safely(
             self._telemetry,
@@ -1107,7 +1107,7 @@ class RoomService:
 
         logger.info("Removed %d agents from room %s", len(agent_ids), room_id)
         await self.room_agents_changed(room.tenant_id, room.id)
-        self._room_changed(room.tenant_id, room.id)
+        self.room_changed(room.tenant_id, room.id)
 
         emit_safely(
             self._telemetry,
@@ -1181,7 +1181,7 @@ class RoomService:
                 write_visibility=write_visibility,
             )
             await session.commit()
-        self._room_changed(tenant_id, room_id)
+        self.room_changed(tenant_id, room_id)
 
     async def take_platform_name(
         self, room_id: str, name: str, channel_name: str
@@ -1194,7 +1194,7 @@ class RoomService:
                 session, room_id, name, channel_name
             )
             await session.commit()
-        self._room_changed(tenant_id, room_id)
+        self.room_changed(tenant_id, room_id)
 
     async def follow_channel_name(
         self, room_id: str, name: str, channel_name: str, legacy_name: str
@@ -1208,7 +1208,7 @@ class RoomService:
             )
             await session.commit()
         if followed:
-            self._room_changed(tenant_id, room_id)
+            self.room_changed(tenant_id, room_id)
         return followed
 
     async def record_channel_name(self, room_id: str, channel_name: str) -> None:
@@ -1218,7 +1218,7 @@ class RoomService:
         async with tenant_session(self._session_factory, tenant_id) as session:
             await self._room_store.record_channel_name(session, room_id, channel_name)
             await session.commit()
-        self._room_changed(tenant_id, room_id)
+        self.room_changed(tenant_id, room_id)
 
     async def set_join_event_listeners(
         self, room_id: str, settings: dict[str, bool]
@@ -1262,7 +1262,7 @@ class RoomService:
         async with tenant_session(self._session_factory, room.tenant_id) as session:
             await self._room_store.set_archived(session, room_id, archived)
             await session.commit()
-        self._room_changed(room.tenant_id, room_id)
+        self.room_changed(room.tenant_id, room_id)
 
         if not archived or self._telemetry is None:
             return

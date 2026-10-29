@@ -711,22 +711,41 @@ class ChatService:
     async def readable_and_listed(
         self, session: AsyncSession, user_id: str
     ) -> list[tuple[Room, bool]]:
-        """`readable_rooms`, each with whether it is one of `stream_rooms`, in
-        one query."""
+        """The caller's member rooms, archived ones included, each with whether
+        it is one of `stream_rooms`, in one query."""
+        return [
+            (room, is_chat and room.archived_at is None)
+            for room, is_chat in await self._member_rooms(session, user_id)
+        ]
+
+    async def archived_chats(self, session: AsyncSession, user_id: str) -> list[Room]:
+        """The caller's member rooms that would be in `stream_rooms` but for
+        being archived."""
+        return [
+            room
+            for room, is_chat in await self._member_rooms(session, user_id)
+            if is_chat and room.archived_at is not None
+        ]
+
+    async def _member_rooms(
+        self, session: AsyncSession, user_id: str
+    ) -> list[tuple[Room, bool]]:
+        """Every room the caller's member client is in, each with whether it
+        is a chat: holding an agent or started in Switch Console."""
         client = await self.member_client(session, user_id)
         if client is None:
             return []
-        listed = or_(
+        is_chat = or_(
             exists().where(room_agents.c.room_id == Room.id),
             Room.metadata_.has_key("chat_operation_id"),
         )
         result = await session.execute(
-            select(Room, listed)
+            select(Room, is_chat)
             .join(ClientRoom, ClientRoom.room_id == Room.id)
-            .where(ClientRoom.client_id == client.id, Room.archived_at.is_(None))
+            .where(ClientRoom.client_id == client.id)
             .order_by(Room.created_at)
         )
-        return [(room, bool(is_listed)) for room, is_listed in result.all()]
+        return [(room, bool(chat)) for room, chat in result.all()]
 
     async def moved_rooms(
         self, session: AsyncSession, cursors: dict[str, int]
@@ -1127,6 +1146,14 @@ class ChatService:
             await self._require_manager(session, tenant_id, user, room)
             member_ids = [member.id for member, _ in await self.members(session, room)]
         await self._room_service.set_room_archived(room.id, True)
+        self._memberships_changed(tenant_id, member_ids, [room.id])
+
+    async def unarchive(self, tenant_id: str, user: User, room_id: str) -> None:
+        async with tenant_session(self.session_factory, tenant_id) as session:
+            room, _ = await self.require_member(session, tenant_id, user, room_id)
+            await self._require_manager(session, tenant_id, user, room)
+            member_ids = [member.id for member, _ in await self.members(session, room)]
+        await self._room_service.set_room_archived(room.id, False)
         self._memberships_changed(tenant_id, member_ids, [room.id])
 
     async def _start_reading(
@@ -1647,6 +1674,14 @@ class ChatService:
                 self._require_same(operation, "send", payload_hash)
                 return room, await self._posted(session, room, operation)
 
+            unarchive = room.archived_at is not None
+            if unarchive and not await self.can_manage(session, tenant_id, user, room):
+                raise ChatError(
+                    403,
+                    "NOT_A_MANAGER",
+                    "This chat is archived. Only its owner or a workspace admin "
+                    "can bring it back by writing in it.",
+                )
             if not body.strip() and not upload_ids:
                 raise ChatError(422, "EMPTY_MESSAGE", "There is nothing to send.")
             uploads = [
@@ -1746,7 +1781,11 @@ class ChatService:
                 )
                 .values(result={"messageIds": [m.transport_event_id for m in posted]})
             )
+            if unarchive:
+                await self._room_store.set_archived(session, room.id, False)
             await session.commit()
+        if unarchive:
+            self._room_service.room_changed(tenant_id, room.id)
         for each in routed:
             each.committed()
         for content in contents:

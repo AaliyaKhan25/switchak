@@ -68,7 +68,8 @@ function message(roomId: string, seq: number): ChatMessage {
 function setup(
   list: () => Promise<ChatSummary[]>,
   timeline: Partial<TimelineApi> = {},
-  identity: ChatsApi['identity'] = async () => ({ userId: 'u', tenantId: 't' })
+  identity: ChatsApi['identity'] = async () => ({ userId: 'u', tenantId: 't' }),
+  listArchived: () => Promise<ChatSummary[]> = async () => []
 ) {
   let onMessage: Parameters<ChatsEvents['onMessage']>[0] = () => {};
   let onState: Parameters<ChatsEvents['onState']>[0] = () => {};
@@ -89,9 +90,11 @@ function setup(
     connect: vi.fn(async () => ({ state: 'live' as const, detail: null })),
     disconnect: vi.fn(async () => {}),
     list: vi.fn(list),
+    listArchived: vi.fn(listArchived),
     identity,
     timeline: () => timeline as TimelineApi,
     archive: vi.fn(async () => {}),
+    unarchive: vi.fn(async () => {}),
     delete: vi.fn(async () => {}),
     markRead: vi.fn(async () => {}),
     removeMember: vi.fn(async () => {}),
@@ -169,17 +172,68 @@ describe('ChatsStore', () => {
     expect(api.list).toHaveBeenCalledTimes(2);
   });
 
-  it.each(['archive', 'delete'] as const)(
-    'drops a chat once the server agrees to %s it',
-    async (op) => {
-      const { store, api } = setup(async () => [summary('r1', 1), summary('r2', 1)]);
-      await store.connect('s1');
-      await store[op]('s1', 'r2');
-      expect(api[op]).toHaveBeenCalledWith('s1', 'r2');
-      expect(store.chat('r2')).toBeUndefined();
-      expect(store.chat('r1')).toBeDefined();
-    }
-  );
+  it('drops a chat once the server agrees to delete it', async () => {
+    const { store, api } = setup(async () => [summary('r1', 1), summary('r2', 1)]);
+    await store.connect('s1');
+    await store.delete('s1', 'r2');
+    expect(api.delete).toHaveBeenCalledWith('s1', 'r2');
+    expect(store.chat('r2')).toBeUndefined();
+    expect(store.chat('r1')).toBeDefined();
+  });
+
+  it('moves an archived chat off the list into the archive, still openable', async () => {
+    const { store, api } = setup(async () => [summary('r1', 1), summary('r2', 1)]);
+    await store.connect('s1');
+    await store.archive('s1', 'r2');
+    expect(api.archive).toHaveBeenCalledWith('s1', 'r2');
+    expect(store.chats.has('r2')).toBe(false);
+    expect(store.archivedOfAgent('a1').map((chat) => chat.roomId)).toEqual(['r2']);
+    expect(store.chat('r2')).toBeDefined();
+    expect(store.removed.has('r2')).toBe(false);
+  });
+
+  it('lists the archived chats the server holds, and brings one back when it is listed again', async () => {
+    const { store } = setup(
+      async () => [summary('r1', 1)],
+      {},
+      undefined,
+      async () => [summary('r2', 1)]
+    );
+    await store.connect('s1');
+    expect([...store.archived.keys()]).toEqual(['r2']);
+
+    store.upsert(summary('r2', 2));
+    expect(store.archived.size).toBe(0);
+    expect(store.chats.has('r2')).toBe(true);
+  });
+
+  it('unarchives a chat back onto the list', async () => {
+    const { store, api } = setup(
+      async () => [],
+      {},
+      undefined,
+      async () => [summary('r2', 1)]
+    );
+    await store.connect('s1');
+    await store.unarchive('s1', 'r2');
+    expect(api.unarchive).toHaveBeenCalledWith('s1', 'r2');
+    expect(store.chats.has('r2')).toBe(true);
+    expect(store.archived.size).toBe(0);
+  });
+
+  it('says so when the archive cannot be listed, keeping the chats', async () => {
+    const { store } = setup(
+      async () => [summary('r1', 1)],
+      {},
+      undefined,
+      async () => {
+        throw new Error('boom');
+      }
+    );
+    await store.connect('s1');
+    expect(store.chats.has('r1')).toBe(true);
+    expect(store.archivedError).not.toBeNull();
+  });
 
   it.each(['archive', 'delete'] as const)('keeps a chat the server refuses to %s', async (op) => {
     const { store, api } = setup(async () => [summary('r1', 1)]);
@@ -408,9 +462,11 @@ async function viewer() {
       connect: async () => ({ state: 'live', detail: null }),
       disconnect: async () => {},
       list: async () => [group],
+      listArchived: async () => [],
       identity: async () => ({ userId: 'u', tenantId: 't' }),
       timeline: () => ({}) as TimelineApi,
       archive: async () => {},
+      unarchive: async () => {},
       delete: async () => {},
       markRead,
       removeMember,

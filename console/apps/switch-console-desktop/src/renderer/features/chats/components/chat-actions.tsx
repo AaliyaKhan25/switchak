@@ -1,4 +1,4 @@
-import { Archive, LogOut, Pencil, Trash2 } from 'lucide-react';
+import { Archive, ArchiveRestore, LogOut, Pencil, Trash2 } from 'lucide-react';
 import { Fragment, type ReactNode } from 'react';
 import { failureText } from '@renderer/lib/errors/describe-failure';
 import { toast } from '@renderer/lib/hooks/use-toast';
@@ -86,16 +86,27 @@ export function chatActions(serverId: string, chat: ChatSummary): ChatAction[] {
       icon: <Pencil className="size-4" />,
       run: () => showModal('renameChatModal', { serverId, roomId, currentName: chat.name }),
     },
-    {
-      key: 'archive',
-      label: 'Archive',
-      icon: <Archive className="size-4" />,
-      run: () =>
-        void attempt(async () => {
-          await chatsStore.archive(serverId, roomId);
-          leaveIfOpen(roomId);
-        }, 'Could not archive the chat.'),
-    },
+    chatsStore.archived.has(roomId)
+      ? {
+          key: 'unarchive',
+          label: 'Unarchive',
+          icon: <ArchiveRestore className="size-4" />,
+          run: () =>
+            void attempt(
+              () => chatsStore.unarchive(serverId, roomId),
+              'Could not unarchive the chat.'
+            ),
+        }
+      : {
+          key: 'archive',
+          label: 'Archive',
+          icon: <Archive className="size-4" />,
+          run: () =>
+            void attempt(async () => {
+              await chatsStore.archive(serverId, roomId);
+              leaveIfOpen(roomId);
+            }, 'Could not archive the chat.'),
+        },
     {
       key: 'delete',
       label: 'Delete chat…',

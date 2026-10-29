@@ -19,6 +19,7 @@ export const chatsStore = new ChatsStore(
     },
     disconnect: (serverId) => rpc.chats.disconnect(serverId),
     list: (serverId) => rpc.chats.list(serverId),
+    listArchived: (serverId) => rpc.chats.listArchived(serverId),
     identity: (serverId) => rpc.chats.identity(serverId),
     timeline: (serverId) => ({
       messages: (roomId, beforeSeq, limit) =>
@@ -30,6 +31,7 @@ export const chatsStore = new ChatsStore(
       newId: () => crypto.randomUUID(),
     }),
     archive: (serverId, roomId) => rpc.chats.archive(serverId, roomId),
+    unarchive: (serverId, roomId) => rpc.chats.unarchive(serverId, roomId),
     delete: (serverId, roomId) => rpc.chats.delete(serverId, roomId),
     removeMember: (serverId, roomId, userId) =>
       rpc.chats.removeMember({ serverId, roomId, userId }),

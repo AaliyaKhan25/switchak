@@ -733,6 +733,99 @@ async def test_only_a_manager_archives_a_chat(chats: _Harness) -> None:
     assert listed.json()["chats"] == []
 
 
+async def _archived(chats: _Harness, user: User) -> dict[str, dict[str, Any]]:
+    response = await chats.client.get("/chats/archived", headers=chats.as_user(user))
+    assert response.status_code == 200, response.text
+    return {chat["roomId"]: chat for chat in response.json()["chats"]}
+
+
+async def _archive(chats: _Harness, user: User, room_id: str) -> None:
+    response = await chats.client.post(
+        f"/chats/{room_id}/archive", headers=chats.as_user(user)
+    )
+    assert response.status_code == 204, response.text
+
+
+async def test_archived_chats_are_listed_only_to_their_members(
+    chats: _Harness,
+) -> None:
+    agent = await chats.agent("helper", owner=chats.alice)
+    shared = await chats.new_chat(chats.alice, agent, "c1")
+    assert (await chats.invite(chats.alice, shared, chats.bob)).status_code == 200
+    assert (await chats.send(chats.alice, shared, "s1", "kept")).status_code == 200
+    bobs_agent = await chats.agent("bobs", owner=chats.bob)
+    private = await chats.new_chat(chats.bob, bobs_agent, "c2")
+    others = await _room(chats, [agent], owner=chats.alice, archived=True)
+    await _archive(chats, chats.alice, shared)
+    await _archive(chats, chats.bob, private)
+
+    assert shared not in await _listed(chats, chats.alice)
+    assert set(await _archived(chats, chats.alice)) == {shared}
+    assert set(await _archived(chats, chats.bob)) == {shared, private}
+    assert others not in await _archived(chats, chats.admin)
+    assert await _archived(chats, chats.carol) == {}
+
+    page = await chats.client.get(
+        f"/chats/{shared}/messages", headers=chats.as_user(chats.bob)
+    )
+    assert page.status_code == 200
+    assert [m["body"] for m in page.json()["messages"]][-1] == "kept"
+    assert await _reads(chats, chats.alice, private) == 403
+
+
+async def test_only_a_manager_unarchives_a_chat(chats: _Harness) -> None:
+    agent = await chats.agent("helper", owner=chats.alice)
+    room_id = await chats.new_chat(chats.alice, agent, "c1")
+    assert (await chats.invite(chats.alice, room_id, chats.bob)).status_code == 200
+    await _archive(chats, chats.alice, room_id)
+
+    refused = await chats.client.post(
+        f"/chats/{room_id}/unarchive", headers=chats.as_user(chats.bob)
+    )
+    assert refused.status_code == 403
+    assert _code(refused) == "NOT_A_MANAGER"
+
+    restored = await chats.client.post(
+        f"/chats/{room_id}/unarchive", headers=chats.as_user(chats.alice)
+    )
+    assert restored.status_code == 204
+    assert room_id in await _listed(chats, chats.bob)
+    assert await _archived(chats, chats.bob) == {}
+
+
+async def test_a_managers_message_unarchives_the_chat_once(chats: _Harness) -> None:
+    agent = await chats.agent("helper", owner=chats.alice)
+    room_id = await chats.new_chat(chats.alice, agent, "c1")
+    await _archive(chats, chats.alice, room_id)
+
+    sent = await chats.send(chats.alice, room_id, "s1", "back again")
+    assert sent.status_code == 200, sent.text
+    retried = await chats.send(chats.alice, room_id, "s1", "back again")
+    assert retried.status_code == 200
+    assert retried.json() == sent.json()
+
+    assert room_id in await _listed(chats, chats.alice)
+    assert await _archived(chats, chats.alice) == {}
+    assert [m.content["body"] for m in await chats.message_rows(room_id)] == [
+        "back again"
+    ]
+
+
+async def test_a_member_who_cannot_unarchive_cannot_send_to_an_archived_chat(
+    chats: _Harness,
+) -> None:
+    agent = await chats.agent("helper", owner=chats.alice)
+    room_id = await chats.new_chat(chats.alice, agent, "c1")
+    assert (await chats.invite(chats.alice, room_id, chats.bob)).status_code == 200
+    await _archive(chats, chats.alice, room_id)
+
+    refused = await chats.send(chats.bob, room_id, "s1", "hello?")
+    assert refused.status_code == 403
+    assert _code(refused) == "NOT_A_MANAGER"
+    assert await chats.message_rows(room_id) == []
+    assert room_id in await _archived(chats, chats.bob)
+
+
 # ── Live updates ─────────────────────────────────────────────────────────────
 
 
@@ -1017,7 +1110,9 @@ async def test_an_owner_only_member_loses_access_with_the_last_agent(
     await events.stream.aclose()  # type: ignore[attr-defined]
 
 
-async def test_archiving_a_chat_removes_it_for_access(chats: _Harness) -> None:
+async def test_archiving_a_chat_unlists_it_until_a_message_restores_it(
+    chats: _Harness,
+) -> None:
     agent = await chats.agent("helper", owner=chats.alice)
     room_id = await chats.new_chat(chats.alice, agent, "c1")
     assert (await chats.invite(chats.alice, room_id, chats.bob)).status_code == 200
@@ -1032,8 +1127,12 @@ async def test_archiving_a_chat_removes_it_for_access(chats: _Harness) -> None:
     assert archived.status_code == 204
     assert await events.next() == (
         "chat.removed",
-        {"roomId": room_id, "reason": "access"},
+        {"roomId": room_id, "reason": "unlisted"},
     )
+
+    assert (await chats.send(chats.alice, room_id, "s1", "back")).status_code == 200
+    seen = {(await events.next())[0], (await events.next())[0]}
+    assert seen == {"chat", "message"}
     await events.stream.aclose()  # type: ignore[attr-defined]
 
 

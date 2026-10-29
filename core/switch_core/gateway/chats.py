@@ -298,6 +298,20 @@ async def list_chats(user: CurrentUser, service: Service) -> ChatList:
         )
 
 
+@router.get("/archived", response_model=ChatList)
+async def list_archived_chats(user: CurrentUser, service: Service) -> ChatList:
+    """The caller's archived chats: those `GET /chats` would list were they
+    not archived, hidden ones included."""
+    tenant_id = require_tenant_id()
+    async with tenant_session(service.session_factory, tenant_id) as session:
+        if not await service.has_tenant_role(session, tenant_id, user.id):
+            return ChatList(chats=[])
+        rooms = await service.archived_chats(session, user.id)
+        return ChatList(
+            chats=await _summaries(service, session, tenant_id, user, rooms)
+        )
+
+
 @router.post("", response_model=ChatEnvelope)
 async def create_chat(
     req: CreateChatRequest, user: CurrentUser, service: Service
@@ -640,6 +654,12 @@ async def archive_chat(room_id: str, user: CurrentUser, service: Service) -> Res
     return Response(status_code=204)
 
 
+@router.post("/{room_id}/unarchive", status_code=204)
+async def unarchive_chat(room_id: str, user: CurrentUser, service: Service) -> Response:
+    await service.unarchive(require_tenant_id(), user, room_id)
+    return Response(status_code=204)
+
+
 # ── Live updates ─────────────────────────────────────────────────────────────
 
 
@@ -665,8 +685,8 @@ def _frame(event: str, data: object) -> bytes:
 
 def _removed(room_id: str, reason: RemovalReason) -> bytes:
     """`chat.removed`: "access" when the caller lost the room (membership,
-    tenant role, archive), "unlisted" when they are still a member but it no
-    longer qualifies for the list."""
+    tenant role), "unlisted" when they are still a member but it no longer
+    qualifies for the list (no agents left, archived)."""
     return _frame("chat.removed", {"roomId": room_id, "reason": reason})
 
 

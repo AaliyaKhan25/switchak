@@ -2,7 +2,9 @@ import { ChevronDown, DoorOpen, MessagesSquare, Plus } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
 import { useEffect, useState } from 'react';
 import type { GuardResult, ViewDefinition } from '@renderer/app/view-registry';
+import { ArchivedFold } from '@renderer/features/chats/components/archived-fold';
 import { UnreadBadge } from '@renderer/features/chats/components/unread-badge';
+import { chatsStore } from '@renderer/features/chats/stores/chats';
 import { agentsStore } from '@renderer/features/locations/stores/agents-store';
 import { refreshSidebarRoomState } from '@renderer/features/sidebar/sidebar-tree-data';
 import { openRoom } from '@renderer/features/switch-rooms/open-room';
@@ -10,6 +12,8 @@ import { roomTitle } from '@renderer/features/switch-rooms/room-labels';
 import { workspacesStore } from '@renderer/features/workspaces/workspaces-store';
 import { AgentAvatar } from '@renderer/lib/components/agent-avatar';
 import { BridgeIcon, hasBridgeIcon } from '@renderer/lib/components/bridge-icon';
+import { failureText } from '@renderer/lib/errors/describe-failure';
+import { toast } from '@renderer/lib/hooks/use-toast';
 import { useParams } from '@renderer/lib/layout/navigation-provider';
 import { useShowModal } from '@renderer/lib/modal/modal-provider';
 import { useWorkspaceAgents } from '@renderer/lib/stores/use-workspace-agents';
@@ -19,7 +23,7 @@ import { ToggleGroup, ToggleGroupItem } from '@renderer/lib/ui/toggle-group';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@renderer/lib/ui/tooltip';
 import { cn } from '@renderer/utils/utils';
 import type { RemoteRoomSummary } from '@shared/core/switch-servers/switch-servers';
-import { allReadableRooms } from './room-filters';
+import { allReadableRooms, isConsoleGroupChatSummary } from './room-filters';
 import { groupByMessagingApp, type RoomGroup } from './rooms-by-messaging-app';
 import { ServerPage, ServerTableEmpty } from './server-page';
 import { ServerSectionTitlebar } from './server-section-titlebar';
@@ -58,6 +62,13 @@ const ServerRoomsPanel = observer(function ServerRoomsPanel() {
   const query = filter.trim().toLowerCase();
   const matching = query === '' ? rooms : rooms.filter((r) => r.name.toLowerCase().includes(query));
   const groups = groupByMessagingApp(matching);
+  const archived =
+    chatsStore.serverId === serverId
+      ? [...chatsStore.archived.values()]
+          .filter(isConsoleGroupChatSummary)
+          .filter((chat) => query === '' || chat.name.toLowerCase().includes(query))
+          .sort((a, b) => a.name.localeCompare(b.name))
+      : [];
 
   return (
     <ServerPage
@@ -140,6 +151,40 @@ const ServerRoomsPanel = observer(function ServerRoomsPanel() {
               />
             ))
           )}
+          <ArchivedFold
+            count={archived.length}
+            error={chatsStore.serverId === serverId ? chatsStore.archivedError : null}
+          >
+            <div className="divide-y divide-border overflow-hidden rounded-[10px] border border-border">
+              {archived.map((chat) => (
+                <div key={chat.roomId} className="flex items-center gap-3 bg-background px-4 py-3">
+                  <button
+                    type="button"
+                    onClick={() => void openRoom(chat.roomId)}
+                    className="min-w-0 flex-1 cursor-pointer truncate text-left text-sm font-medium text-foreground hover:underline"
+                  >
+                    {chat.name}
+                  </button>
+                  {chat.canManage && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() =>
+                        void chatsStore.unarchive(serverId, chat.roomId).catch((error: unknown) =>
+                          toast({
+                            title: failureText(error, 'Could not unarchive the room.'),
+                            variant: 'destructive',
+                          })
+                        )
+                      }
+                    >
+                      Unarchive
+                    </Button>
+                  )}
+                </div>
+              ))}
+            </div>
+          </ArchivedFold>
         </div>
       )}
     </ServerPage>

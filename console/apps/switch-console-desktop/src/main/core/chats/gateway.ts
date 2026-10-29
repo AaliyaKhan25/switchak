@@ -113,6 +113,10 @@ export async function listChats(server: SwitchServer): Promise<ChatSummary[]> {
   return parseChatRows((await json(server, '/chats', chatListSchema)).chats);
 }
 
+export async function listArchivedChats(server: SwitchServer): Promise<ChatSummary[]> {
+  return parseChatRows((await json(server, '/chats/archived', chatListSchema)).chats);
+}
+
 /**
  * One agent goes as `agentId`, which every server with chats accepts; only a
  * chat with several needs `agentIds`. Zero agents allowed; memberUserIds optional.
@@ -368,6 +372,10 @@ export async function fetchChatMedia(
 
 export async function archiveChat(server: SwitchServer, roomId: string): Promise<void> {
   await call(server, `${room(roomId)}/archive`, { method: 'POST' });
+}
+
+export async function unarchiveChat(server: SwitchServer, roomId: string): Promise<void> {
+  await call(server, `${room(roomId)}/unarchive`, { method: 'POST' });
 }
 
 /** Rename uses the room route: a chat's name is its room's name. */
