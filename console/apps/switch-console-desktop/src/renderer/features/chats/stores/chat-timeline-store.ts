@@ -402,8 +402,14 @@ export class ChatTimeline {
  * them.
  */
 export class ChatTimelines {
-  /** Observable, so what reads a room's messages through {@link peek} follows a timeline opened later. */
-  private readonly timelines = observable.map<string, ChatTimeline>({}, { deep: false });
+  private readonly timelines = new Map<string, ChatTimeline>();
+  /**
+   * The keys opened, observable, so what reads a room's messages through
+   * {@link peek} follows a timeline opened later. Told after the call that opened
+   * it, which is a view rendering: changing what other views observe while one
+   * renders is what React refuses.
+   */
+  private readonly opened = observable.set<string>();
 
   constructor(private readonly api: (serverId: string) => TimelineApi) {}
 
@@ -411,15 +417,17 @@ export class ChatTimelines {
     const key = `${serverId}\u0000${roomId}`;
     let timeline = this.timelines.get(key);
     if (!timeline) {
-      const created = new ChatTimeline(roomId, this.api(serverId));
-      runInAction(() => this.timelines.set(key, created));
-      timeline = created;
+      timeline = new ChatTimeline(roomId, this.api(serverId));
+      this.timelines.set(key, timeline);
+      queueMicrotask(() => runInAction(() => this.opened.add(key)));
     }
     return timeline;
   }
 
   peek(serverId: string, roomId: string): ChatTimeline | undefined {
-    return this.timelines.get(`${serverId}\u0000${roomId}`);
+    const key = `${serverId}\u0000${roomId}`;
+    this.opened.has(key);
+    return this.timelines.get(key);
   }
 
   /** Load again each of the server's timelines that loaded, is loading or failed to, catching up to the live feed. */
@@ -436,5 +444,9 @@ export class ChatTimelines {
   dropServer(serverId: string): void {
     for (const key of [...this.timelines.keys()])
       if (key.startsWith(`${serverId}\u0000`)) this.timelines.delete(key);
+    runInAction(() => {
+      for (const key of [...this.opened])
+        if (key.startsWith(`${serverId}\u0000`)) this.opened.delete(key);
+    });
   }
 }
