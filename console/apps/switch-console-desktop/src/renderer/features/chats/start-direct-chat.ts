@@ -5,6 +5,7 @@ import { focusComposerWhenOpened } from './components/chat-composer';
 import { chatsStore, chatTitler } from './stores/chats';
 import { DirectChatStarter } from './stores/direct-chat-starter';
 import { EmptyChatFinder } from './stores/empty-chat-finder';
+import { reuseFlash } from './stores/reuse-flash';
 
 const emptyChatFinder = new EmptyChatFinder({
   chatsOfAgent: (agentId) => chatsStore.chatsOfAgent(agentId),
@@ -25,6 +26,7 @@ export const directChats = new DirectChatStarter({
   },
   opened: (chat) => {
     focusComposerWhenOpened(chat.roomId);
+    reuseFlash.flash(chat.roomId);
   },
   warm: (serverId, agentId, roomId) =>
     void rpc.chats
