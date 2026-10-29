@@ -160,19 +160,19 @@ export const AgentChats = observer(function AgentChats({ agent }: { agent: Manag
   const { sections, section } = useAgentSection(serverId, agent, params.section);
   const thisComputer = useRunsOnThisComputer(agent);
   const shownRoom = openAgentRoom(agent, params.room, section);
-  const roomId = shownRoom ? null : (openAgentChat(agent, params.roomId)?.roomId ?? null);
+  const roomId = shownRoom
+    ? null
+    : params.roomId && directChats.unsavedChat(params.roomId)
+      ? params.roomId
+      : (openAgentChat(agent, params.roomId)?.roomId ?? null);
   const open = (id: string) => setParams({ roomId: id, section: undefined, room: undefined });
   // The chat open here that becomes a group follows into its room, rather than another chat taking its place.
   useOpenGroupAsRoom(shownRoom || section ? null : (params.roomId ?? null), 'managedAgent');
-  const newChat = async () => {
-    const chat = await directChats.start(serverId, agentId);
-    if (chat) open(chat.roomId);
-  };
+  const newChat = () => open(directChats.start(serverId, agentId));
 
   const ownServer = chatsStore.serverId === serverId;
   const listing = ownServer && chatsStore.userId === null && !chatsStore.listError;
   const autoStartTried = useRef(false);
-  const [autoStarting, setAutoStarting] = useState(false);
   const autoStart = shouldAutoStartChat({
     listed: ownServer && chatsStore.userId !== null,
     listFailed: chatsStore.listError !== null,
@@ -183,8 +183,7 @@ export const AgentChats = observer(function AgentChats({ agent }: { agent: Manag
   useEffect(() => {
     if (!autoStart) return;
     autoStartTried.current = true;
-    setAutoStarting(true);
-    void newChat().finally(() => setAutoStarting(false));
+    newChat();
     // oxlint-disable-next-line react-hooks/exhaustive-deps -- runs when the decision turns true, not when newChat is redefined
   }, [autoStart]);
 
@@ -200,12 +199,7 @@ export const AgentChats = observer(function AgentChats({ agent }: { agent: Manag
           selected={section}
           onSelect={(chosen) => setParams({ section: chosen })}
         />
-        <Section
-          title="Direct chats"
-          addLabel="New chat"
-          onAdd={() => void newChat()}
-          addChoices={null}
-        >
+        <Section title="Direct chats" addLabel="New chat" onAdd={newChat} addChoices={null}>
           {ownServer && chatsStore.listError && (
             <div
               role="alert"
@@ -288,11 +282,11 @@ export const AgentChats = observer(function AgentChats({ agent }: { agent: Manag
               className="pointer-events-none absolute inset-x-0 top-0 z-10 h-6 bg-linear-to-b from-background to-transparent"
             />
           </>
-        ) : listing || autoStart || autoStarting ? null : (
+        ) : listing || autoStart ? null : (
           <EmptyState
             label="No chat open"
             description="Start a chat with this agent."
-            action={<Button onClick={() => void newChat()}>Start a chat</Button>}
+            action={<Button onClick={newChat}>Start a chat</Button>}
           />
         )}
       </div>

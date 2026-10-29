@@ -1,6 +1,16 @@
-import { observable, runInAction } from 'mobx';
 import type { ChatSummary } from '@shared/core/chats/chats';
-import { chatFailure } from './chat-errors';
+
+/** Prefix of the id a direct chat goes by on screen until its room exists. */
+export const UNSAVED_CHAT_PREFIX = 'unsaved-chat:';
+
+export type UnsavedChat = {
+  serverId: string;
+  agentId: string;
+  /** The id it goes by on screen until its room exists. */
+  roomId: string;
+  /** One per unsaved chat: every attempt to make its room is the same request, so the server makes one room. */
+  requestId: string;
+};
 
 export type DirectChatStarterDeps = {
   create: (input: {
@@ -10,71 +20,72 @@ export type DirectChatStarterDeps = {
     requestId: string;
     greeting: null;
   }) => Promise<ChatSummary>;
-  created: (serverId: string, chat: ChatSummary) => void;
-  opened: (chat: ChatSummary) => void;
-  /** Ask for the agent's session in a reused chat; creating one asks already. */
-  warm: (serverId: string, agentId: string, roomId: string) => void;
-  failed: (message: string) => void;
-  findEmpty: (agentId: string) => ChatSummary | null;
+  /** The unsaved chat is being opened, new or again; `create` makes its room, on its first send. */
+  opened: (chat: UnsavedChat, create: () => Promise<string>) => void;
+  /** Its room exists: the chat moves from its unsaved id to the room's. */
+  created: (unsaved: UnsavedChat, chat: ChatSummary) => void;
   newId: () => string;
 };
 
 /**
- * Starts an unnamed direct chat with one agent. Reuses an existing empty chat
- * (one where the user has sent no messages) if one exists, asking again for
- * its agent's session, which may have stopped since. A second start for
- * the same agent while one is in flight is ignored. After a failure that may
- * have landed, the next start reuses its request id, so it resumes that chat
- * rather than making another.
+ * Starts an unnamed direct chat with one agent. Nothing is asked of the server
+ * until the first message: the chat opens at once under an unsaved id, and its
+ * room is made as that message is sent. Starting again for the same agent
+ * before then opens the same unsaved chat, with whatever was typed in it.
  */
 export class DirectChatStarter {
-  private readonly inFlight = observable.set<string>();
-  private readonly retryIds = new Map<string, string>();
+  private readonly unsaved = new Map<string, UnsavedChat>();
+  private readonly byRoomId = new Map<string, UnsavedChat>();
+  private readonly creating = new Map<string, Promise<string>>();
 
   constructor(private readonly deps: DirectChatStarterDeps) {}
 
-  /** A new chat is being made: until it opens, a message typed now has no right room to go to. */
-  get starting(): boolean {
-    return this.inFlight.size > 0;
+  /** The id of the chat to open: the agent's unsaved one, made now if it has none. */
+  start(serverId: string, agentId: string): string {
+    const key = `${serverId}:${agentId}`;
+    let chat = this.unsaved.get(key);
+    if (!chat) {
+      const requestId = this.deps.newId();
+      chat = { serverId, agentId, roomId: `${UNSAVED_CHAT_PREFIX}${requestId}`, requestId };
+      this.unsaved.set(key, chat);
+      this.byRoomId.set(chat.roomId, chat);
+    }
+    const opened = chat;
+    this.deps.opened(opened, () => this.create(opened));
+    return chat.roomId;
   }
 
-  async start(serverId: string, agentId: string): Promise<ChatSummary | null> {
-    const existing = this.deps.findEmpty(agentId);
-    if (existing) {
-      this.deps.opened(existing);
-      this.deps.warm(serverId, agentId, existing.roomId);
-      return existing;
-    }
+  /** The unsaved chat shown under `roomId`, while its room does not exist yet. */
+  unsavedChat(roomId: string): UnsavedChat | undefined {
+    return this.byRoomId.get(roomId);
+  }
 
-    const key = `${serverId}:${agentId}`;
-    if (this.inFlight.has(key)) return null;
-    runInAction(() => this.inFlight.add(key));
-    const requestId = this.retryIds.get(key) ?? this.deps.newId();
-    try {
-      const chat = await this.deps.create({
-        serverId,
-        agentIds: [agentId],
-        name: null,
-        requestId,
-        greeting: null,
-      });
-      this.retryIds.delete(key);
-      this.deps.created(serverId, chat);
-      return chat;
-    } catch (caught) {
-      const failure = chatFailure(caught);
-      if (failure.kind === 'other' && failure.uncertain) {
-        this.retryIds.set(key, requestId);
-        this.deps.failed(
-          `${failure.message} Try again: it resumes the same chat rather than making another.`
+  /** Make the chat's room, once however often asked; a failure lets the next ask try again under the same request id. */
+  private create(chat: UnsavedChat): Promise<string> {
+    let creating = this.creating.get(chat.roomId);
+    if (!creating) {
+      creating = this.deps
+        .create({
+          serverId: chat.serverId,
+          agentIds: [chat.agentId],
+          name: null,
+          requestId: chat.requestId,
+          greeting: null,
+        })
+        .then(
+          (created) => {
+            this.unsaved.delete(`${chat.serverId}:${chat.agentId}`);
+            this.byRoomId.delete(chat.roomId);
+            this.deps.created(chat, created);
+            return created.roomId;
+          },
+          (error: unknown) => {
+            this.creating.delete(chat.roomId);
+            throw error;
+          }
         );
-      } else {
-        this.retryIds.delete(key);
-        this.deps.failed(failure.message);
-      }
-      return null;
-    } finally {
-      runInAction(() => this.inFlight.delete(key));
+      this.creating.set(chat.roomId, creating);
     }
+    return creating;
   }
 }

@@ -20,7 +20,11 @@ vi.mock('@renderer/features/workspaces/workspaces-store', () => ({
 }));
 
 import { ChatComposer } from '@renderer/features/chats/components/chat-composer';
-import { chatDraftKey, readChatDraft } from '@renderer/features/chats/stores/chat-drafts';
+import {
+  chatDraftKey,
+  moveChatDraft,
+  readChatDraft,
+} from '@renderer/features/chats/stores/chat-drafts';
 import {
   ChatTimeline,
   type TimelineApi,
@@ -177,6 +181,30 @@ describe('chat drafts', () => {
     textarea = await mount(new ChatTimeline('room-1', api(vi.fn())));
     expect(textarea.value).toBe('do not lose me');
   });
+  it('move with an unsaved chat to its room, a send in flight showing as sent rather than as text again', async () => {
+    let finish: () => void = () => {};
+    const send = vi.fn(() => new Promise<[]>((resolve) => (finish = () => resolve([]))));
+    const timeline = new ChatTimeline('unsaved-chat:1', api(send));
+    let textarea = await mount(timeline);
+    await type(textarea, 'first message');
+    await pressEnter(textarea);
+    expect(textarea.value).toBe('');
+
+    // Its room is made while the send is in flight: the chat reopens under the room's id.
+    moveChatDraft(key('user-a', 'ws-1', 'unsaved-chat:1'), key('user-a', 'ws-1', 'r1'));
+    timeline.roomId = 'r1';
+    await unmount();
+    textarea = await mount(timeline);
+    expect(textarea.value).toBe('');
+    expect(readChatDraft(key('user-a', 'ws-1', 'r1'))?.pendingRequestId).toBe(
+      timeline.pending[0]?.requestId
+    );
+    expect(readChatDraft(key('user-a', 'ws-1', 'unsaved-chat:1'))).toBeNull();
+
+    await act(async () => finish());
+    expect(readChatDraft(key('user-a', 'ws-1', 'r1'))).toBeNull();
+  });
+
   it('shows the other room’s draft, or none, in the same composer, and never carries one over', async () => {
     localStorage.setItem(
       key('user-a', 'ws-1', 'room-a'),

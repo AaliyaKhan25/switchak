@@ -78,6 +78,17 @@ export const ChatPanel = observer(function ChatPanel({
 }) {
   const timeline = chatsStore.timelines.get(serverId, roomId);
   const chat = chatsStore.chat(roomId);
+  const unsaved = directChats.unsavedChat(roomId);
+  // An unsaved chat has no summary yet; its agent is known from the agent's other chats, if any.
+  const agents =
+    chat?.agents ??
+    (unsaved
+      ? chatsStore
+          .chatsOfAgent(unsaved.agentId)
+          .flatMap((each) => each.agents)
+          .filter((agent) => agent.id === unsaved.agentId)
+          .slice(0, 1)
+      : []);
   const activities = useAgentActivities(serverId, chat);
   const people = useChatPeople(serverId, chat);
   const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
@@ -163,7 +174,7 @@ export const ChatPanel = observer(function ChatPanel({
               <ChatTimelineView
                 serverId={serverId}
                 timeline={timeline}
-                agents={chat?.agents ?? []}
+                agents={agents}
                 people={people.known}
                 activities={activities}
                 onReply={setReplyTo}
@@ -188,17 +199,18 @@ export const ChatPanel = observer(function ChatPanel({
       <ChatComposer
         serverId={serverId}
         timeline={timeline}
-        agents={chat?.agents ?? []}
+        agents={agents}
         // Everyone but the viewer can be mentioned from here.
         people={people.members.filter((person) => person.userId !== chatsStore.userId)}
         groupName={chat && chat.channelType !== 'direct' ? chat.name : null}
         activity={activities[0] ?? null}
         replyTo={replyTo}
         onClearReply={() => setReplyTo(null)}
-        disabled={composerBlocked({
-          offline: chatsStore.streamState === 'offline' && !timeline.loaded,
-          startingNewChat: directChats.starting,
-        })}
+        disabled={
+          chatsStore.streamState === 'offline' && !timeline.loaded
+            ? 'Switch cannot be reached right now.'
+            : null
+        }
       />
     </div>
   );
@@ -262,20 +274,6 @@ const ReadWhileFollowing = observer(function ReadWhileFollowing({
   }, [roomId, seq]);
   return null;
 });
-
-/**
- * Why the composer takes nothing now, or null. While a new chat is being
- * made, this one's composer waits: a quick send would land here, in the chat
- * being left, just before the new one opens.
- */
-export function composerBlocked(state: {
-  offline: boolean;
-  startingNewChat: boolean;
-}): string | null {
-  if (state.startingNewChat) return 'Starting a new chat…';
-  if (state.offline) return 'Switch cannot be reached right now.';
-  return null;
-}
 
 /**
  * Sending from here jumps to the end and resumes following, wherever the

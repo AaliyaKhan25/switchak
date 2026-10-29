@@ -116,7 +116,8 @@ export class ChatTimeline {
   threadReplyCounts = new Map<string, number>();
 
   constructor(
-    readonly roomId: string,
+    /** Changes once, from an unsaved chat's id to its room's when the room is made. */
+    public roomId: string,
     private readonly api: TimelineApi
   ) {
     makeAutoObservable<ChatTimeline, 'api'>(this, { api: false, roomId: false });
@@ -422,6 +423,44 @@ export class ChatTimelines {
       queueMicrotask(() => runInAction(() => this.opened.add(key)));
     }
     return timeline;
+  }
+
+  /**
+   * The timeline of a chat whose room does not exist yet: nothing to load, and
+   * its first upload or send makes the room through `create` before going to it.
+   */
+  unsaved(serverId: string, roomId: string, create: () => Promise<string>): ChatTimeline {
+    const api = this.api(serverId);
+    const room = (id: string) => (id === roomId ? create() : Promise.resolve(id));
+    const key = `${serverId}\u0000${roomId}`;
+    const timeline = new ChatTimeline(roomId, {
+      ...api,
+      messages: (id, beforeSeq, limit) =>
+        id === roomId
+          ? Promise.resolve({ messages: [], headSeq: 0, hasMore: false })
+          : api.messages(id, beforeSeq, limit),
+      upload: async (id, file) => api.upload(await room(id), file),
+      send: async (id, input) => api.send(await room(id), input),
+    });
+    runInAction(() => {
+      timeline.loaded = true;
+    });
+    this.timelines.set(key, timeline);
+    queueMicrotask(() => runInAction(() => this.opened.add(key)));
+    return timeline;
+  }
+
+  /** The unsaved chat's room was made: its timeline, sends in flight and all, is that room's now. */
+  rekey(serverId: string, from: string, to: string): void {
+    const timeline = this.timelines.get(`${serverId}\u0000${from}`);
+    if (!timeline) return;
+    this.timelines.delete(`${serverId}\u0000${from}`);
+    timeline.roomId = to;
+    this.timelines.set(`${serverId}\u0000${to}`, timeline);
+    runInAction(() => {
+      this.opened.delete(`${serverId}\u0000${from}`);
+      this.opened.add(`${serverId}\u0000${to}`);
+    });
   }
 
   peek(serverId: string, roomId: string): ChatTimeline | undefined {

@@ -8,11 +8,9 @@ import {
   DropdownMenuTrigger,
 } from '@renderer/lib/ui/dropdown-menu';
 import { RelativeTime } from '@renderer/lib/ui/relative-time';
-import { cn } from '@renderer/utils/utils';
 import type { ChatSummary } from '@shared/core/chats/chats';
 import { agentActivities } from '../stores/activities';
 import { chatsStore } from '../stores/chats';
-import { reuseFlash } from '../stores/reuse-flash';
 import { ChatActionItems, chatActions } from './chat-actions';
 import { UnreadBadge } from './unread-badge';
 
@@ -40,19 +38,9 @@ export const ChatRow = observer(function ChatRow({
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const busy = chatBusy(serverId, chat);
-  const reused = reuseFlash.roomId === chat.roomId;
   const actions = chatActions(serverId, chat);
   return (
-    <SidebarMenuRow
-      className={cn(
-        'group/row justify-between transition-colors duration-500',
-        // New chat reused this empty chat rather than making another: it says so.
-        reused && 'bg-[var(--sel-soft)] ring-1 ring-[var(--sel)]'
-      )}
-      data-reused={reused || undefined}
-      isActive={isActive}
-      onClick={onOpen}
-    >
+    <SidebarMenuRow className="group/row justify-between" isActive={isActive} onClick={onOpen}>
       <div className="flex h-6 min-w-0 flex-1 items-center gap-1">
         <span className="flex size-6 shrink-0 items-center justify-center">
           <MessageSquare className="size-4 text-foreground-muted" />

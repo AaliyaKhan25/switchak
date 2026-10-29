@@ -229,20 +229,23 @@ export const ChatComposer = observer(function ChatComposer({
     workspaceId: workspacesStore.idOnServerInScope(serverId),
     roomId: timeline.roomId,
   });
-  const [draft, setDraft] = useState(() => readChatDraft(draftKey)?.text ?? '');
+  // A draft whose send is still in flight here (the chat was reopened, or its room
+  // just made) is that send, not text to offer again.
+  const [initial] = useState(() => {
+    const kept = readChatDraft(draftKey);
+    const inFlight = timeline.pending.some((send) => send.requestId === kept?.pendingRequestId);
+    return { kept: inFlight ? null : kept, sending: inFlight ? kept!.pendingRequestId : null };
+  });
+  const [draft, setDraft] = useState(initial.kept?.text ?? '');
   /** The mentions picked from the list, each with who it names, kept with the draft. */
-  const [picked, setPicked] = useState<MentionToken[]>(
-    () => readChatDraft(draftKey)?.mentions ?? []
-  );
+  const [picked, setPicked] = useState<MentionToken[]>(initial.kept?.mentions ?? []);
   /** The send that emptied the composer: its text stays kept until the server has taken it. */
-  const [sending, setSending] = useState<string | null>(null);
+  const [sending, setSending] = useState<string | null>(initial.sending);
   /**
    * A send of the restored draft made before a reload, which may have landed:
    * read from storage only, and gone once that draft is sent again or edited away.
    */
-  const [resend, setResend] = useState<PendingResend | null>(() =>
-    pendingOf(readChatDraft(draftKey))
-  );
+  const [resend, setResend] = useState<PendingResend | null>(pendingOf(initial.kept));
   const sendState =
     sending === null
       ? null

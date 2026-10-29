@@ -81,3 +81,11 @@ export function writeChatDraft(key: string, draft: ChatDraft): void {
   } else if (draft.text === '') localStorage.removeItem(key);
   else localStorage.setItem(key, JSON.stringify(draft));
 }
+
+/** Move the draft kept under `from` to `to`: an unsaved chat's, to the room it became. */
+export function moveChatDraft(from: string, to: string): void {
+  const draft = readChatDraft(from);
+  if (!draft) return;
+  writeChatDraft(to, draft);
+  writeChatDraft(from, { ...draft, text: '' });
+}
