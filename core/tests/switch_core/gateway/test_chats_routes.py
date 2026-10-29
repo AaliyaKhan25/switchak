@@ -2012,6 +2012,7 @@ def _activity_stream_on(process: _Process, user: User) -> _Events:
             TENANT,
             user,
             ping_seconds=60.0,
+            recheck_seconds=3600.0,
             queue_max=64,
         )
     )
