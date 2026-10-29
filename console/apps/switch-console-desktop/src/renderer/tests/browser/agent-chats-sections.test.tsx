@@ -99,8 +99,9 @@ vi.mock('@renderer/features/chats/components/chat-panel', async (importOriginal)
 
 import '@renderer/index.css';
 import { runInAction } from 'mobx';
+import { directChats } from '@renderer/features/chats/start-direct-chat';
 import { chatsStore } from '@renderer/features/chats/stores/chats';
-import { AgentChats } from '@renderer/features/managed-agents/agent-chats';
+import { AgentChats, openAgentChat } from '@renderer/features/managed-agents/agent-chats';
 import { roomEmbedSlotStore } from '@renderer/features/switch-rooms/room-embed-slot';
 import { appState } from '@renderer/lib/stores/app-state';
 import type { ChatSummary } from '@shared/core/chats/chats';
@@ -366,6 +367,48 @@ it('follows the open direct chat into its room when it becomes a group, not an o
     runInAction(() => {
       chatsStore.chats.delete('older');
       chatsStore.chats.delete('current');
+      chatsStore.serverId = null;
+    });
+  }
+});
+
+it('opens no other chat in place of an unsaved one, so its header is not that chat’s', () => {
+  const previous = {
+    roomId: 'previous',
+    name: 'QA review',
+    channelType: 'direct',
+    bridgeType: null,
+    channelName: null,
+    agents: [
+      {
+        id: 'agent-1',
+        name: 'pm-agent',
+        displayName: null,
+        iconUrl: null,
+        provider: null,
+        alias: null,
+        ownerName: null,
+        ownedByViewer: true,
+      },
+    ],
+    canManage: true,
+    ownsAgent: true,
+    memberUserIds: [],
+    memberCount: 1,
+    unreadCount: 0,
+    lastMessage: null,
+  } satisfies ChatSummary;
+  try {
+    runInAction(() => {
+      chatsStore.serverId = 'server-1';
+    });
+    chatsStore.upsert(previous);
+    const unsaved = directChats.start('server-1', 'agent-1');
+    expect(openAgentChat(AGENT, unsaved)).toBeNull();
+    expect(openAgentChat(AGENT, undefined)?.roomId).toBe('previous');
+  } finally {
+    runInAction(() => {
+      chatsStore.chats.delete('previous');
       chatsStore.serverId = null;
     });
   }

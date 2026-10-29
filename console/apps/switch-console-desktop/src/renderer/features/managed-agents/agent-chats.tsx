@@ -133,11 +133,16 @@ function conversationsOf({ serverId, workspaceId, agentId }: ManagedAgentView) {
   };
 }
 
-/** The direct chat open on an agent's page: the one in the params, archived or not, else its newest. */
+/**
+ * The direct chat open on an agent's page: the one in the params, archived or
+ * not, else its newest; none while the open chat is unsaved, so nothing of
+ * another chat stands in for it.
+ */
 export function openAgentChat(
   agent: ManagedAgentView,
   roomId: string | undefined
 ): ChatSummary | null {
+  if (roomId && directChats.unsavedChat(roomId)) return null;
   const { direct, archived } = conversationsOf(agent);
   return [...direct, ...archived].find((chat) => chat.roomId === roomId) ?? direct[0] ?? null;
 }

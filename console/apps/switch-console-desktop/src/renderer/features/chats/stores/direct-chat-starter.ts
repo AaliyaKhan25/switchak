@@ -3,6 +3,9 @@ import type { ChatSummary } from '@shared/core/chats/chats';
 /** Prefix of the id a direct chat goes by on screen until its room exists. */
 export const UNSAVED_CHAT_PREFIX = 'unsaved-chat:';
 
+/** What an unsaved chat is called: the name the server gives a chat made without one. */
+export const UNSAVED_CHAT_NAME = 'New Chat';
+
 export type UnsavedChat = {
   serverId: string;
   agentId: string;

@@ -12,7 +12,7 @@ import { useOpenGroupAsRoom } from './console-chat-redirect';
 import { directChats } from './start-direct-chat';
 import { agentChatsFlag } from './stores/agent-chats-flag';
 import { chatsStore } from './stores/chats';
-import { UNSAVED_CHAT_PREFIX } from './stores/direct-chat-starter';
+import { UNSAVED_CHAT_NAME, UNSAVED_CHAT_PREFIX } from './stores/direct-chat-starter';
 
 type ChatParams = { serverId: string; roomId: string; agentId: string | null };
 
@@ -29,7 +29,9 @@ const ChatTitlebar = observer(function ChatTitlebar() {
           {chat ? (
             <ChatHeaderTitle serverId={params.serverId} chat={chat} />
           ) : (
-            <span className="text-sm text-foreground-muted">Chat</span>
+            <span className="text-sm text-foreground-muted">
+              {directChats.unsavedChat(params.roomId) ? UNSAVED_CHAT_NAME : 'Chat'}
+            </span>
           )}
         </div>
       }
