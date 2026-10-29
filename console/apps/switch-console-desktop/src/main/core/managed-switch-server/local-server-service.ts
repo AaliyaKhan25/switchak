@@ -155,6 +155,8 @@ export class LocalServerService {
   private phaseChanges = 0;
   /** Probes missed in a row, counted since {@link missesSince} phase changes. */
   private coreMisses = 0;
+  /** When the first of those missed probes was sent, for saying how long. */
+  private firstMissAt = 0;
   private missesSince = -1;
 
   getStatus(): LocalServerStatus {
@@ -427,6 +429,7 @@ export class LocalServerService {
       if (!server) return;
       const native = (await this.runtime()) === 'native';
       const layout = nativeLayout(localServerDir());
+      const probedAt = Date.now();
       const answers = await probeHealth(server.url);
       // Null when it could not be told: Docker did not answer.
       let alive: boolean | null;
@@ -471,10 +474,13 @@ export class LocalServerService {
       }
       if (answers) {
         this.coreMisses = 0;
-      } else if (++this.coreMisses >= MISSES_ALLOWED) {
-        const seconds = Math.round((MISSES_ALLOWED * WATCH_INTERVAL_MS) / 1000);
+      } else {
+        if (this.coreMisses++ === 0) this.firstMissAt = probedAt;
+        if (this.coreMisses < MISSES_ALLOWED) return;
+        const seconds = Math.round((Date.now() - this.firstMissAt) / 1000);
         await this.markLost(
-          `switch-core is running but has not answered for about ${seconds} seconds.`
+          `switch-core stopped answering: its process is still running but has not answered ` +
+            `for ${seconds} seconds.`
         );
         return;
       }
