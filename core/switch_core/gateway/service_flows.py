@@ -35,6 +35,7 @@ from switch_core.connections.flows import (
     ServiceFlow,
     ServiceFlows,
 )
+from switch_core.connections.snowflake import validate_mcp_endpoint
 from switch_core.db.models import ServiceConnection, Tenant, User, require_tenant_id
 from switch_core.gateway.auth import get_current_user
 from switch_core.gateway.dependencies import get_session
@@ -97,6 +98,7 @@ class StartFlow(BaseModel):
     port: int = Field(strict=True, ge=1024, le=65535)
     state: str = Field(pattern=TOKEN_PATTERN)
     completion_secret: str = Field(pattern=TOKEN_PATTERN)
+    mcp_endpoint: str | None = Field(default=None, min_length=1, max_length=2048)
 
 
 class FlowSecret(BaseModel):
@@ -123,6 +125,19 @@ async def start(
         definition, adapter = broker.sign_in(service)
     except ServiceError as error:
         return service_refusal(error)
+    if service == "snowflake":
+        if body.mcp_endpoint is None:
+            raise HTTPException(
+                422, "Enter the Snowflake MCP endpoint before connecting."
+            )
+        try:
+            endpoint = validate_mcp_endpoint(body.mcp_endpoint)
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from None
+    elif body.mcp_endpoint is not None:
+        raise HTTPException(422, "This service does not accept a connection endpoint.")
+    else:
+        endpoint = None
     tenant = await session.get(Tenant, require_tenant_id())
     if tenant is None:
         raise HTTPException(404, "Workspace not found.")
@@ -135,6 +150,7 @@ async def start(
             port=body.port,
             completion_secret=body.completion_secret,
             owner_label=f"{user.name} ({user.email}) in {tenant.name}",
+            mcp_endpoint=endpoint,
         )
     except FlowError as error:
         raise HTTPException(409, str(error)) from None
