@@ -368,6 +368,11 @@
       "flags": []
     },
     {
+      "route": "GET /gateway/chats/archived",
+      "auth": "session",
+      "flags": []
+    },
+    {
       "route": "GET /gateway/chats/events",
       "auth": "session",
       "flags": []
@@ -989,6 +994,11 @@
     },
     {
       "route": "POST /gateway/chats/{room_id}/messages",
+      "auth": "session",
+      "flags": []
+    },
+    {
+      "route": "POST /gateway/chats/{room_id}/unarchive",
       "auth": "session",
       "flags": []
     },

@@ -2,7 +2,6 @@ import type {
   AgentBridgeEvent,
   ApprovalOutcome,
   SessionCommand,
-  SwitchEventStreamDeps,
 } from '@sandboxaq/switch-agent-runtime';
 import type { AgentEventStream, AgentStreamDeps } from '@switch-console/agent-providers';
 import { errorMessage, type Logger } from './log';
