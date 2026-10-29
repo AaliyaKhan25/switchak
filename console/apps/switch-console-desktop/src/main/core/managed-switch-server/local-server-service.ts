@@ -458,7 +458,10 @@ export class LocalServerService {
       }
 
       if (alive === false) {
-        const reason = native ? await nativeCoreFailureLine(layout) : null;
+        // Only a line that says what went wrong: a process that was killed
+        // leaves none, and its last ordinary log line would read as a reason.
+        const line = native ? await nativeCoreFailureLine(layout) : null;
+        const reason = line !== null && /(Error|Exception|FATAL)\b/.test(line) ? line : null;
         if (overtaken()) return;
         const where = native ? ` (full log: ${path.join(layout.logs, 'switch-core.log')})` : '';
         await this.markLost(

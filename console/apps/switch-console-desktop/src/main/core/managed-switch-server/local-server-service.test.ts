@@ -759,6 +759,17 @@ it('notices a native server whose switch-core has exited, and says why', async (
   );
 });
 
+it('gives no reason for a killed server rather than its last ordinary log line', async () => {
+  const service = await bootRunningNative();
+  native.running.mockResolvedValue(false);
+  native.failureLine.mockResolvedValue('INFO [uvicorn.access] "GET /gateway/auth/config" 200');
+  await service.watch();
+
+  expect(service.getStatus().error).toMatch(
+    /^switch-core stopped unexpectedly \(full log: .*switch-core\.log\)$/
+  );
+});
+
 it('marks a server that stops answering only after several misses, and back when it answers', async () => {
   const service = await bootRunningNative();
   watch.health.mockResolvedValue(false);
