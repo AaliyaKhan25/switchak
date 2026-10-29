@@ -27,6 +27,7 @@ import {
 } from '@renderer/features/chats/stores/chat-drafts';
 import {
   ChatTimeline,
+  ChatTimelines,
   type TimelineApi,
 } from '@renderer/features/chats/stores/chat-timeline-store';
 
@@ -203,6 +204,58 @@ describe('chat drafts', () => {
 
     await act(async () => finish());
     expect(readChatDraft(key('user-a', 'ws-1', 'r1'))).toBeNull();
+  });
+
+  describe('of a New chat whose room was made but whose first send failed, across a reload', () => {
+    /** Sends the first message of an unsaved chat whose room is made as `r1` and whose send then fails. */
+    async function failFirstSend(): Promise<string> {
+      const timelines = new ChatTimelines(() =>
+        api(
+          vi.fn(async () => {
+            throw new Error('network down');
+          })
+        )
+      );
+      const timeline = timelines.unsaved('srv', 'unsaved-chat:1', async () => {
+        moveChatDraft(key('user-a', 'ws-1', 'unsaved-chat:1'), key('user-a', 'ws-1', 'r1'));
+        timelines.rekey('srv', 'unsaved-chat:1', 'r1');
+        return 'r1';
+      });
+      const textarea = await mount(timeline);
+      await type(textarea, 'first message');
+      await pressEnter(textarea);
+      await vi.waitFor(() => expect(timeline.pending[0]?.state).toBe('failed'));
+      expect(timeline.roomId).toBe('r1');
+      await unmount();
+      return timeline.pending[0]!.requestId;
+    }
+
+    it('reopens as the room, and sends the message again once, under the same request id', async () => {
+      const requestId = await failFirstSend();
+      expect(readChatDraft(key('user-a', 'ws-1', 'unsaved-chat:1'))).toBeNull();
+
+      const send = vi.fn(async () => []);
+      const textarea = await mount(new ChatTimeline('r1', api(send)));
+      expect(textarea.value).toBe('first message');
+      await pressEnter(textarea);
+      await act(async () => {});
+      expect(send).toHaveBeenCalledOnce();
+      expect(send).toHaveBeenCalledWith('r1', expect.objectContaining({ requestId }));
+    });
+
+    it('sends it under a new request id once edited', async () => {
+      const requestId = await failFirstSend();
+      const send = vi.fn(async () => []);
+      // A fresh window's ids: they must not collide with the failed send's.
+      const textarea = await mount(
+        new ChatTimeline('r1', { ...api(send), newId: () => crypto.randomUUID() })
+      );
+      await type(textarea, 'first message, edited');
+      await pressEnter(textarea);
+      await act(async () => {});
+      expect(send).toHaveBeenCalledOnce();
+      expect(send).not.toHaveBeenCalledWith('r1', expect.objectContaining({ requestId }));
+    });
   });
 
   it('shows the other room’s draft, or none, in the same composer, and never carries one over', async () => {

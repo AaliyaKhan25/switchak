@@ -4,9 +4,17 @@ import { workspacesStore } from '@renderer/features/workspaces/workspaces-store'
 import { rpc } from '@renderer/lib/ipc';
 import { appState } from '@renderer/lib/stores/app-state';
 import { focusComposerWhenOpened } from './components/chat-composer';
-import { chatDraftKey, moveChatDraft } from './stores/chat-drafts';
+import { chatDraftKey, moveChatDraft, readChatDraft, unsavedChatKey } from './stores/chat-drafts';
 import { chatsStore, chatTitler } from './stores/chats';
-import { DirectChatStarter } from './stores/direct-chat-starter';
+import { DirectChatStarter, UNSAVED_CHAT_PREFIX } from './stores/direct-chat-starter';
+
+function scope(serverId: string) {
+  return {
+    serverId,
+    userId: switchServersStore.statusFor(serverId)?.user?.id ?? null,
+    workspaceId: workspacesStore.idOnServerInScope(serverId),
+  };
+}
 
 /** Starts a direct chat with one agent, made on its first message and named from it. */
 export const directChats = new DirectChatStarter({
@@ -17,13 +25,7 @@ export const directChats = new DirectChatStarter({
     focusComposerWhenOpened(chat.roomId);
   },
   created: ({ serverId, roomId: from }, chat) => {
-    const draftKey = (roomId: string) =>
-      chatDraftKey({
-        serverId,
-        userId: switchServersStore.statusFor(serverId)?.user?.id ?? null,
-        workspaceId: workspacesStore.idOnServerInScope(serverId),
-        roomId,
-      });
+    const draftKey = (roomId: string) => chatDraftKey({ ...scope(serverId), roomId });
     moveChatDraft(draftKey(from), draftKey(chat.roomId));
     if (document.activeElement?.closest('[data-chat-panel]')) focusComposerWhenOpened(chat.roomId);
     runInAction(() => {
@@ -39,6 +41,22 @@ export const directChats = new DirectChatStarter({
     chatTitler.created(chat, false);
     const first = chatsStore.timelines.peek(serverId, chat.roomId)?.pending[0];
     if (first) void chatTitler.sent(serverId, chat.roomId, first.body);
+  },
+  kept: (serverId, agentId) => {
+    const key = unsavedChatKey({ ...scope(serverId), agentId });
+    const requestId = key && localStorage.getItem(key);
+    if (!key || !requestId) return null;
+    const roomId = `${UNSAVED_CHAT_PREFIX}${requestId}`;
+    if (readChatDraft(chatDraftKey({ ...scope(serverId), roomId }))) return requestId;
+    // Emptied before it was sent: nothing to come back to.
+    localStorage.removeItem(key);
+    return null;
+  },
+  keep: (serverId, agentId, requestId) => {
+    const key = unsavedChatKey({ ...scope(serverId), agentId });
+    if (!key) return;
+    if (requestId) localStorage.setItem(key, requestId);
+    else localStorage.removeItem(key);
   },
   newId: () => crypto.randomUUID(),
 });

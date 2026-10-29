@@ -11,6 +11,7 @@ import { RelativeTime } from '@renderer/lib/ui/relative-time';
 import type { ChatSummary } from '@shared/core/chats/chats';
 import { agentActivities } from '../stores/activities';
 import { chatsStore } from '../stores/chats';
+import { UNSAVED_CHAT_NAME } from '../stores/direct-chat-starter';
 import { ChatActionItems, chatActions } from './chat-actions';
 import { UnreadBadge } from './unread-badge';
 
@@ -80,3 +81,23 @@ export const ChatRow = observer(function ChatRow({
     </SidebarMenuRow>
   );
 });
+
+/** A chat not sent yet, so with no room: only its draft, kept across restarts. */
+export function UnsavedChatRow({ isActive, onOpen }: { isActive: boolean; onOpen: () => void }) {
+  return (
+    <SidebarMenuRow className="justify-between" isActive={isActive} onClick={onOpen}>
+      <div className="flex h-6 min-w-0 flex-1 items-center gap-1">
+        <span className="flex size-6 shrink-0 items-center justify-center">
+          <MessageSquare className="size-4 text-foreground-muted" />
+        </span>
+        <SidebarMenuAction
+          aria-label={`Open chat ${UNSAVED_CHAT_NAME}`}
+          className="overflow-hidden"
+        >
+          <span className="min-w-0 truncate italic">{UNSAVED_CHAT_NAME}</span>
+        </SidebarMenuAction>
+      </div>
+      <span className="ml-2 shrink-0 text-xs text-foreground-passive">Draft</span>
+    </SidebarMenuRow>
+  );
+}

@@ -4,7 +4,7 @@ import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { agentConversations } from '@renderer/features/chats/agent-conversations';
 import { ArchivedFold } from '@renderer/features/chats/components/archived-fold';
 import { ChatPanel } from '@renderer/features/chats/components/chat-panel';
-import { ChatRow } from '@renderer/features/chats/components/chat-row';
+import { ChatRow, UnsavedChatRow } from '@renderer/features/chats/components/chat-row';
 import { useOpenGroupAsRoom } from '@renderer/features/chats/console-chat-redirect';
 import { directChats } from '@renderer/features/chats/start-direct-chat';
 import { chatsStore } from '@renderer/features/chats/stores/chats';
@@ -184,6 +184,7 @@ export const AgentChats = observer(function AgentChats({ agent }: { agent: Manag
   // The chat open here that becomes a group follows into its room, rather than another chat taking its place.
   useOpenGroupAsRoom(shownRoom || section ? null : (params.roomId ?? null), 'managedAgent');
   const newChat = () => open(directChats.start(serverId, agentId));
+  const unsavedId = directChats.waiting(serverId, agentId);
 
   const ownServer = chatsStore.serverId === serverId;
   const listing = ownServer && chatsStore.userId === null && !chatsStore.listError;
@@ -226,6 +227,9 @@ export const AgentChats = observer(function AgentChats({ agent }: { agent: Manag
               </Button>
             </div>
           )}
+          {unsavedId && (
+            <UnsavedChatRow isActive={!section && unsavedId === roomId} onOpen={newChat} />
+          )}
           {direct.map((chat) => (
             <ChatRow
               key={chat.roomId}
@@ -235,7 +239,9 @@ export const AgentChats = observer(function AgentChats({ agent }: { agent: Manag
               onOpen={() => open(chat.roomId)}
             />
           ))}
-          {direct.length === 0 && !chatsStore.listError && <Note>No direct chats yet.</Note>}
+          {direct.length === 0 && !unsavedId && !chatsStore.listError && (
+            <Note>No direct chats yet.</Note>
+          )}
           <ArchivedFold count={archived.length} error={ownServer ? chatsStore.archivedError : null}>
             {archived.map((chat) => (
               <ChatRow

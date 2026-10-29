@@ -100,9 +100,12 @@ vi.mock('@renderer/features/chats/components/chat-panel', async (importOriginal)
 import '@renderer/index.css';
 import { runInAction } from 'mobx';
 import { directChats } from '@renderer/features/chats/start-direct-chat';
+import { chatDraftKey, unsavedChatKey } from '@renderer/features/chats/stores/chat-drafts';
 import { chatsStore } from '@renderer/features/chats/stores/chats';
 import { AgentChats, openAgentChat } from '@renderer/features/managed-agents/agent-chats';
 import { roomEmbedSlotStore } from '@renderer/features/switch-rooms/room-embed-slot';
+import { switchServersStore } from '@renderer/features/switch-servers/switch-servers-store';
+import { workspacesStore } from '@renderer/features/workspaces/workspaces-store';
 import { appState } from '@renderer/lib/stores/app-state';
 import type { ChatSummary } from '@shared/core/chats/chats';
 
@@ -411,6 +414,43 @@ it('opens no other chat in place of an unsaved one, so its header is not that ch
       chatsStore.chats.delete('previous');
       chatsStore.serverId = null;
     });
+  }
+});
+
+it('lists an unsent New chat kept from before a restart, with its draft, and reopens it', async () => {
+  const status = vi
+    .spyOn(switchServersStore, 'statusFor')
+    .mockReturnValue({ user: { id: 'user-a' } } as ReturnType<typeof switchServersStore.statusFor>);
+  const workspace = vi.spyOn(workspacesStore, 'idOnServerInScope').mockReturnValue('ws-1');
+  const scope = { serverId: 'server-1', userId: 'user-a', workspaceId: 'ws-1' };
+  // An agent no other test opened a chat with: the starter is the app's own, shared by every test.
+  const record = unsavedChatKey({ ...scope, agentId: 'agent-3' })!;
+  try {
+    localStorage.setItem(record, 'kept-request');
+    localStorage.setItem(
+      chatDraftKey({ ...scope, roomId: 'unsaved-chat:kept-request' }),
+      JSON.stringify({ text: 'half a thought', mentions: [] })
+    );
+    navigation.reset({ serverId: 'server-1', agentId: 'agent-3', name: 'pm-agent' });
+    await act(async () => root.render(<AgentChats agent={{ ...AGENT, agentId: 'agent-3' }} />));
+    const row = container.querySelector<HTMLElement>('[aria-label="Open chat New Chat"]');
+    expect(row).not.toBeNull();
+    await act(async () => row!.click());
+    expect(navigation.params().roomId).toBe('unsaved-chat:kept-request');
+
+    // Emptied before the restart: there is nothing to come back to.
+    act(() => root.unmount());
+    root = createRoot(container);
+    localStorage.removeItem(chatDraftKey({ ...scope, roomId: 'unsaved-chat:kept-request' }));
+    navigation.reset({ serverId: 'server-1', agentId: 'agent-2', name: 'pm-agent' });
+    localStorage.setItem(unsavedChatKey({ ...scope, agentId: 'agent-2' })!, 'emptied');
+    await act(async () => root.render(<AgentChats agent={{ ...AGENT, agentId: 'agent-2' }} />));
+    expect(container.querySelector('[aria-label="Open chat New Chat"]')).toBeNull();
+    expect(localStorage.getItem(unsavedChatKey({ ...scope, agentId: 'agent-2' })!)).toBeNull();
+  } finally {
+    status.mockRestore();
+    workspace.mockRestore();
+    localStorage.clear();
   }
 });
 

@@ -89,3 +89,18 @@ export function moveChatDraft(from: string, to: string): void {
   writeChatDraft(to, draft);
   writeChatDraft(from, { ...draft, text: '' });
 }
+
+/**
+ * Where an agent's unsaved chat's create request id is kept across restarts:
+ * one per account, workspace and agent, like drafts; null until the account and
+ * workspace are known, when it is kept for this session only.
+ */
+export function unsavedChatKey(scope: {
+  serverId: string;
+  userId: string | null;
+  workspaceId: string | null;
+  agentId: string;
+}): string | null {
+  if (scope.userId === null || scope.workspaceId === null) return null;
+  return `unsaved-chat:${JSON.stringify([scope.serverId, scope.userId, scope.workspaceId, scope.agentId])}`;
+}

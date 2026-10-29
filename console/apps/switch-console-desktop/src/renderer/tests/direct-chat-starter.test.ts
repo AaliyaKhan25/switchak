@@ -9,7 +9,7 @@ import type { ChatMessage, ChatSummary } from '@shared/core/chats/chats';
 const chat = { roomId: 'r1', channelType: 'direct' } as ChatSummary;
 
 /** The starter wired to real timelines, as the app wires it, over fake RPCs. */
-function setup() {
+function setup(stored = new Map<string, string>()) {
   let id = 0;
   const api = {
     messages: vi.fn(async () => ({ messages: [], headSeq: 0, hasMore: false })),
@@ -41,9 +41,14 @@ function setup() {
         timelines.unsaved(unsaved.serverId, unsaved.roomId, make);
     },
     created,
+    kept: (serverId: string, agentId: string) => stored.get(`${serverId}:${agentId}`) ?? null,
+    keep: (serverId: string, agentId: string, requestId: string | null) => {
+      if (requestId) stored.set(`${serverId}:${agentId}`, requestId);
+      else stored.delete(`${serverId}:${agentId}`);
+    },
     newId: () => `req-${++id}`,
   });
-  return { api, timelines, create, created, starter };
+  return { api, timelines, create, created, starter, stored };
 }
 
 const message = (body: string) => ({
@@ -155,5 +160,22 @@ describe('DirectChatStarter', () => {
       ['r1', requestId],
     ]);
     expect(requestId).not.toBe(create.mock.calls[0]![0].requestId);
+  });
+
+  it('comes back after a reload or restart under the same create request id, and is forgotten once its room is made', async () => {
+    const before = setup();
+    const roomId = before.starter.start('s1', 'a1');
+    const requestId = before.stored.get('s1:a1');
+    expect(requestId).toMatch(/^req-/);
+
+    // A restart: a new starter over what was kept.
+    const after = setup(before.stored);
+    expect(after.starter.waiting('s1', 'a1')).toBe(roomId);
+    expect(after.starter.start('s1', 'a1')).toBe(roomId);
+    after.timelines.get('s1', roomId).send(message('hello'));
+    await vi.waitFor(() => expect(after.api.send).toHaveBeenCalledOnce());
+    expect(after.create.mock.calls[0]![0].requestId).toBe(requestId);
+    expect(after.stored.size).toBe(0);
+    expect(after.starter.waiting('s1', 'a1')).toBeNull();
   });
 });
