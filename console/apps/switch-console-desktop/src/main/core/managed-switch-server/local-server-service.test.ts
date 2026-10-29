@@ -856,3 +856,26 @@ it('ignores what it saw when a stop began while it looked', async () => {
   expect(service.getStatus().phase).toBe('stopped');
   expect(m.record).not.toHaveBeenCalledWith('crashed', expect.anything());
 });
+
+it('watches a server set up after launch, on a first install', async () => {
+  vi.useFakeTimers();
+  try {
+    runtime.read.mockResolvedValue('native');
+    m.managed.mockResolvedValueOnce(null);
+    const service = new LocalServerService();
+    await boot(service);
+    expect(await service.start()).toEqual(started);
+    native.running.mockResolvedValue(true);
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(service.getStatus().phase).toBe('running');
+
+    native.running.mockResolvedValue(false);
+    await vi.advanceTimersByTimeAsync(5_000);
+    await vi.waitFor(() => expect(service.getStatus().phase).toBe('error'));
+    expect(service.getStatus().failedTo).toBe('run');
+    service.dispose();
+  } finally {
+    vi.useRealTimers();
+  }
+});

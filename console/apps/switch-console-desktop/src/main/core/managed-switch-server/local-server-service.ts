@@ -317,7 +317,9 @@ export class LocalServerService {
    * Memoised: {@link ensureReady} awaits the same reconcile, then the upgrade
    * it started. */
   initialize(): Promise<void> {
-    this.initialization ??= this.reconcile();
+    // Watching starts whatever the boot check found: a first install has no
+    // server to find, and the one it is about to start needs watching too.
+    this.initialization ??= this.reconcile().finally(() => this.startWatching());
     return this.initialization;
   }
 
@@ -382,7 +384,6 @@ export class LocalServerService {
       this.setStatus({ checked: true });
       host.dispose();
     }
-    this.startWatching();
     // Not awaited: the boot check is done once the upgrade is under way, and a
     // Start click or a session joins the upgrade through `starting`.
     if (upgradeNow || moveNow) void this.beginStart(false);
