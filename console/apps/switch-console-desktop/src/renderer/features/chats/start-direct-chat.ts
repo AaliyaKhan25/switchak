@@ -6,9 +6,13 @@ import { appState } from '@renderer/lib/stores/app-state';
 import { focusComposerWhenOpened } from './components/chat-composer';
 import { chatDraftKey, moveChatDraft, readChatDraft, unsavedChatKey } from './stores/chat-drafts';
 import { chatsStore, chatTitler } from './stores/chats';
-import { DirectChatStarter, UNSAVED_CHAT_PREFIX } from './stores/direct-chat-starter';
+import {
+  type ChatScope,
+  DirectChatStarter,
+  UNSAVED_CHAT_PREFIX,
+} from './stores/direct-chat-starter';
 
-function scope(serverId: string) {
+function scope(serverId: string): ChatScope {
   return {
     serverId,
     userId: switchServersStore.statusFor(serverId)?.user?.id ?? null,
@@ -24,8 +28,9 @@ export const directChats = new DirectChatStarter({
       chatsStore.timelines.unsaved(chat.serverId, chat.roomId, create);
     focusComposerWhenOpened(chat.roomId);
   },
-  created: ({ serverId, roomId: from }, chat) => {
-    const draftKey = (roomId: string) => chatDraftKey({ ...scope(serverId), roomId });
+  created: (unsaved, chat) => {
+    const { serverId, roomId: from } = unsaved;
+    const draftKey = (roomId: string) => chatDraftKey({ ...unsaved, roomId });
     moveChatDraft(draftKey(from), draftKey(chat.roomId));
     if (document.activeElement?.closest('[data-chat-panel]')) focusComposerWhenOpened(chat.roomId);
     runInAction(() => {
@@ -42,18 +47,19 @@ export const directChats = new DirectChatStarter({
     const first = chatsStore.timelines.peek(serverId, chat.roomId)?.pending[0];
     if (first) void chatTitler.sent(serverId, chat.roomId, first.body);
   },
-  kept: (serverId, agentId) => {
-    const key = unsavedChatKey({ ...scope(serverId), agentId });
+  scope,
+  kept: (chatScope, agentId) => {
+    const key = unsavedChatKey({ ...chatScope, agentId });
     const requestId = key && localStorage.getItem(key);
     if (!key || !requestId) return null;
     const roomId = `${UNSAVED_CHAT_PREFIX}${requestId}`;
-    if (readChatDraft(chatDraftKey({ ...scope(serverId), roomId }))) return requestId;
+    if (readChatDraft(chatDraftKey({ ...chatScope, roomId }))) return requestId;
     // Emptied before it was sent: nothing to come back to.
     localStorage.removeItem(key);
     return null;
   },
-  keep: (serverId, agentId, requestId) => {
-    const key = unsavedChatKey({ ...scope(serverId), agentId });
+  keep: (chatScope, agentId, requestId) => {
+    const key = unsavedChatKey({ ...chatScope, agentId });
     if (!key) return;
     if (requestId) localStorage.setItem(key, requestId);
     else localStorage.removeItem(key);

@@ -3,7 +3,11 @@ import {
   ChatTimelines,
   type TimelineApi,
 } from '@renderer/features/chats/stores/chat-timeline-store';
-import { DirectChatStarter } from '@renderer/features/chats/stores/direct-chat-starter';
+import {
+  type ChatScope,
+  DirectChatStarter,
+  SCOPE_CHANGED,
+} from '@renderer/features/chats/stores/direct-chat-starter';
 import type { ChatMessage, ChatSummary } from '@shared/core/chats/chats';
 
 const chat = { roomId: 'r1', channelType: 'direct' } as ChatSummary;
@@ -11,6 +15,7 @@ const chat = { roomId: 'r1', channelType: 'direct' } as ChatSummary;
 /** The starter wired to real timelines, as the app wires it, over fake RPCs. */
 function setup(stored = new Map<string, string>()) {
   let id = 0;
+  const account = { userId: 'alice' };
   const api = {
     messages: vi.fn(async () => ({ messages: [], headSeq: 0, hasMore: false })),
     threadMessages: vi.fn(),
@@ -41,14 +46,17 @@ function setup(stored = new Map<string, string>()) {
         timelines.unsaved(unsaved.serverId, unsaved.roomId, make);
     },
     created,
-    kept: (serverId: string, agentId: string) => stored.get(`${serverId}:${agentId}`) ?? null,
-    keep: (serverId: string, agentId: string, requestId: string | null) => {
-      if (requestId) stored.set(`${serverId}:${agentId}`, requestId);
-      else stored.delete(`${serverId}:${agentId}`);
+    scope: (serverId: string) => ({ serverId, userId: account.userId, workspaceId: 'w1' }),
+    kept: (scope: ChatScope, agentId: string) =>
+      stored.get(`${scope.userId}:${scope.serverId}:${agentId}`) ?? null,
+    keep: (scope: ChatScope, agentId: string, requestId: string | null) => {
+      const key = `${scope.userId}:${scope.serverId}:${agentId}`;
+      if (requestId) stored.set(key, requestId);
+      else stored.delete(key);
     },
     newId: () => `req-${++id}`,
   });
-  return { api, timelines, create, created, starter, stored };
+  return { api, timelines, create, created, starter, stored, account };
 }
 
 const message = (body: string) => ({
@@ -165,7 +173,7 @@ describe('DirectChatStarter', () => {
   it('comes back after a reload or restart under the same create request id, and is forgotten once its room is made', async () => {
     const before = setup();
     const roomId = before.starter.start('s1', 'a1');
-    const requestId = before.stored.get('s1:a1');
+    const requestId = before.stored.get('alice:s1:a1');
     expect(requestId).toMatch(/^req-/);
 
     // A restart: a new starter over what was kept.
@@ -177,5 +185,39 @@ describe('DirectChatStarter', () => {
     expect(after.create.mock.calls[0]![0].requestId).toBe(requestId);
     expect(after.stored.size).toBe(0);
     expect(after.starter.waiting('s1', 'a1')).toBeNull();
+  });
+
+  it('keeps each account its own unsaved chat with the same agent, and its own record', () => {
+    const { account, create, starter, stored } = setup();
+    const alices = starter.start('s1', 'a1');
+    account.userId = 'bob';
+    const bobs = starter.start('s1', 'a1');
+    expect(bobs).not.toBe(alices);
+    expect(starter.waiting('s1', 'a1')).toBe(bobs);
+    expect(stored.get('alice:s1:a1')).not.toBe(stored.get('bob:s1:a1'));
+    expect(stored.get('bob:s1:a1')).toBeDefined();
+    account.userId = 'alice';
+    expect(starter.start('s1', 'a1')).toBe(alices);
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it('never hands a room made after an account switch to the other account', async () => {
+    const { account, api, create, created, starter, timelines } = setup();
+    let finish: (chat: ChatSummary) => void = () => {};
+    create.mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)));
+    const timeline = timelines.get('s1', starter.start('s1', 'a1'));
+    timeline.send(message('for alice'));
+    await vi.waitFor(() => expect(create).toHaveBeenCalledOnce());
+    account.userId = 'bob';
+    finish(chat);
+    await vi.waitFor(() => expect(timeline.pending[0]?.state).toBe('failed'));
+    expect(timeline.pending[0]?.error).toContain(SCOPE_CHANGED);
+    expect(created).not.toHaveBeenCalled();
+    expect(api.send).not.toHaveBeenCalled();
+
+    // Retrying as Bob asks the server for nothing.
+    timeline.retry(timeline.pending[0]!.requestId);
+    await vi.waitFor(() => expect(timeline.pending[0]?.state).toBe('failed'));
+    expect(create).toHaveBeenCalledOnce();
   });
 });

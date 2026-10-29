@@ -6,8 +6,18 @@ export const UNSAVED_CHAT_PREFIX = 'unsaved-chat:';
 /** What an unsaved chat is called: the name the server gives a chat made without one. */
 export const UNSAVED_CHAT_NAME = 'New Chat';
 
-export type UnsavedChat = {
+/** Whose chats these are on a server: an unsaved chat belongs to one account and workspace. */
+export type ChatScope = {
   serverId: string;
+  userId: string | null;
+  workspaceId: string | null;
+};
+
+/** The error an unsaved chat's send gets when the account or workspace changed under it. */
+export const SCOPE_CHANGED =
+  'You switched account or workspace before this chat was made, so its message was not sent.';
+
+export type UnsavedChat = ChatScope & {
   agentId: string;
   /** The id it goes by on screen until its room exists. */
   roomId: string;
@@ -27,10 +37,12 @@ export type DirectChatStarterDeps = {
   opened: (chat: UnsavedChat, create: () => Promise<string>) => void;
   /** Its room exists: the chat moves from its unsaved id to the room's. */
   created: (unsaved: UnsavedChat, chat: ChatSummary) => void;
+  /** The account and workspace the server's chats belong to now. */
+  scope: (serverId: string) => ChatScope;
   /** The create request id of the agent's unsaved chat kept from an earlier session, if it still has a draft. */
-  kept: (serverId: string, agentId: string) => string | null;
+  kept: (scope: ChatScope, agentId: string) => string | null;
   /** Keep the agent's unsaved chat's create request id across restarts; null forgets it. */
-  keep: (serverId: string, agentId: string, requestId: string | null) => void;
+  keep: (scope: ChatScope, agentId: string, requestId: string | null) => void;
   newId: () => string;
 };
 
@@ -50,12 +62,13 @@ export class DirectChatStarter {
 
   /** The id of the chat to open: the agent's unsaved one, made now if it has none. */
   start(serverId: string, agentId: string): string {
-    const key = `${serverId}:${agentId}`;
+    const scope = this.deps.scope(serverId);
+    const key = keyOf(scope, agentId);
     let chat = this.unsaved.get(key);
     if (!chat) {
-      const requestId = this.deps.kept(serverId, agentId) ?? this.deps.newId();
-      this.deps.keep(serverId, agentId, requestId);
-      chat = { serverId, agentId, roomId: `${UNSAVED_CHAT_PREFIX}${requestId}`, requestId };
+      const requestId = this.deps.kept(scope, agentId) ?? this.deps.newId();
+      this.deps.keep(scope, agentId, requestId);
+      chat = { ...scope, agentId, roomId: `${UNSAVED_CHAT_PREFIX}${requestId}`, requestId };
       this.unsaved.set(key, chat);
       this.byRoomId.set(chat.roomId, chat);
     }
@@ -66,9 +79,10 @@ export class DirectChatStarter {
 
   /** The id of the agent's unsaved chat, open in this session or kept from an earlier one with a draft; null if none. */
   waiting(serverId: string, agentId: string): string | null {
-    const open = this.unsaved.get(`${serverId}:${agentId}`);
+    const scope = this.deps.scope(serverId);
+    const open = this.unsaved.get(keyOf(scope, agentId));
     if (open) return open.roomId;
-    const kept = this.deps.kept(serverId, agentId);
+    const kept = this.deps.kept(scope, agentId);
     return kept ? `${UNSAVED_CHAT_PREFIX}${kept}` : null;
   }
 
@@ -77,10 +91,15 @@ export class DirectChatStarter {
     return this.byRoomId.get(roomId);
   }
 
+  private inScope(chat: UnsavedChat): boolean {
+    return keyOf(this.deps.scope(chat.serverId), chat.agentId) === keyOf(chat, chat.agentId);
+  }
+
   /** Make the chat's room, once however often asked; a failure lets the next ask try again under the same request id. */
   private create(chat: UnsavedChat): Promise<string> {
     let creating = this.creating.get(chat.roomId);
     if (!creating) {
+      if (!this.inScope(chat)) return Promise.reject(new Error(SCOPE_CHANGED));
       creating = this.deps
         .create({
           serverId: chat.serverId,
@@ -91,9 +110,12 @@ export class DirectChatStarter {
         })
         .then(
           (created) => {
-            this.unsaved.delete(`${chat.serverId}:${chat.agentId}`);
+            this.creating.delete(chat.roomId);
+            // Made for the account it was started in; another's view must not take it.
+            if (!this.inScope(chat)) throw new Error(SCOPE_CHANGED);
+            this.unsaved.delete(keyOf(chat, chat.agentId));
             this.byRoomId.delete(chat.roomId);
-            this.deps.keep(chat.serverId, chat.agentId, null);
+            this.deps.keep(chat, chat.agentId, null);
             this.deps.created(chat, created);
             return created.roomId;
           },
@@ -106,4 +128,8 @@ export class DirectChatStarter {
     }
     return creating;
   }
+}
+
+function keyOf(scope: ChatScope, agentId: string): string {
+  return JSON.stringify([scope.serverId, scope.userId, scope.workspaceId, agentId]);
 }
