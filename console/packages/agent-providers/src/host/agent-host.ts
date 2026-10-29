@@ -650,10 +650,25 @@ export type AgentEventStream = {
   readonly announcesSessionStarts: boolean;
   start(): void;
   setSpawnCapable(capable: boolean): void;
-  replacePlacements(placements: Record<string, string>): Promise<void>;
+  /**
+   * State every session's room. The rooms named back in `refusedRooms` are
+   * ones the agent is not in (deleted, or the agent taken out): their sessions
+   * were left out, and the rest placed.
+   */
+  replacePlacements(placements: Record<string, string>): Promise<{ refusedRooms: string[] }>;
 };
 
-export type OpenAgentStream = (deps: SwitchEventStreamDeps) => AgentEventStream;
+/**
+ * What the agent host is told on its stream. Beside the runtime's own, an
+ * agent controller's hub says when a room a session is placed in is no longer
+ * the agent's (deleted, or the agent taken out): Switch said so, so the
+ * placement goes.
+ */
+export type AgentStreamDeps = SwitchEventStreamDeps & {
+  onRoomGone?: (info: { roomId: string; sessionId: string }) => Promise<void> | void;
+};
+
+export type OpenAgentStream = (deps: AgentStreamDeps) => AgentEventStream;
 
 /** The watcher's own connection to Switch, with the agent's credentials. */
 export const openSwitchStream: OpenAgentStream = (deps) => new SwitchEventStream(deps);
@@ -780,7 +795,17 @@ export async function runAgentHost(
      */
     const publish = (): Promise<void> => {
       const run = async () => {
-        await stream?.replacePlacements(placements.snapshot());
+        const answer = await stream?.replacePlacements(placements.snapshot());
+        // Switch or the controller said the agent is not in the room (it is gone,
+        // or the agent was taken out): a refusal naming the room, never a failure
+        // to answer. The session no longer attends it, so it is not stated again.
+        for (const roomId of answer?.refusedRooms ?? []) {
+          const lost = await placements.roomLost(roomId);
+          if (lost)
+            console.warn(
+              `Session ${lost} was placed in room ${roomId}, which this agent is no longer in; it no longer attends it.`
+            );
+        }
       };
       publishing = publishing.then(run, run);
       return publishing;
@@ -1254,6 +1279,20 @@ export async function runAgentHost(
           if (lost === null) return;
           console.warn(
             `Room ${roomId} was taken over by another connection of this agent${sessionId && sessionId !== lost ? ` (Switch named session ${sessionId})` : ''}; session ${lost} here no longer attends it.`
+          );
+          publishQuietly();
+        });
+        return pending.catch((error: Error) => {
+          fail(error);
+          throw error;
+        });
+      },
+      onRoomGone: async ({ roomId, sessionId }) => {
+        pending = pending.then(async () => {
+          if (placements.roomOf(sessionId) !== roomId) return;
+          await placements.roomLost(roomId);
+          console.warn(
+            `Room ${roomId} is no longer this agent's (deleted, or the agent taken out); session ${sessionId} no longer attends it.`
           );
           publishQuietly();
         });
