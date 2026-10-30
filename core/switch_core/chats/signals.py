@@ -11,8 +11,8 @@ its next periodic re-read.
 So each such change, once committed, announces `chats.memberships_changed`
 naming the tenant and the people whose chats changed. Every other process
 wakes the streams it holds for them, and each re-reads what its person may
-see. A change concerning more people than one signal can name is split over
-as many signals as it takes.
+see. A change concerning more people or rooms than one signal can name is
+split over as many signals as it takes.
 
 Signals sent while this process's signal connection was down were never
 queued, so when it comes back every stream held here is woken once: a wake-up
@@ -24,7 +24,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any
 
-from switch_core.signals import payload_chunks
+from switch_core.signals import MAX_PAYLOAD_BYTES, payload_chunks
 
 if TYPE_CHECKING:
     from switch_core.chats.service import ChatService
@@ -54,15 +54,17 @@ class ChatSignals:
         """The users' part in chats `room_ids` changed and the change has
         committed: every other process wakes the streams it holds for them.
         This one has already woken its own."""
-        for chunk in payload_chunks(
-            user_ids, _SIGNAL_ENVELOPE_BYTES + len(json.dumps(room_ids))
-        ):
-            self._bus.publish(
-                MEMBERSHIPS_CHANGED_SIGNAL,
-                tenant_id=tenant_id,
-                user_ids=chunk,
-                room_ids=room_ids,
-            )
+        # Room ids take at most half a payload, leaving the rest for user ids.
+        for rooms in payload_chunks(room_ids, MAX_PAYLOAD_BYTES // 2) or [[]]:
+            for users in payload_chunks(
+                user_ids, _SIGNAL_ENVELOPE_BYTES + len(json.dumps(rooms))
+            ):
+                self._bus.publish(
+                    MEMBERSHIPS_CHANGED_SIGNAL,
+                    tenant_id=tenant_id,
+                    user_ids=users,
+                    room_ids=rooms,
+                )
 
     def _on_changed(self, signal: dict[str, Any]) -> None:
         # A process on the release before room ids names none: any room.

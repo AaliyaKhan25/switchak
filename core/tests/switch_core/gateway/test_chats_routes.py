@@ -1269,6 +1269,25 @@ async def test_a_change_concerning_more_people_than_one_signal_holds_reaches_the
     assert sorted(woken) == sorted(user_ids)
 
 
+async def test_a_change_naming_more_rooms_than_one_signal_holds_reaches_them_all(
+    two_processes: tuple[_Process, _Process],
+) -> None:
+    """An agent in hundreds of rooms changes every one of them at once: the
+    room ids are split over signals too, and every room reaches the stream."""
+    here, there = two_processes
+    user_id = str(uuid.uuid4())
+    room_ids = [str(uuid.uuid4()) for _ in range(500)]
+    woken: list[str] = []
+    there.service.watch_memberships(
+        TENANT, user_id, lambda rooms: woken.extend(rooms or [])
+    )
+
+    here.signals.memberships_changed(TENANT, [user_id], room_ids)
+
+    await _eventually(lambda: len(woken) == len(room_ids))
+    assert sorted(woken) == sorted(room_ids)
+
+
 # ── Agent owners ─────────────────────────────────────────────────────────────
 
 TENANT = "00000000-0000-0000-0000-000000000000"
