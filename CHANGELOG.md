@@ -167,6 +167,15 @@ version of their own to them without also giving them a release of their own.
   `status` and `list` report `instance_type_allowed` for each machine. A
   database bound before this release is accepted and rebound on first start,
   as long as `allowed_instance_types` has not changed in the same deploy.
+- **The Helm chart runs switch-core as a ServiceAccount of its own.**
+  It is `<release>-switch-core` (`switchCore.serviceAccount`) where it used to be
+  the namespace's `default`, which every pod that names no account shares, so
+  anything trusting switch-core's identity, such as the distributed Teams app's
+  federated credential, trusts switch-core alone. `create: false` with a `name`
+  runs it as an account made elsewhere. A Teams app whose federated
+  credential trusts `default` stops getting tokens after this upgrade: add a
+  credential for `system:serviceaccount:<namespace>:<release>-switch-core`
+  first, and remove the old one once the new pod is up.
 - **Agents and controllers are pinged every 10 seconds instead of every 2.**
   A connection is now declared dead after 30 seconds without a beat, up from
   6, so a client that goes away holds its room slot and shows online for up to
@@ -207,6 +216,13 @@ version of their own to them without also giving them a release of their own.
   (a Codex login in the OS keyring, say). The refusal now gives what the
   machine said instead, and `list_machines` shows it as each provider's
   `problem`.
+- **A Teams app on a federated credential can deploy from the Helm chart.**
+  switch-core's migrate init container and the pre-upgrade migration Job were
+  given the Teams app's settings but not its projected token, so
+  `TEAMS_APP_FEDERATED_TOKEN_FILE` named a missing file and both refused to
+  load their configuration: with `switchCore.teamsApp.credential: federated`,
+  no release could migrate or start. The two that migrate are no longer given
+  the Teams app at all.
 - **The agent HTTP API answers a refused or malformed request with a 4xx, not
   a 500.** Inviting an agent to a room the caller may not change answered 500
   instead of 403, and so did looking up a room the agent is not in. A room
