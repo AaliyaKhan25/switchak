@@ -1553,6 +1553,7 @@ class AgentRecipient:
             agent=self.agent,
             agent_user_id=self.transport_user_id,
             channel_type=meta.channel_type,
+            agent_count=meta.agent_count,
             message=self._as_incoming(event),
         )
 

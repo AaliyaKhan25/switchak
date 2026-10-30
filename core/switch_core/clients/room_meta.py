@@ -12,6 +12,10 @@ class RoomMeta(BaseModel):
     # rooms and when no bridge resolves.
     agent_greetings_enabled: bool = True
     channel_type: str | None = None
+    # How many agents the room holds, read with the room so a direct room's
+    # "is this for its one agent?" needs no read per message. None where the
+    # meta was built without it; addressing then reads the count itself.
+    agent_count: int | None = None
     # The room's follow-the-conversation settings (`!follow-ups`,
     # `!assign-agent`), read with the room from its metadata.
     follow_ups_enabled: bool = True

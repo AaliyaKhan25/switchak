@@ -194,11 +194,12 @@ class AddressingResolver:
         agent: Agent,
         agent_user_id: str,
         channel_type: str | None,
+        agent_count: int | None,
         message: IncomingMessage,
     ) -> bool | None:
         """The addressing answer that needs no database read, or None when the
-        room's aliases, role leases or (in a direct room) agent count have to
-        be consulted.
+        room's aliases, role leases or (in a direct room whose `agent_count`
+        the caller does not know) agent count have to be consulted.
 
         Callers use it to decide whether to take a pool slot at all: most room
         chatter carries no `@` and is answered here, and a room fans every
@@ -211,7 +212,10 @@ class AddressingResolver:
         ):
             return True
         if channel_type == "direct":
-            return None
+            if agent_count is None:
+                return None
+            if agent_count == 1:
+                return True
         if "@" not in message.addressable_body:
             return False
         return None
@@ -242,6 +246,7 @@ class AddressingResolver:
             agent=agent,
             agent_user_id=agent_user_id,
             channel_type=channel_type,
+            agent_count=None,
             message=message,
         )
         if decided is not None:
