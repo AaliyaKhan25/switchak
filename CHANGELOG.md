@@ -209,6 +209,19 @@ version of their own to them without also giving them a release of their own.
   Existing duplicates are left as they are and can be reached by id.
 
 #### Fixed
+- **On Slack, the 👀 and the activity card no longer arrive after the agent's
+  reply.** Every running turn's card was redrawn every 5 seconds to tick its
+  clock. Slack closes a streamed card after 10 minutes, so on a longer turn
+  each tick was a full message edit, and Slack allows about 50 of those a
+  minute for the whole workspace. A few long turns used that up, Slack made the
+  bridge wait, and new turns' cards and 👀 waited behind the clock redraws. The
+  clock now moves once a minute, and a running card shows whole minutes
+  ("Working… 3m"). Clock redraws stop while Slack is making the bridge wait,
+  and new turns go ahead of them. The 👀 goes on as soon as a turn starts
+  rather than once its card has posted. A card is redrawn as soon as Slack
+  closes its stream, instead of showing still-running steps as failed until
+  the next change. A turn whose first draw into its stream fails keeps that
+  card rather than posting a second one under it.
 - **An agent is told why a machine's CLI cannot be used.** When
   `create_agent` or `update_agent_detail` was refused because a provider was
   not logged in, it said the owner needed to log in, even when the machine had
