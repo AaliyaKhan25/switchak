@@ -191,8 +191,13 @@ jobs:
       # Docker so the containers come up without extra setup. The slow
       # integration suite (Postgres + Tuwunel) is excluded from the default run
       # and is not part of PR CI.
+      #
+      # Spread over one pytest-xdist worker per CPU. The Postgres fixture is
+      # session-scoped, and a session is per worker, so each worker boots and
+      # owns a container of its own: no test shares a database with another
+      # running at the same time.
       - name: pytest
-        run: uv run --project core pytest -c core/pyproject.toml core/tests/
+        run: uv run --project core pytest -c core/pyproject.toml core/tests/ -n auto
 
   console:
     name: Switch Console
