@@ -9,7 +9,11 @@ client that left is named so the person who lost the room is told too.
 
 The notice is a "read again", so it is sent from a task of its own after the
 change has committed, and a lost one costs only a delay: Console still reads
-its lists every few minutes.
+its lists every few minutes. Changes to one room within `COALESCE_SECONDS` of
+the first are sent as one notice per person, so a bridge adding a channel's N
+members makes one read and N notices, not N reads and N² notices. The read
+starts after the window closes, so it sees every change made in it; a change
+after that opens a window of its own.
 """
 
 from __future__ import annotations
@@ -40,6 +44,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+COALESCE_SECONDS = 1.0
+
 
 class RoomChanges:
     def __init__(
@@ -47,15 +53,24 @@ class RoomChanges:
         *,
         session_factory: async_sessionmaker[AsyncSession],
         publisher: UserChangePublisher,
+        window_seconds: float,
     ) -> None:
         self._session_factory = session_factory
         self._publisher = publisher
+        self._window_seconds = window_seconds
         self._tasks: set[asyncio.Task[None]] = set()
+        # Client ids gathered for each room whose window is open.
+        self._pending: dict[tuple[str, str], set[str]] = {}
 
     def room_changed(self, tenant_id: str, room_id: str, client_ids: list[str]) -> None:
         """Tell everyone the room concerns, and the people behind `client_ids`
         (who may just have left it), that it changed. Returns at once."""
-        task = asyncio.create_task(self._publish(tenant_id, room_id, client_ids))
+        key = (tenant_id, room_id)
+        if key in self._pending:
+            self._pending[key].update(client_ids)
+            return
+        self._pending[key] = set(client_ids)
+        task = asyncio.create_task(self._publish(tenant_id, room_id))
         self._tasks.add(task)
         task.add_done_callback(self._finished)
 
@@ -68,9 +83,11 @@ class RoomChanges:
                 exc_info=task.exception(),
             )
 
-    async def _publish(
-        self, tenant_id: str, room_id: str, client_ids: list[str]
-    ) -> None:
+    async def _publish(self, tenant_id: str, room_id: str) -> None:
+        try:
+            await asyncio.sleep(self._window_seconds)
+        finally:
+            client_ids = sorted(self._pending.pop((tenant_id, room_id)))
         async with tenant_session(self._session_factory, tenant_id) as session:
             user_ids = await people_concerned(session, room_id, client_ids)
         for user_id in user_ids:

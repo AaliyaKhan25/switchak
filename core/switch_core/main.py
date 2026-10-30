@@ -199,7 +199,7 @@ from switch_core.process_identity import new_process_id
 from switch_core.process_lease import ProcessLease
 from switch_core.provisioning import Provisioning
 from switch_core.provisioning.postgres import PostgresProvisioning
-from switch_core.room_changes import RoomChanges
+from switch_core.room_changes import COALESCE_SECONDS, RoomChanges
 from switch_core.room_service import RoomService
 from switch_core.session_activity.listener import AgentSessionActivityListener
 from switch_core.session_activity.maintenance import (
@@ -1018,7 +1018,9 @@ async def run(config: SwitchConfig, process_id: str) -> None:
     user_changes = LocalUserChanges()
     user_change_publisher = SignalUserChanges(local=user_changes, bus=signal_bus)
     room_changes = RoomChanges(
-        session_factory=session_factory, publisher=user_change_publisher
+        session_factory=session_factory,
+        publisher=user_change_publisher,
+        window_seconds=COALESCE_SECONDS,
     )
     room_service.on_room_changed(room_changes.room_changed)
     postgres_provisioning.on_membership_changed(room_changes.room_changed)

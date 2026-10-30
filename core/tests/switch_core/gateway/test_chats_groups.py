@@ -5,6 +5,7 @@ a thread — against real Postgres, through the shared harness."""
 from __future__ import annotations
 
 import asyncio
+import uuid
 from collections.abc import Callable
 from typing import Any
 
@@ -14,6 +15,7 @@ from fastapi import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from switch_core import room_changes as room_changes_module
 from switch_core.bridges.agent.protocol.agent_connections import AgentConnectionRegistry
 from switch_core.bridges.agent.registration_bootstrap import (
     BOOTSTRAP_OWNER_MARKER_META_KEY,
@@ -24,7 +26,7 @@ from switch_core.db.stores.room_store import RoomStore
 from switch_core.gateway import chats as chats_module
 from switch_core.gateway import rooms as rooms_module
 from switch_core.gateway.schemas import RoomUpdateRequest
-from switch_core.room_changes import RoomChanges
+from switch_core.room_changes import RoomChanges, people_concerned
 from switch_core.user_changes import ROOM
 from tests.switch_core.gateway.conftest import (
     _chat_service,
@@ -33,6 +35,7 @@ from tests.switch_core.gateway.conftest import (
     _Harness,
 )
 from tests.switch_core.gateway.test_chats_routes import (
+    TENANT,
     _code,
     _events_of,
     _left_chat,
@@ -1252,7 +1255,9 @@ class _Published:
 
 async def test_people_are_told_when_a_room_of_theirs_changes(chats: _Harness) -> None:
     published = _Published()
-    changes = RoomChanges(session_factory=chats.factory, publisher=published)
+    changes = RoomChanges(
+        session_factory=chats.factory, publisher=published, window_seconds=0.0
+    )
     chats.room_service.on_room_changed(changes.room_changed)
     chats.service._provisioning.on_membership_changed(changes.room_changed)  # type: ignore[attr-defined]
 
@@ -1292,11 +1297,48 @@ async def test_people_are_told_when_a_room_of_theirs_changes(chats: _Harness) ->
     assert await told() == {chats.alice.id}
 
 
+async def test_changes_to_a_room_within_a_window_make_one_read_and_one_notice_each(
+    chats: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    published = _Published()
+    changes = RoomChanges(
+        session_factory=chats.factory, publisher=published, window_seconds=0.2
+    )
+    mine = await chats.agent("mine", owner=chats.alice)
+    room_id = await chats.new_chat(chats.alice, mine, "c1")
+    reads: list[list[str]] = []
+
+    async def counted(
+        session: AsyncSession, room: str, client_ids: list[str]
+    ) -> list[str]:
+        reads.append(client_ids)
+        return await people_concerned(session, room, client_ids)
+
+    monkeypatch.setattr(room_changes_module, "people_concerned", counted)
+
+    for _ in range(5):
+        changes.room_changed(TENANT, room_id, [])
+    # The last change in the window names a client that just left.
+    left = str(uuid.uuid4())
+    changes.room_changed(TENANT, room_id, [left])
+    await asyncio.gather(*changes._tasks)
+    assert reads == [[left]]
+    assert published.notices == [(chats.alice.id, ROOM, room_id)]
+
+    # A change after the window closed opens a window of its own.
+    published.notices.clear()
+    changes.room_changed(TENANT, room_id, [])
+    await asyncio.gather(*changes._tasks)
+    assert len(reads) == 2 and published.notices == [(chats.alice.id, ROOM, room_id)]
+
+
 async def test_renaming_an_agent_tells_everyone_who_sees_its_rooms(
     chats: _Harness,
 ) -> None:
     published = _Published()
-    changes = RoomChanges(session_factory=chats.factory, publisher=published)
+    changes = RoomChanges(
+        session_factory=chats.factory, publisher=published, window_seconds=0.0
+    )
     chats.service.on_agent_room_changed(changes.room_changed)
     agent = await chats.agent("renamed", owner=chats.admin)
     room_id = await chats.new_chat(chats.alice, agent, "c1")
