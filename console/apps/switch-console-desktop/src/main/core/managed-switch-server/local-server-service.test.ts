@@ -890,3 +890,41 @@ it('watches a server set up after launch, on a first install', async () => {
     vi.useRealTimers();
   }
 });
+
+it('stops a hung Docker server before restarting it, since compose up would leave it', async () => {
+  m.version.mockResolvedValue({ deployedVersion: '0.11.0', drift: null });
+  const service = new LocalServerService();
+  await boot(service);
+  images.mockResolvedValue(new Map([['switch', 'switch:0.11.0']]));
+  watch.health.mockResolvedValue(false);
+  await service.watch();
+  await service.watch();
+  await service.watch();
+  expect(service.getStatus()).toMatchObject({ phase: 'error', failedTo: 'run' });
+
+  const order: string[] = [];
+  m.stop.mockImplementation(async () => {
+    order.push('stop');
+  });
+  m.start.mockImplementation(async () => {
+    order.push('start');
+    return started;
+  });
+  expect(await service.start()).toEqual(started);
+
+  expect(order).toEqual(['stop', 'start']);
+  expect(service.getStatus().phase).toBe('running');
+});
+
+it('does not stop a Docker server first on an ordinary start', async () => {
+  m.running.mockResolvedValue(false);
+  m.version.mockResolvedValue({ deployedVersion: '0.11.0', drift: null });
+  m.start.mockResolvedValue(started);
+  const service = new LocalServerService();
+  await boot(service);
+
+  await service.start();
+
+  expect(m.stop).not.toHaveBeenCalled();
+  expect(m.start).toHaveBeenCalledOnce();
+});

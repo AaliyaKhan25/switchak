@@ -571,6 +571,9 @@ export class LocalServerService {
     this.startAbort = new AbortController();
     const host: ServerHost = new LocalServerHost();
     const checkoutRoot = this.checkoutRootForStart();
+    // Read before the phase moves on: whether this start is the way back from
+    // a server that stopped, or stopped answering, on its own.
+    const recovering = this.status.phase === 'error' && this.status.failedTo === 'run';
     try {
       const runtime = await this.runtime();
       // A server still on Docker moves itself to the native runtime, data and
@@ -629,6 +632,13 @@ export class LocalServerService {
         result = started.result;
         bringUpMattermost = started.bringUpMattermost;
       } else {
+        // `compose up` leaves a container that is running alone, however hung
+        // it is, so a server that stopped answering is stopped first. The
+        // native start and the move off Docker stop everything themselves.
+        if (recovering) {
+          common.onMessage('Stopping the server that stopped answering…');
+          await stopStack(host, null);
+        }
         // Nobody else shares the local stack, so there is nothing to lock.
         result = await startStack({ ...common, lease: null });
       }
