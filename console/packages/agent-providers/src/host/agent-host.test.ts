@@ -1268,6 +1268,7 @@ it('tells the room it is starting a session when its stream leaves that to it, b
     opened.push(deps);
     return {
       announcesSessionStarts: true,
+      placementsNameCallRooms: true,
       start: () => {},
       setSpawnCapable: () => {},
       replacePlacements: async (placements) => {

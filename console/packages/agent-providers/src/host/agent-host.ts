@@ -648,6 +648,15 @@ export class AgentHostAssignments {
 export type AgentEventStream = {
   /** The agent host, not Switch, tells a room when it starts a session for it. */
   readonly announcesSessionStarts: boolean;
+  /**
+   * The room of a session's tool call is the one this stream was last told
+   * the session is placed in, not one Switch recorded when the session called
+   * `connect_to_room`. True for an agent controller, whose relay names the
+   * room on every call from these placements, so a placement it did not take
+   * leaves the session calling from no room. False for the agent's own
+   * connection, where Switch places the session itself.
+   */
+  readonly placementsNameCallRooms: boolean;
   start(): void;
   setSpawnCapable(capable: boolean): void;
   /**
@@ -844,7 +853,15 @@ export async function runAgentHost(
           identity,
           connectionId,
           placements,
-          publish,
+          // Nothing is stated before the stream exists, so a move made then
+          // has not been taken by anyone: said rather than reported done.
+          publish: async () => {
+            if (!stream) throw new Error("this agent's stream to Switch is not open yet");
+            await publish();
+          },
+          // Without a stream there is no connection for Switch to have placed
+          // the session on either, so the move counts as not taken.
+          placementsNameCallRooms: () => stream?.placementsNameCallRooms ?? true,
           redactions: links.redactions,
         })
       )
