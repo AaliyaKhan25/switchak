@@ -103,10 +103,11 @@ async def test_a_person_reads_the_rooms_they_take_part_in_and_no_other(
             await store.involved_room_ids(session, alice.id, [*expected, unrelated.id])
             == expected
         )
-        assert await people_concerned(session, discord.id, []) == [alice.id]
-        assert set(await people_concerned(session, with_agent.id, [])) == {
-            alice.id,
-            bob.id,
-        }
-        # Someone who just left is named by the client they left with.
-        assert alice.id in await people_concerned(session, unrelated.id, [member.id])
+        concerned = await people_concerned(
+            session,
+            # Someone who just left is named by the client they left with.
+            {discord.id: [], with_agent.id: [], unrelated.id: [member.id]},
+        )
+        assert concerned[discord.id] == [alice.id]
+        assert set(concerned[with_agent.id]) == {alice.id, bob.id}
+        assert alice.id in concerned[unrelated.id]

@@ -1309,13 +1309,14 @@ async def test_changes_to_a_room_within_a_window_make_one_read_and_one_notice_ea
     reads: list[list[str]] = []
 
     async def counted(
-        session: AsyncSession, room: str, client_ids: list[str]
-    ) -> list[str]:
-        reads.append(client_ids)
-        return await people_concerned(session, room, client_ids)
+        session: AsyncSession, changed: dict[str, list[str]]
+    ) -> dict[str, list[str]]:
+        reads.append(changed[room_id])
+        return await people_concerned(session, changed)
 
     monkeypatch.setattr(room_changes_module, "people_concerned", counted)
 
+    changes.rooms_changed(TENANT, [room_id])
     for _ in range(5):
         changes.room_changed(TENANT, room_id, [])
     # The last change in the window names a client that just left.
@@ -1339,7 +1340,7 @@ async def test_renaming_an_agent_tells_everyone_who_sees_its_rooms(
     changes = RoomChanges(
         session_factory=chats.factory, publisher=published, window_seconds=0.0
     )
-    chats.service.on_agent_room_changed(changes.room_changed)
+    chats.service.on_agent_room_changed(changes.rooms_changed)
     agent = await chats.agent("renamed", owner=chats.admin)
     room_id = await chats.new_chat(chats.alice, agent, "c1")
     assert (await chats.invite(chats.alice, room_id, chats.bob)).status_code == 200
@@ -1360,6 +1361,38 @@ async def test_renaming_an_agent_tells_everyone_who_sees_its_rooms(
     assert (name, summary["roomId"]) == ("chat", room_id)
     assert summary["agents"][0]["displayName"] == "QA Blair"
     await events.stream.aclose()  # type: ignore[attr-defined]
+
+
+async def test_renaming_an_agent_in_many_rooms_reads_them_in_one_query(
+    chats: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    published = _Published()
+    changes = RoomChanges(
+        session_factory=chats.factory, publisher=published, window_seconds=0.0
+    )
+    chats.service.on_agent_room_changed(changes.rooms_changed)
+    agent = await chats.agent("busy", owner=chats.admin)
+    rooms = [await chats.new_chat(chats.alice, agent, f"c{n}") for n in range(6)]
+    assert (await chats.invite(chats.alice, rooms[0], chats.bob)).status_code == 200
+    reads: list[list[str]] = []
+
+    async def counted(
+        session: AsyncSession, changed: dict[str, list[str]]
+    ) -> dict[str, list[str]]:
+        reads.append(sorted(changed))
+        return await people_concerned(session, changed)
+
+    monkeypatch.setattr(room_changes_module, "people_concerned", counted)
+
+    await chats.service.agent_changed(TENANT, agent.id)
+    assert len(changes._tasks) == 1
+    await asyncio.gather(*changes._tasks)
+    assert reads == [sorted(rooms)]
+    expected = {
+        (user, ROOM, r) for r in rooms for user in (chats.alice.id, chats.admin.id)
+    }
+    expected.add((chats.bob.id, ROOM, rooms[0]))
+    assert set(published.notices) == expected
 
 
 async def test_only_a_manager_renames_a_group_and_everyone_sees_it(

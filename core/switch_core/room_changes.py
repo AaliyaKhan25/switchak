@@ -22,7 +22,16 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Result, or_, select, union
+from sqlalchemy import (
+    CompoundSelect,
+    Result,
+    Select,
+    String,
+    column,
+    select,
+    union,
+    values,
+)
 
 from switch_core.chats import MEMBER_CLIENT_TYPE
 from switch_core.db.models import (
@@ -38,6 +47,8 @@ from switch_core.db.session_scope import tenant_session
 from switch_core.user_changes import ROOM
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from switch_core.user_changes import UserChangePublisher
@@ -70,7 +81,23 @@ class RoomChanges:
             self._pending[key].update(client_ids)
             return
         self._pending[key] = set(client_ids)
-        task = asyncio.create_task(self._publish(tenant_id, room_id))
+        self._start(tenant_id, [room_id])
+
+    def rooms_changed(self, tenant_id: str, room_ids: list[str]) -> None:
+        """`room_changed` for many rooms at once (an agent in each was
+        renamed), read in one session and one query however many there are.
+        A room whose window is open already is told with that window."""
+        opened = []
+        for room_id in dict.fromkeys(room_ids):
+            key = (tenant_id, room_id)
+            if key not in self._pending:
+                self._pending[key] = set()
+                opened.append(room_id)
+        if opened:
+            self._start(tenant_id, opened)
+
+    def _start(self, tenant_id: str, room_ids: list[str]) -> None:
+        task = asyncio.create_task(self._publish(tenant_id, room_ids))
         self._tasks.add(task)
         task.add_done_callback(self._finished)
 
@@ -83,48 +110,67 @@ class RoomChanges:
                 exc_info=task.exception(),
             )
 
-    async def _publish(self, tenant_id: str, room_id: str) -> None:
+    async def _publish(self, tenant_id: str, room_ids: list[str]) -> None:
         try:
             await asyncio.sleep(self._window_seconds)
         finally:
-            client_ids = sorted(self._pending.pop((tenant_id, room_id)))
+            changed = {
+                room_id: sorted(self._pending.pop((tenant_id, room_id)))
+                for room_id in room_ids
+            }
         async with tenant_session(self._session_factory, tenant_id) as session:
-            user_ids = await people_concerned(session, room_id, client_ids)
-        for user_id in user_ids:
-            self._publisher.publish(tenant_id, user_id, ROOM, room_id)
+            concerned = await people_concerned(session, changed)
+        for room_id, user_ids in concerned.items():
+            for user_id in user_ids:
+                self._publisher.publish(tenant_id, user_id, ROOM, room_id)
 
 
 async def people_concerned(
-    session: AsyncSession, room_id: str, client_ids: list[str]
-) -> list[str]:
-    """The room's owner, the people in it and behind `client_ids`, and the
-    owners of its agents."""
-    present = set(client_ids) | set(
-        (
-            await session.execute(
-                select(ClientRoom.client_id).where(ClientRoom.room_id == room_id)
-            )
-        ).scalars()
-    )
-    found: Result[tuple[str | None]] = await session.execute(
-        union(
-            select(Room.owner_id).where(Room.id == room_id),
-            select(Client.user_id).where(
-                Client.id.in_(present), Client.type == MEMBER_CLIENT_TYPE
-            ),
-            select(ExternalUserClaim.user_id)
-            .join(ExternalUser, ExternalUser.id == ExternalUserClaim.external_user_id)
-            .where(ExternalUser.client_id.in_(present)),
-            select(Agent.owner_id).where(
-                or_(
-                    Agent.id.in_(
-                        select(room_agents.c.agent_id).where(
-                            room_agents.c.room_id == room_id
-                        )
-                    ),
-                    Agent.client_id.in_(present),
-                )
+    session: AsyncSession, changed: Mapping[str, list[str]]
+) -> dict[str, list[str]]:
+    """For each room in `changed`: its owner, the people in it and behind
+    the client ids it maps to, and the owners of its agents. One query."""
+    room_ids = list(changed)
+    present: Select[tuple[str, str]] | CompoundSelect = select(
+        ClientRoom.room_id, ClientRoom.client_id
+    ).where(ClientRoom.room_id.in_(room_ids))
+    named = [
+        (room_id, client_id)
+        for room_id, client_ids in changed.items()
+        for client_id in client_ids
+    ]
+    if named:
+        present = union(
+            present,
+            select(
+                values(
+                    column("room_id", String), column("client_id", String), name="named"
+                ).data(named)
             ),
         )
+    here = present.subquery()
+    found: Result[tuple[str, str | None]] = await session.execute(
+        union(
+            select(Room.id, Room.owner_id).where(Room.id.in_(room_ids)),
+            select(here.c.room_id, Client.user_id)
+            .join(Client, Client.id == here.c.client_id)
+            .where(Client.type == MEMBER_CLIENT_TYPE),
+            select(here.c.room_id, ExternalUserClaim.user_id)
+            .join(ExternalUser, ExternalUser.client_id == here.c.client_id)
+            .join(
+                ExternalUserClaim,
+                ExternalUserClaim.external_user_id == ExternalUser.id,
+            ),
+            select(here.c.room_id, Agent.owner_id).join(
+                Agent, Agent.client_id == here.c.client_id
+            ),
+            select(room_agents.c.room_id, Agent.owner_id)
+            .join(Agent, Agent.id == room_agents.c.agent_id)
+            .where(room_agents.c.room_id.in_(room_ids)),
+        )
     )
-    return sorted({user_id for user_id in found.scalars() if user_id is not None})
+    concerned: dict[str, set[str]] = {room_id: set() for room_id in room_ids}
+    for room_id, user_id in found.tuples():
+        if user_id is not None:
+            concerned[room_id].add(user_id)
+    return {room_id: sorted(users) for room_id, users in concerned.items()}

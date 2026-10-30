@@ -202,9 +202,7 @@ class ChatService:
             weakref.WeakValueDictionary()
         )
         self._membership_watchers: dict[tuple[str, str], set[MembershipWatcher]] = {}
-        self._agent_room_listeners: tuple[
-            Callable[[str, str, list[str]], None], ...
-        ] = ()
+        self._agent_room_listeners: tuple[Callable[[str, list[str]], None], ...] = ()
         self._tasks: set[asyncio.Task[None]] = set()
         # Where a change to people's chats made here is announced to the
         # other processes, once wired (`use_signals`).
@@ -593,12 +591,10 @@ class ChatService:
             [room_id],
         )
 
-    def on_agent_room_changed(
-        self, listener: Callable[[str, str, list[str]], None]
-    ) -> None:
-        """Call `listener(tenant_id, room_id, [])` for each room an agent is in
+    def on_agent_room_changed(self, listener: Callable[[str, list[str]], None]) -> None:
+        """Call `listener(tenant_id, room_ids)` with every room an agent is in
         when its name, display name or icon changes (`room_changes`), so
-        whoever shows the room reads it again. It must not block."""
+        whoever shows those rooms reads them again. It must not block."""
         self._agent_room_listeners = (*self._agent_room_listeners, listener)
 
     def room_changed(self, tenant_id: str, room_id: str, client_ids: list[str]) -> None:
@@ -647,12 +643,11 @@ class ChatService:
                     )
                 ).scalars()
             )
-        for room_id in room_ids:
-            for listener in self._agent_room_listeners:
-                try:
-                    listener(tenant_id, room_id, [])
-                except Exception:
-                    logger.exception("Agent room listener failed for room %s", room_id)
+        for listener in self._agent_room_listeners:
+            try:
+                listener(tenant_id, room_ids)
+            except Exception:
+                logger.exception("Agent room listener failed for agent %s", agent_id)
         if not self.agent_chats_enabled:
             return
         async with tenant_session(self.session_factory, tenant_id) as session:
