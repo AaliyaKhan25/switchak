@@ -78,3 +78,37 @@ async def test_one_process_sweeps_and_another_takes_over(
     assert other[2].held() == {maintenance.SWEEP_KEY}
     for _, ownership, _ in processes:
         await ownership.stop()
+
+
+async def test_sweeps_that_end_with_an_error_are_restarted(
+    session_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runs: list[int] = []
+    second_run = asyncio.Event()
+
+    async def loop(_factory: Any) -> None:
+        runs.append(len(runs))
+        if len(runs) == 1:
+            raise RuntimeError("sweep broke")
+        second_run.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(maintenance, "maintenance_loop", loop)
+
+    starts: dict[str, Any] = {}
+
+    class _Kind:
+        def want(self, key: str) -> None:
+            pass
+
+    class _Ownership:
+        def kind(self, name: str, *, start: Any, stop: Any) -> _Kind:
+            starts["start"], starts["stop"] = start, stop
+            return _Kind()
+
+    maintenance.own_maintenance(_Ownership(), session_factory)  # type: ignore[arg-type]
+    await starts["start"](maintenance.SWEEP_KEY, None)
+    await asyncio.wait_for(second_run.wait(), timeout=1)
+    assert runs == [0, 1]
+    await starts["stop"](maintenance.SWEEP_KEY)

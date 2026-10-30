@@ -85,12 +85,12 @@ async def maintenance_loop(session_factory: async_sessionmaker[AsyncSession]) ->
         while True:
             await asyncio.sleep(EXPIRY_INTERVAL_SECONDS)
             since_orphans += EXPIRY_INTERVAL_SECONDS
-            if since_orphans >= ORPHANS_EVERY_SECONDS:
-                since_orphans = 0.0
-                await end_orphaned_turns_once(session_factory)
             since_prune += EXPIRY_INTERVAL_SECONDS
             prune = since_prune >= PRUNE_EVERY_SECONDS
             try:
+                if since_orphans >= ORPHANS_EVERY_SECONDS:
+                    since_orphans = 0.0
+                    await end_orphaned_turns_once(session_factory)
                 await maintain_once(session_factory, prune=prune)
             except Exception:
                 logger.exception("Session-activity upkeep failed")
@@ -113,10 +113,24 @@ def own_maintenance(
     process; they run here only while it holds them."""
     running: dict[str, asyncio.Task[None]] = {}
 
-    async def start(key: str, fence: Fence) -> None:
-        running[key] = asyncio.create_task(
+    def launch(key: str) -> None:
+        task = asyncio.create_task(
             maintenance_loop(session_factory), name="session-activity-sweeps"
         )
+        running[key] = task
+        task.add_done_callback(lambda done: ended(key, done))
+
+    def ended(key: str, task: asyncio.Task[None]) -> None:
+        if task.cancelled() or running.get(key) is not task:
+            return
+        logger.error(
+            "Session-activity sweeps stopped unexpectedly; restarting",
+            exc_info=task.exception(),
+        )
+        launch(key)
+
+    async def start(key: str, fence: Fence) -> None:
+        launch(key)
 
     async def stop(key: str) -> None:
         task = running.pop(key, None)
