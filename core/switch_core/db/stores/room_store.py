@@ -6,7 +6,6 @@ from sqlalchemy import (
     ColumnElement,
     delete,
     exists,
-    insert,
     literal,
     or_,
     select,
@@ -369,12 +368,14 @@ class RoomStore:
         `join_event_listeners` is the subset of `agent_ids` that should receive
         `room_join` events in this room. Any agent not in that set keeps the
         column default (off) — agents are opted in to join events explicitly.
+        An agent already in the room is left as it is, so two concurrent adds
+        of the same agent both succeed.
         """
         if not agent_ids:
             return
         listeners = join_event_listeners or set()
         await session.execute(
-            insert(room_agents),
+            pg_insert(room_agents).on_conflict_do_nothing(),
             [
                 {
                     "room_id": room_id,
