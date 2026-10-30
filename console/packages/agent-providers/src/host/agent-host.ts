@@ -1046,6 +1046,19 @@ export async function runAgentHost(
      * that runs into it is answered once, however often the host is retried.
      */
     const announced = new Set<string>();
+    /**
+     * States the placements before a notice posted as the session, so Switch
+     * answers it from the room it is in. A statement that is not taken is
+     * said and the notice still tried: it is posted once, and a room left
+     * with no word of its session is worse than a notice that fails too.
+     */
+    const publishBeforeNotice = async (what: string) => {
+      await publish().catch((error: unknown) =>
+        console.warn(
+          `Could not state the session placements before ${what}: ${error instanceof Error ? error.message : String(error)}`
+        )
+      );
+    };
     /** Says in the room that a session is starting for its message, once per message. */
     const startingNoticed = new Set<string>();
     const tellStarting = async (config: SharedHostConfig, event: Handoff) => {
@@ -1053,7 +1066,7 @@ export async function runAgentHost(
       if (startingNoticed.has(key)) return;
       startingNoticed.add(key);
       try {
-        await publish();
+        await publishBeforeNotice(`telling room ${event.roomId} a session is starting`);
         await announceSessionStart({
           identity,
           connectionId,
@@ -1077,7 +1090,9 @@ export async function runAgentHost(
       announced.add(key);
       try {
         // Switch answers the call from where it holds the session placed.
-        await publish();
+        await publishBeforeNotice(
+          `telling room ${event.roomId} session ${sessionId} failed to start`
+        );
         await announceStartFailure({
           identity,
           connectionId,

@@ -2549,6 +2549,49 @@ it('stops starting a session whose host failed, keeps its message, and tells its
   }
 });
 
+it('still tells the owner a session could not start when its placements are not taken', async () => {
+  // A statement that is refused (the controller hub reconnecting, say) used
+  // to skip the notice after it, and the notice is sent once per message, so
+  // the room heard nothing.
+  const root = await mkdtemp(join(tmpdir(), 'shared-watch-failed-start-unplaced-'));
+  roots.push(root);
+  paths.root = root;
+  const config = await spawning(root);
+  const hosts = sessionHosts();
+  hosts.fail = SIGN_IN;
+  const calls = switchOperations({ owner: 'ada' });
+  placementsRefusal.error = new Error('the agent controller hub is not connected');
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+  const abort = new AbortController();
+  const run = runAgentHost(
+    root,
+    config,
+    abort.signal,
+    hosts.supervision,
+    new WatcherControl(),
+    openSwitchStream
+  );
+  try {
+    await eventually(() => streams.length === 1);
+    await streams[0]!.onEvent!(addressed(1, 'room'));
+    await eventually(() => calls.some((call) => call.name === 'send_targeted_message'));
+    expect(calls.find((call) => call.name === 'send_targeted_message')?.body).toMatchObject({
+      body: `I couldn't start a session, and it needs you to fix it: ${SIGN_IN} Then address me again.`,
+      target_names: ['ada'],
+    });
+    expect(
+      warn.mock.calls.some(([line]) =>
+        String(line).startsWith('Could not state the session placements before telling room room')
+      )
+    ).toBe(true);
+  } finally {
+    abort.abort();
+    await run;
+  }
+});
+
 it('tells the room without addressing anyone when the owner cannot be addressed, and survives a refused post', async () => {
   const root = await mkdtemp(join(tmpdir(), 'shared-watch-failed-owner-'));
   roots.push(root);
