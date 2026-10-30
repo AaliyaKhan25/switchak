@@ -33,8 +33,11 @@ def upgrade() -> None:
     if duplicates:
         raise RuntimeError(
             f"rooms: {duplicates} Switch Console create request(s) made more "
-            "than one room. Delete or archive the extra rooms (same "
-            "metadata->>'chat_operation_id') and upgrade again."
+            "than one room. Delete the extra rooms (archived rooms count too) "
+            "and upgrade again. To list them, or to check before deploying: "
+            "SELECT tenant_id, metadata ->> 'chat_operation_id', array_agg(id) "
+            "FROM rooms WHERE metadata ? 'chat_operation_id' "
+            "GROUP BY 1, 2 HAVING count(*) > 1;"
         )
     op.create_index(
         "uq_rooms_chat_operation_id",
