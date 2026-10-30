@@ -111,6 +111,8 @@ export type ControllerStreamOptions = {
  * are short and do not grow.
  */
 const SERVICE_RESTART = 1012;
+/** The refusal of a server opening as many connections as it can take at once. */
+const BUSY = 'busy';
 const RESTART_RETRY_MS = 250;
 const RESTART_RETRY_JITTER_MS = 500;
 
@@ -192,9 +194,18 @@ class ControllerStream {
       const stop = () => attempt.abort.abort();
       signal.addEventListener('abort', stop, { once: true });
       let failure: string | null = null;
+      // When a busy server said to come back (core's `open_gate.py`): that is
+      // this controller's place in its queue, so it outranks the backoff.
+      let toldMs: number | null = null;
       try {
         await this.attach(attempt);
       } catch (error) {
+        if (
+          error instanceof ControllerApiError &&
+          error.code === BUSY &&
+          error.retryAfterS !== null
+        )
+          toldMs = Math.round(error.retryAfterS * 1000);
         if (!attempt.ending && !signal.aborted) {
           if (isRevoked(error)) attempt.ending = 'revoked';
           else if (isTakenOver(error)) attempt.ending = 'taken_over';
@@ -217,16 +228,20 @@ class ControllerStream {
         // so a socket that attached at all starts the waits over.
         this.backoff = this.options.initialBackoffMs;
       }
-      const wait = attempt.restarting
-        ? RESTART_RETRY_MS + Math.round(this.options.random() * RESTART_RETRY_JITTER_MS)
-        : Math.round(this.backoff * (0.5 + this.options.random() * 0.5));
+      const wait =
+        toldMs !== null
+          ? toldMs
+          : attempt.restarting
+            ? RESTART_RETRY_MS + Math.round(this.options.random() * RESTART_RETRY_JITTER_MS)
+            : Math.round(this.backoff * (0.5 + this.options.random() * 0.5));
       if (failure !== null)
         log.warn('The controller socket is down; reconnecting.', {
           error: failure,
           retryInMs: wait,
         });
       await delay(wait, undefined, { signal }).catch(() => {});
-      if (!attempt.restarting) this.backoff = Math.min(this.backoff * 2, this.options.maxBackoffMs);
+      if (!attempt.restarting && toldMs === null)
+        this.backoff = Math.min(this.backoff * 2, this.options.maxBackoffMs);
     }
     return 'stopped';
   }
@@ -264,7 +279,7 @@ class ControllerStream {
     const { socket } = opened;
     const abort = attempt.abort;
     const pending: Message[] = [];
-    let refused: { status: number; code: string; message: string } | null = null;
+    let refused: Refusal | null = null;
     let closedWith: number | null = null;
     let wake: (() => void) | null = null;
     const notify = () => {
@@ -336,10 +351,16 @@ class ControllerStream {
           wake = resolve;
         });
       }
-      const refusal = refused as { status: number; code: string; message: string } | null;
+      const refusal = refused as Refusal | null;
       if (refusal !== null) {
         if (refusal.status === 401 && refusal.code !== 'controller_revoked') opened.tokenRefused();
-        throw new ControllerApiError(refusal.status, refusal.code, refusal.message, false, null);
+        throw new ControllerApiError(
+          refusal.status,
+          refusal.code,
+          refusal.message,
+          refusal.retryAfterS !== null,
+          refusal.retryAfterS
+        );
       }
       if (abort.signal.aborted && abort.signal.reason instanceof IdleTimeout)
         throw abort.signal.reason;
@@ -380,14 +401,22 @@ class ControllerStream {
   }
 }
 
-function refusalOf(data: unknown): { status: number; code: string; message: string } {
+type Refusal = { status: number; code: string; message: string; retryAfterS: number | null };
+
+function refusalOf(data: unknown): Refusal {
   const body = (data ?? {}) as { status?: unknown; detail?: unknown };
-  const detail = (body.detail ?? {}) as { code?: unknown; message?: unknown };
+  const detail = (body.detail ?? {}) as {
+    code?: unknown;
+    message?: unknown;
+    retry_after_s?: unknown;
+  };
+  const after = detail.retry_after_s;
   return {
     status: typeof body.status === 'number' ? body.status : 0,
     code: typeof detail.code === 'string' ? detail.code : 'refused',
     message:
       typeof detail.message === 'string' ? detail.message : 'Switch refused the controller socket.',
+    retryAfterS: typeof after === 'number' && Number.isFinite(after) && after >= 0 ? after : null,
   };
 }
 

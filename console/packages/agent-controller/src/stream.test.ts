@@ -396,6 +396,26 @@ describe('runControllerStream', () => {
     expect(opens).toBe(3);
   });
 
+  it('opens again when a busy server says, not on its own backoff', async () => {
+    const scripted = new ScriptedClient();
+    let opens = 0;
+    scripted.open = async () => {
+      opens++;
+      if (opens === 1) throw new ControllerApiError(503, 'busy', 'opening at capacity', true, 0.3);
+      return opened;
+    };
+    scripted.sockets = () => scriptedSocket([state], 'open');
+    const stop = new AbortController();
+    const started = Date.now();
+    const { states, ending } = run(scripted, stop.signal);
+    await waitFor(() => states.includes('connected'), 'a connection', 3_000);
+    stop.abort();
+    await ending;
+    expect(opens).toBe(2);
+    // The backoff alone would have opened again after 5 ms.
+    expect(Date.now() - started).toBeGreaterThanOrEqual(290);
+  });
+
   it('waits less each time a socket attached, however briefly, and never long', async () => {
     const scripted = new ScriptedClient();
     let opens = 0;

@@ -39,6 +39,7 @@ from switch_core.db.stores.room_store import RoomStore
 from switch_core.gateway.ui import GatewayUi, GatewayUiMiddleware
 from switch_core.logging_context import log_context
 from switch_core.observability.http import MetricsMiddleware
+from switch_core.open_gate import OpenGate
 from switch_core.refusal_breaker import RefusalBreaker
 from switch_core.request_context import RequestContextMiddleware
 from switch_core.request_validation import public_errors
@@ -192,6 +193,9 @@ def create_agent_bridge_app(
         session_factory=session_factory,  # type: ignore[arg-type]
         controller_auth=controller_auth,
     )
+    # Outside the bearer middleware, so an open the process cannot take yet is
+    # told when to come back before its credential is looked up.
+    app.add_middleware(OpenGate, limit=config.agent_open_limit, clock=time.monotonic)
     # Outside the bearer middleware, so a caller that keeps repeating a refused
     # request is answered before its credential is looked up again.
     app.add_middleware(RefusalBreaker, clock=time.monotonic)

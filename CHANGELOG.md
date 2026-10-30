@@ -85,6 +85,18 @@ version of their own to them without also giving them a release of their own.
   Now a room the runner cannot read reads as missing.
 
 #### Added
+- **A reconnect storm is paced instead of taking the pool.** When a pod goes
+  away, every agent and controller it held opens a connection on the pods
+  left within seconds. On staging (two pods, 1,000 agents, one pod deleted)
+  those opens took the whole database pool: requests and the process lease
+  timed out with them, and the surviving pod dropped agents of its own. Each
+  process now opens at most `AGENT_OPEN_LIMIT` (8) agent and controller
+  connections at once. An open that finds no slot within 2 s, which keeps it
+  well inside the timeout of the proxy in front, is refused before
+  authentication with 503 and `retry_after_s`, its place in the line at the
+  pace opens are taking in that process, so the storm comes back as a queue
+  spread over what the process can take. A caller that comes back early keeps
+  its time. `switch.agent.opens_deferred` counts the refusals, by route.
 - **The Helm chart can put switch-core on chosen nodes.**
   `switchCore.nodeSelector` and `switchCore.tolerations` go onto the
   switch-core pods as written, so they can run on a node group of their own,
@@ -4191,6 +4203,10 @@ tags; see RELEASING.md.
 ### [Unreleased]
 
 #### Added
+- **Waits its turn when Switch is busy opening connections.** An open or an
+  attach refused as `busy` comes with when to try again, the controller's
+  place in the server's queue, and the controller now waits that long
+  instead of its own backoff.
 - **A provider report says when signing in would not help.** A provider
   whose check says its login command would not fix the problem is reported
   with `login_helps: false` beside `auth_problem`, so Console does not offer
@@ -4292,6 +4308,10 @@ The Switch protocol client and MCP runtime
 ### [Unreleased]
 
 #### Added
+- **Waits its turn when Switch is busy opening connections.** A server
+  pacing a reconnect storm refuses an open as `busy` with when to open again,
+  which is this agent's place in its queue. The stream now waits that long,
+  even right after a restart, instead of retrying on its own schedule.
 - When the WebSocket never opens and the runtime asks for the event stream
   instead, the request carries `fallback=socket_never_opened` and the
   socket's close code as `fallback_close_code`, so the server's log can tell
