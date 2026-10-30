@@ -197,6 +197,9 @@ jobs:
     needs: changes
     if: ${{ needs.changes.outputs.backend == 'true' || github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
+    # A shard takes about five minutes. One that hangs fails here rather than
+    # holding a runner for the default six hours.
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -222,12 +225,16 @@ jobs:
       # fixture is session-scoped, and a session is per worker, so each worker
       # boots and owns a container of its own: no test shares a database with
       # another running at the same time.
+      #
+      # A test still running after five minutes has every thread's stack
+      # dumped to the log, so a hang names itself.
       - name: pytest
         run: >-
           uv run --project core pytest -c core/pyproject.toml core/tests/
           -n auto
           --splits 3 --group ${{ matrix.group }}
           --splitting-algorithm least_duration
+          -o faulthandler_timeout=300
 
   console:
     name: Switch Console
