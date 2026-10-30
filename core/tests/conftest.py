@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import uuid
+import warnings
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
 
@@ -87,17 +88,41 @@ _TRUNCATE_ALL = (
 )
 
 
-# Long enough for a slow machine, short enough to beat a CI job's limit.
-_TRUNCATE_LOCK_TIMEOUT = "60s"
+# How long the reset waits for its locks before ending what an earlier test
+# left holding them, and then how long it waits before giving up.
+_TRUNCATE_LOCK_TIMEOUT = "10s"
+_TRUNCATE_LOCK_TIMEOUT_AFTER_CLEARING = "60s"
 
-# What is still connected, for a TRUNCATE that could not take its locks.
-_OTHER_SESSIONS = text(
+_LOCK_NOT_AVAILABLE = "55P03"
+
+# Every other session on this database, for a reset that could not take its
+# locks: the ones it ends, or the ones that kept it waiting.
+_OTHER_SESSIONS = (
     "SELECT pid, state, now() - xact_start AS in_transaction_for, "
     "left(query, 300) AS last_query "
     "FROM pg_stat_activity "
-    "WHERE datname = current_database() AND pid <> pg_backend_pid() "
-    "ORDER BY xact_start NULLS LAST"
+    "WHERE datname = current_database() AND pid <> pg_backend_pid()"
 )
+
+_END_LEFT_IN_TRANSACTION = text(
+    f"SELECT *, pg_terminate_backend(pid) FROM ({_OTHER_SESSIONS}) AS other "
+    "WHERE state LIKE 'idle in transaction%'"
+)
+
+
+async def _truncate(engine: AsyncEngine, lock_timeout: str) -> bool:
+    """Empty the database, waiting at most `lock_timeout` for the locks.
+    Returns whether it got them."""
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(text(f"SET LOCAL lock_timeout = '{lock_timeout}'"))
+            await conn.execute(text(_TRUNCATE_ALL))
+            await _seed_tenant_zero(conn)
+    except DBAPIError as exc:
+        if getattr(exc.orig, "sqlstate", None) != _LOCK_NOT_AVAILABLE:
+            raise
+        return False
+    return True
 
 
 async def empty_the_database(engine: AsyncEngine) -> None:
@@ -108,28 +133,34 @@ async def empty_the_database(engine: AsyncEngine) -> None:
     instead is the same starting point for a fraction of the DDL, and it is
     what every per-test fixture here uses.
 
-    TRUNCATE takes every table's exclusive lock, so a connection an earlier
-    test left in a transaction would make it wait forever. It waits a minute
-    instead, then fails naming the sessions still connected: the hang becomes
-    a failure that says who held the lock.
+    TRUNCATE takes every table's exclusive lock, so a connection left in a
+    transaction would make it wait forever. One is left when a test's client
+    loop (a `TestClient`'s thread, say) stops while a query of its stream is
+    in flight: the task is abandoned rather than cancelled, and its
+    transaction never ends. Each test worker has a database of its own and
+    runs one test at a time, so a session idle in a transaction while a test
+    is still being set up belongs to a test that has finished. The reset ends
+    those, with a warning naming them, and carries on; and fails, naming every
+    session still connected, if it then still cannot take its locks.
     """
-    try:
-        async with engine.begin() as conn:
-            await conn.execute(
-                text(f"SET LOCAL lock_timeout = '{_TRUNCATE_LOCK_TIMEOUT}'")
-            )
-            await conn.execute(text(_TRUNCATE_ALL))
-            await _seed_tenant_zero(conn)
-    except DBAPIError as exc:
-        if getattr(exc.orig, "sqlstate", None) != "55P03":  # lock_not_available
-            raise
-        async with engine.connect() as conn:
-            sessions = (await conn.execute(_OTHER_SESSIONS)).mappings().all()
-        raise AssertionError(
-            f"emptying the database waited {_TRUNCATE_LOCK_TIMEOUT} for its "
-            "locks; an earlier test left a connection holding them. Still "
-            "connected:\n" + "\n".join(str(dict(session)) for session in sessions)
-        ) from exc
+    if await _truncate(engine, _TRUNCATE_LOCK_TIMEOUT):
+        return
+    async with engine.connect() as conn:
+        ended = (await conn.execute(_END_LEFT_IN_TRANSACTION)).mappings().all()
+    if ended:
+        warnings.warn(
+            "emptying the database ended sessions an earlier test left in a "
+            "transaction:\n" + "\n".join(str(dict(session)) for session in ended),
+            stacklevel=2,
+        )
+    if await _truncate(engine, _TRUNCATE_LOCK_TIMEOUT_AFTER_CLEARING):
+        return
+    async with engine.connect() as conn:
+        sessions = (await conn.execute(text(_OTHER_SESSIONS))).mappings().all()
+    raise AssertionError(
+        "emptying the database could not take its locks. Still connected:\n"
+        + "\n".join(str(dict(session)) for session in sessions)
+    )
 
 
 @pytest.fixture(scope="session")
