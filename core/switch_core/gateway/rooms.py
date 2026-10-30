@@ -1276,10 +1276,11 @@ async def sync_room_name(
             status_code=409,
             detail="Switch has not seen the name of a channel linked to this room.",
         )
+    # `take_platform_name` opens a session of its own (`_require_room_released`).
+    await session.commit()
     await room_service.take_platform_name(
         room.id, f"{bridge.display_name}: {channel_name}", channel_name
     )
-    await session.commit()
     await session.refresh(room)
     return await _build_room_detail(
         session, room, room_store, bridge_store, external_user_store, protocol
