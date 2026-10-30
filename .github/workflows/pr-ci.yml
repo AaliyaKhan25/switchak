@@ -226,15 +226,15 @@ jobs:
       # boots and owns a container of its own: no test shares a database with
       # another running at the same time.
       #
-      # A test still running after five minutes has every thread's stack
-      # dumped to the log, so a hang names itself.
+      # A test still running after five minutes fails (pytest-timeout), with
+      # its name and stack, and the rest of the shard carries on.
       - name: pytest
         run: >-
           uv run --project core pytest -c core/pyproject.toml core/tests/
           -n auto
           --splits 3 --group ${{ matrix.group }}
           --splitting-algorithm least_duration
-          -o faulthandler_timeout=300
+          --timeout 300
 
   console:
     name: Switch Console

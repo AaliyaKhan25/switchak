@@ -71,6 +71,7 @@ dev = [
     "testcontainers>=4.14.2",
     "pytest-xdist>=3.6",
     "pytest-split>=0.10",
+    "pytest-timeout>=2.3",
 ]
 
 [tool.ruff]

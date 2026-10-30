@@ -10,6 +10,7 @@ import pytest
 import pytest_asyncio
 from sqlalchemy import insert, text
 from sqlalchemy.engine import make_url
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import (
     AsyncConnection,
     AsyncEngine,
@@ -86,6 +87,19 @@ _TRUNCATE_ALL = (
 )
 
 
+# Long enough for a slow machine, short enough to beat a CI job's limit.
+_TRUNCATE_LOCK_TIMEOUT = "60s"
+
+# What is still connected, for a TRUNCATE that could not take its locks.
+_OTHER_SESSIONS = text(
+    "SELECT pid, state, now() - xact_start AS in_transaction_for, "
+    "left(query, 300) AS last_query "
+    "FROM pg_stat_activity "
+    "WHERE datname = current_database() AND pid <> pg_backend_pid() "
+    "ORDER BY xact_start NULLS LAST"
+)
+
+
 async def empty_the_database(engine: AsyncEngine) -> None:
     """Leave the schema in place and take every row out of it, tenant zero apart.
 
@@ -93,10 +107,29 @@ async def empty_the_database(engine: AsyncEngine) -> None:
     building the schema from nothing is only one way to reach. Emptying it
     instead is the same starting point for a fraction of the DDL, and it is
     what every per-test fixture here uses.
+
+    TRUNCATE takes every table's exclusive lock, so a connection an earlier
+    test left in a transaction would make it wait forever. It waits a minute
+    instead, then fails naming the sessions still connected: the hang becomes
+    a failure that says who held the lock.
     """
-    async with engine.begin() as conn:
-        await conn.execute(text(_TRUNCATE_ALL))
-        await _seed_tenant_zero(conn)
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(
+                text(f"SET LOCAL lock_timeout = '{_TRUNCATE_LOCK_TIMEOUT}'")
+            )
+            await conn.execute(text(_TRUNCATE_ALL))
+            await _seed_tenant_zero(conn)
+    except DBAPIError as exc:
+        if getattr(exc.orig, "sqlstate", None) != "55P03":  # lock_not_available
+            raise
+        async with engine.connect() as conn:
+            sessions = (await conn.execute(_OTHER_SESSIONS)).mappings().all()
+        raise AssertionError(
+            f"emptying the database waited {_TRUNCATE_LOCK_TIMEOUT} for its "
+            "locks; an earlier test left a connection holding them. Still "
+            "connected:\n" + "\n".join(str(dict(session)) for session in sessions)
+        ) from exc
 
 
 @pytest.fixture(scope="session")
