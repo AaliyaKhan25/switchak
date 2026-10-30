@@ -12,8 +12,9 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 from pydantic.alias_generators import to_camel
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, func, select, true
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from switch_core.chats import MEMBER_CLIENT_TYPE
 from switch_core.db.models import (
@@ -261,17 +262,25 @@ async def chat_summaries(
         .group_by(Message.room_id)
     ):
         unread[room_id] = count
+    # Per room, back along (room_id, seq) to its newest shown message only.
+    last_shown = (
+        select(Message)
+        .where(
+            Message.room_id == Room.id,
+            Message.event_type.in_(SHOWN_EVENT_TYPES),
+        )
+        .order_by(Message.seq.desc())
+        .limit(1)
+        .lateral()
+    )
     last_messages = {
         message.room_id: message
         for message in (
             await session.execute(
-                select(Message)
-                .where(
-                    Message.room_id.in_(room_ids),
-                    Message.event_type.in_(SHOWN_EVENT_TYPES),
-                )
-                .distinct(Message.room_id)
-                .order_by(Message.room_id, Message.seq.desc())
+                select(aliased(Message, last_shown))
+                .select_from(Room)
+                .join(last_shown, true())
+                .where(Room.id.in_(room_ids))
             )
         ).scalars()
     }
