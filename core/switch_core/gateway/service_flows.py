@@ -191,6 +191,19 @@ async def authorize(
     """The browser leaves for the vendor through Core, which marks it."""
     try:
         definition, adapter = broker.sign_in(service)
+    except ServiceError as error:
+        logger.warning("authorize: broker.sign_in failed: %r", logging.error)
+        return _page("Connections", INTERRUPTED, 400)
+    try:
+        flow = await flows.flow(state)
+        if flow.service != service or flow.mode != "core":
+            raise FlowError(INTERRUPTED)
+        url, nonce = await flows.vendor_url(flow, adapter)
+    except (FlowError, ServiceAdapterError) as error:
+        logger.warning("authorize: flow failed: %r", error)
+        return _page(definition.name, INTERRUPTED, 400)
+    try:
+        definition, adapter = broker.sign_in(service)
     except ServiceError:
         return _page("Connections", INTERRUPTED, 400)
     try:
